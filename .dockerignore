@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/.git
+**/.env
+**/.env.*
+**/coverage
+**/postgres-data
+**/redis-data
+**/.gemini
+**/.agents
+**/npm-debug.log
+**/yarn-error.log
+**/.DS_Store
