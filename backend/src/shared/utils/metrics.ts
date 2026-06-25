@@ -2,9 +2,15 @@
  * Prometheus metrics for the CRM platform.
  *
  * Metrics exported:
- *   - crm_jobs_processed_total   Counter  — per (name, queue, status)
- *   - crm_jobs_failed_total      Counter  — per (name, queue)
- *   - crm_job_duration_seconds   Histogram — per (name, queue), buckets 0.1s–60s
+ *   - crm_jobs_processed_total            Counter  — per (name, queue, status)
+ *   - crm_jobs_failed_total               Counter  — per (name, queue)
+ *   - crm_job_duration_seconds            Histogram — per (name, queue)
+ *   - crm_ai_research_total               Counter  — per (status)
+ *   - crm_ai_research_duration_seconds    Histogram
+ *   - crm_ai_openai_tokens_total          Counter  — per (decision_type)
+ *   - crm_ai_reply_classified_total       Counter  — per (intent_class)     [Sprint 6]
+ *   - crm_ai_decisions_total              Counter  — per (decision_type, autonomy_level) [Sprint 6]
+ *   - crm_ai_inbox_items_total            Counter  — per (item_type, event) [Sprint 6]
  */
 import { Counter, Histogram, register } from 'prom-client';
 
@@ -46,6 +52,70 @@ export function observeJobDuration(
   durationSec: number,
 ): void {
   jobDurationSeconds.observe(labels, durationSec);
+}
+
+// ── Phase 2 AI Metrics ─────────────────────────────────────────────────────
+
+export const aiResearchTotal = new Counter({
+  name: 'crm_ai_research_total',
+  help: 'Total AI lead research jobs by status',
+  labelNames: ['status'] as const,
+});
+
+export const aiResearchDurationSeconds = new Histogram({
+  name: 'crm_ai_research_duration_seconds',
+  help: 'Duration of AI lead research jobs in seconds',
+  buckets: [1, 2, 5, 10, 15, 20, 30],
+});
+
+export const aiOpenaiTokensTotal = new Counter({
+  name: 'crm_ai_openai_tokens_total',
+  help: 'Total OpenAI tokens consumed by decision type',
+  labelNames: ['decision_type'] as const,
+});
+
+export function incAiResearch(status: 'success' | 'failed' | 'skipped'): void {
+  aiResearchTotal.inc({ status });
+}
+
+export function observeAiResearchDuration(durationSec: number): void {
+  aiResearchDurationSeconds.observe(durationSec);
+}
+
+export function incAiTokens(decisionType: string, tokens: number): void {
+  aiOpenaiTokensTotal.inc({ decision_type: decisionType }, tokens);
+}
+
+// ── Sprint 6 AI Metrics ───────────────────────────────────────────────────
+
+export const aiReplyClassifiedTotal = new Counter({
+  name: 'crm_ai_reply_classified_total',
+  help: 'Inbound replies classified by intent class',
+  labelNames: ['intent_class'] as const,
+});
+
+export const aiDecisionsTotal = new Counter({
+  name: 'crm_ai_decisions_total',
+  help: 'All AI decisions by type and autonomy level',
+  labelNames: ['decision_type', 'autonomy_level'] as const,
+});
+
+export const aiInboxItemsTotal = new Counter({
+  name: 'crm_ai_inbox_items_total',
+  help: 'AI inbox item lifecycle events by type and event',
+  labelNames: ['item_type', 'event'] as const,
+});
+
+export function incAiReplyClassified(intentClass: string): void {
+  aiReplyClassifiedTotal.inc({ intent_class: intentClass });
+}
+
+export function incAiDecision(decisionType: string, autonomyLevel: string): void {
+  aiDecisionsTotal.inc({ decision_type: decisionType, autonomy_level: autonomyLevel });
+}
+
+export function incAiInboxItem(itemType: string, event: string): void {
+  aiInboxItemsTotal.inc({ item_type: itemType, event });
 }
 
 export { register };

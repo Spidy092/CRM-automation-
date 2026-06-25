@@ -82,6 +82,25 @@ describe('login', () => {
     expect(redis.incr).toHaveBeenCalled();
   });
 
+  it('rejects an inactive user (401) and records the failure', async () => {
+    (findUserByEmail as jest.Mock).mockResolvedValue({ ...user, is_active: false });
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+    await expect(login({ email: 'admin@crm.com', password: 'correct' })).rejects.toMatchObject({
+      statusCode: 401,
+    });
+    expect(redis.incr).toHaveBeenCalled();
+  });
+
+  it('does not call redis.expire when count > 1 on repeated failed login', async () => {
+    (findUserByEmail as jest.Mock).mockResolvedValue(user);
+    (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+    (redis.incr as jest.Mock).mockResolvedValue(2); // subsequent failure
+    await expect(login({ email: 'admin@crm.com', password: 'wrong' })).rejects.toMatchObject({
+      statusCode: 401,
+    });
+    expect(redis.expire).not.toHaveBeenCalled();
+  });
+
   it('returns tokens and stores the refresh token on success', async () => {
     (findUserByEmail as jest.Mock).mockResolvedValue(user);
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
@@ -116,6 +135,12 @@ describe('refresh', () => {
     (findUserById as jest.Mock).mockResolvedValue({ ...user, is_active: false });
     await expect(refresh('good-token')).rejects.toMatchObject({ statusCode: 401 });
   });
+
+  it('rejects when user not found after valid token (401)', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue({ id: 't1', user_id: 'u1' });
+    (findUserById as jest.Mock).mockResolvedValue(null);
+    await expect(refresh('good-token')).rejects.toMatchObject({ statusCode: 401 });
+  });
 });
 
 describe('logout', () => {
@@ -140,6 +165,13 @@ describe('forgotPassword', () => {
     expect(result).not.toBeNull();
     expect(result?.resetToken).toBeTruthy();
     expect(redis.set).toHaveBeenCalled();
+  });
+
+  it('returns null for an inactive user', async () => {
+    (findUserByEmail as jest.Mock).mockResolvedValue({ ...user, is_active: false });
+    const result = await forgotPassword('admin@crm.com');
+    expect(result).toBeNull();
+    expect(redis.set).not.toHaveBeenCalled();
   });
 });
 

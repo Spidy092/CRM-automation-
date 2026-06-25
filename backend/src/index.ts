@@ -33,6 +33,7 @@ import { scraperRoutes } from './modules/scraper';
 import { webhooksRoutes } from './webhooks/webhooks.routes';
 import { aiSettingsRoutes } from './modules/ai-settings/ai-settings.routes';
 import { notificationsRoutes } from './modules/notifications/notifications.routes';
+import aiInboxRoutes from './modules/ai-inbox/ai-inbox.routes';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
 
 const app: Application = express();
@@ -114,6 +115,7 @@ app.use('/api/v1/reports', reportsRoutes);
 app.use('/api/v1/ai-settings', aiSettingsRoutes);
 app.use('/api/v1/scraper', scraperRoutes);
 app.use('/api/v1/events', notificationsRoutes);
+app.use('/api/v1/ai-inbox', authenticatedLimiter, aiInboxRoutes);
 
 // ── Public Webhooks (no auth, signature verification in handlers) ───────────
 app.use('/webhooks', webhooksRoutes);

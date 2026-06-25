@@ -7,6 +7,7 @@ import {
   SCORING_CALCULATE_LEAD,
   cancelPendingOutreachJobs,
   enqueueOutreachDispatch,
+  enqueueAiResearch,
   type LeadEventJob,
 } from './queue';
 import { logger } from '../shared/utils/logger';
@@ -87,7 +88,8 @@ async function handleLeadEvent(data: LeadEventJob): Promise<void> {
   switch (event) {
     case 'lead.created':
       await scoringQueue.add(SCORING_CALCULATE_LEAD, { leadId });
-      logger.info('lead.created → scoring enqueued', { leadId });
+      await enqueueAiResearch({ leadId });
+      logger.info('lead.created → scoring + ai research enqueued', { leadId });
       break;
 
     case 'lead.stage_moved':

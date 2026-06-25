@@ -46,6 +46,22 @@ export const SCRAPER_QUEUE = 'scraper';
 export const LEAD_EVENT = 'lead:event';
 export const LEAD_EVENTS_QUEUE = 'lead-events';
 
+// AI Research (Phase 2 — Sprint 5)
+export const AI_RESEARCH_LEAD = 'ai:research-lead';
+export const AI_RESEARCH_QUEUE = 'ai-research';
+
+// AI Reply Classifier (Phase 2 — Sprint 6)
+export const AI_CLASSIFY_REPLY = 'ai:classify-reply';
+export const AI_REPLY_QUEUE = 'ai-reply';
+
+// AI Campaign Brain (Phase 2 — Sprint 6)
+export const AI_CAMPAIGN_BRIEF = 'ai:generate-campaign-brief';
+export const AI_CAMPAIGN_QUEUE = 'ai-campaign';
+
+// AI Inbox (Phase 2 — Sprint 6)
+export const AI_CREATE_INBOX_ITEM = 'ai:create-inbox-item';
+export const AI_INBOX_QUEUE = 'ai-inbox';
+
 /**
  * BullMQ requires `maxRetriesPerRequest: null` on the connection that backs
  * the workers. The shared `redis` client in `shared/utils/redis` is configured
@@ -113,6 +129,46 @@ export const scraperQueue = new Queue(SCRAPER_QUEUE, {
 });
 
 export const leadEventsQueue = new Queue(LEAD_EVENTS_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 1_000 },
+    removeOnComplete: { count: 2_000, age: 24 * 60 * 60 },
+    removeOnFail: { count: 500, age: 7 * 24 * 60 * 60 },
+  },
+});
+
+export const aiResearchQueue = new Queue(AI_RESEARCH_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 3_000 },
+    removeOnComplete: { count: 500, age: 24 * 60 * 60 },
+    removeOnFail: { count: 200, age: 7 * 24 * 60 * 60 },
+  },
+});
+
+export const aiReplyQueue = new Queue(AI_REPLY_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2_000 },
+    removeOnComplete: { count: 1_000, age: 24 * 60 * 60 },
+    removeOnFail: { count: 200, age: 7 * 24 * 60 * 60 },
+  },
+});
+
+export const aiCampaignQueue = new Queue(AI_CAMPAIGN_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5_000 },
+    removeOnComplete: { count: 200, age: 7 * 24 * 60 * 60 },
+    removeOnFail: { count: 100, age: 7 * 24 * 60 * 60 },
+  },
+});
+
+export const aiInboxQueue = new Queue(AI_INBOX_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -193,12 +249,55 @@ export interface ScraperRunJob {
   triggeredBy: string;
 }
 
+// ── Phase 2 AI Job Payloads ───────────────────────────────────────────────
+
+export interface AiResearchLeadJob {
+  leadId: string;
+  /** Re-research even if a profile already exists (e.g. after new inbound data). */
+  force?: boolean;
+}
+
+export interface AiClassifyReplyJob {
+  leadId: string;
+  channel: 'whatsapp' | 'email' | 'sms';
+  messageText: string;
+  /** External message ID from the provider (wam:xxx, tw:xxx, sg:xxx). */
+  externalMessageId?: string;
+}
+
+export type AiInboxItemType =
+  | 'approve_response'
+  | 'urgent_reply'
+  | 'pricing_inquiry'
+  | 'campaign_review'
+  | 'lead_handoff'
+  | 'objection_review';
+
+export interface AiCreateInboxItemJob {
+  assignedTo: string;
+  leadId?: string;
+  campaignId?: string;
+  itemType: AiInboxItemType;
+  title: string;
+  summary?: string;
+  urgencyScore: number;
+  aiDraftResponse?: string;
+  aiDraftConfidence?: number;
+  expiresInHours?: number;
+}
+
+export interface AiGenerateCampaignBriefJob {
+  campaignId: string;
+  triggeredBy: string;
+}
+
 export type LeadEventType =
   | 'lead.created'
   | 'lead.scored'
   | 'lead.stage_moved'
   | 'lead.assigned'
-  | 'lead.status_changed';
+  | 'lead.status_changed'
+  | 'lead.reply.received';   // Phase 2 — inbound message from any channel
 
 export interface LeadEventJob {
   event: LeadEventType;
@@ -270,6 +369,26 @@ export async function enqueueScraperRun(payload: ScraperRunJob): Promise<string>
 
 export async function enqueueLeadEvent(payload: LeadEventJob): Promise<void> {
   await leadEventsQueue.add(LEAD_EVENT, payload);
+}
+
+export async function enqueueAiResearch(payload: AiResearchLeadJob): Promise<void> {
+  await aiResearchQueue.add(AI_RESEARCH_LEAD, payload, {
+    jobId: `ai:research:${payload.leadId}${payload.force ? ':force' : ''}`,
+  });
+}
+
+export async function enqueueAiClassifyReply(payload: AiClassifyReplyJob): Promise<void> {
+  await aiReplyQueue.add(AI_CLASSIFY_REPLY, payload);
+}
+
+export async function enqueueAiCreateInboxItem(payload: AiCreateInboxItemJob): Promise<void> {
+  await aiInboxQueue.add(AI_CREATE_INBOX_ITEM, payload);
+}
+
+export async function enqueueAiCampaignBrief(payload: AiGenerateCampaignBriefJob): Promise<void> {
+  await aiCampaignQueue.add(AI_CAMPAIGN_BRIEF, payload, {
+    jobId: `ai:brief:${payload.campaignId}`,
+  });
 }
 
 export async function enqueueOutreachStopCheck(payload: OutreachStopCheckJob): Promise<void> {

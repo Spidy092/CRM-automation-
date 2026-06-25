@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/8</span>
+                <span class='fraction'>8/8</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/8</span>
+                <span class='fraction'>8/8</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -113,20 +113,17 @@
 <a name='L48'></a><a href='#L48'>48</a>
 <a name='L49'></a><a href='#L49'>49</a>
 <a name='L50'></a><a href='#L50'>50</a>
-<a name='L51'></a><a href='#L51'>51</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
+<a name='L51'></a><a href='#L51'>51</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -143,16 +140,14 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -160,20 +155,25 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import { z } from 'zod';</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { z } from 'zod';
 import { LeadClassification, LeadStatus } from '../../shared/types';
 &nbsp;
-const statusEnum = <span class="cstat-no" title="statement not covered" >z.enum(['active', 'paused', 'won', 'lost', 'opted_out']) as z.ZodEnum&lt;</span>
+const statusEnum = z.enum(['active', 'paused', 'won', 'lost', 'opted_out']) as z.ZodEnum&lt;
   [LeadStatus, ...LeadStatus[]]
 &gt;;
-const classificationEnum = <span class="cstat-no" title="statement not covered" >z.enum(['hot', 'warm', 'cold']) as z.ZodEnum&lt;</span>
+const classificationEnum = z.enum(['hot', 'warm', 'cold']) as z.ZodEnum&lt;
   [LeadClassification, ...LeadClassification[]]
 &gt;;
 &nbsp;
-const baseLeadSchema = <span class="cstat-no" title="statement not covered" >z.object({</span>
+const baseLeadSchema = z.object({
   business_name: z.string().min(1, 'business_name is required').max(255),
   contact_name: z.string().min(1, 'contact_name is required').max(255),
   phone: z.string().min(1, 'phone is required').max(50),
@@ -193,11 +193,11 @@ const baseLeadSchema = <span class="cstat-no" title="statement not covered" >z.o
   notes: z.string().optional().nullable(),
 });
 &nbsp;
-export const <span class="cstat-no" title="statement not covered" >createLeadSchema = baseLeadSchema;</span>
+export const createLeadSchema = baseLeadSchema;
 &nbsp;
-export const <span class="cstat-no" title="statement not covered" >updateLeadSchema = baseLeadSchema.partial();</span>
+export const updateLeadSchema = baseLeadSchema.partial();
 &nbsp;
-export const <span class="cstat-no" title="statement not covered" >listLeadsQuerySchema = z.object({</span>
+export const listLeadsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional(),
   cursor: z.string().optional(),
   status: statusEnum.optional(),
@@ -210,7 +210,7 @@ export const <span class="cstat-no" title="statement not covered" >listLeadsQuer
   tags: z.string().max(255).optional(), // comma-separated
 });
 &nbsp;
-export const <span class="cstat-no" title="statement not covered" >pauseLeadSchema = z.object({</span>
+export const pauseLeadSchema = z.object({
   paused: z.boolean().optional(), // default true; set false to resume
 });
 &nbsp;</pre></td></tr></table></pre>
@@ -220,7 +220,7 @@ export const <span class="cstat-no" title="statement not covered" >pauseLeadSche
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-24T10:36:03.687Z
+                at 2026-06-25T08:15:12.330Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

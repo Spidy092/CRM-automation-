@@ -10,7 +10,7 @@
  */
 import { pool, queryOne } from '../shared/utils/db';
 import { logger } from '../shared/utils/logger';
-import { cancelPendingOutreachJobs } from '../workers/queue';
+import { cancelPendingOutreachJobs, enqueueAiClassifyReply } from '../workers/queue';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +89,27 @@ export async function handleWhatsAppMessage(
       [existing.id],
     );
     await stopAutomationForReply(existing.id);
+
+    // Extract message text for AI classification
+    const textBody =
+      (msg.text as Record<string, unknown> | undefined)?.body as string | undefined ??
+      (msg.interactive as Record<string, unknown> | undefined)?.button_reply?.toString() ??
+      '';
+
+    if (textBody) {
+      const wamId = msg.id as string | undefined;
+      void enqueueAiClassifyReply({
+        leadId: existing.id,
+        channel: 'whatsapp',
+        messageText: textBody,
+        externalMessageId: wamId ? `wam:${wamId}` : undefined,
+      }).catch((err: unknown) => {
+        logger.warn('WhatsApp: failed to enqueue AI reply classification', {
+          leadId: existing.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     logger.info('WhatsApp reply recorded', { leadId: existing.id, from });
     return { action: 'reply_recorded', leadId: existing.id, details: `Reply from ${from}` };
@@ -194,6 +215,20 @@ export async function handleTwilioMessage(
       [existing.id],
     );
     await stopAutomationForReply(existing.id);
+
+    if (body) {
+      void enqueueAiClassifyReply({
+        leadId: existing.id,
+        channel: 'sms',
+        messageText: body,
+        externalMessageId: smsSid ? `tw:${smsSid}` : undefined,
+      }).catch((err: unknown) => {
+        logger.warn('Twilio: failed to enqueue AI reply classification', {
+          leadId: existing.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     return { action: 'reply_recorded', leadId: existing.id, details: `SMS reply from ${phone}` };
   }

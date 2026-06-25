@@ -1,5 +1,6 @@
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
 export type OutreachTone = 'formal' | 'professional' | 'conversational';
+export type AutonomyLevel = 'supervised' | 'guarded' | 'autopilot';
 
 export interface Campaign {
   id: string;
@@ -11,6 +12,8 @@ export interface Campaign {
   sequence_id: string | null;
   pipeline_id: string | null;
   ai_personalization_enabled: boolean;
+  autonomy_level: AutonomyLevel;
+  ai_min_confidence: number;
   created_by: string;
   launched_at: string | null;
   created_at: string;
@@ -32,6 +35,8 @@ export interface CreateCampaignInput {
   sequence_id?: string;
   pipeline_id?: string;
   ai_personalization_enabled?: boolean;
+  autonomy_level?: AutonomyLevel;
+  ai_min_confidence?: number;
 }
 
 export interface UpdateCampaignInput {
@@ -42,6 +47,8 @@ export interface UpdateCampaignInput {
   sequence_id?: string;
   pipeline_id?: string;
   ai_personalization_enabled?: boolean;
+  autonomy_level?: AutonomyLevel;
+  ai_min_confidence?: number;
 }
 
 export interface AddLeadsInput {

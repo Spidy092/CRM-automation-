@@ -1,0 +1,186 @@
+jest.mock('./users.repository', () => ({
+  findUserByEmail: jest.fn(),
+  findAllUsers: jest.fn(),
+  findUserById: jest.fn(),
+  insertUser: jest.fn(),
+  updateUserProfile: jest.fn(),
+}));
+jest.mock('bcrypt', () => ({ hash: jest.fn(), compare: jest.fn() }));
+jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid-v4') }));
+
+import bcrypt from 'bcrypt';
+import { createUser, listUsers, getUser, updateProfile } from './users.service';
+import {
+  findUserByEmail,
+  findAllUsers,
+  findUserById,
+  insertUser,
+  updateUserProfile,
+} from './users.repository';
+import { User } from './users.types';
+import { AuthenticatedUser } from '../../shared/types';
+
+const adminUser: AuthenticatedUser = {
+  id: 'admin-1',
+  email: 'admin@crm.com',
+  role: 'admin',
+};
+
+const salesUser: AuthenticatedUser = {
+  id: 'sales-1',
+  email: 'sales@crm.com',
+  role: 'sales',
+};
+
+const sampleUser: User = {
+  id: 'user-1',
+  name: 'Alice',
+  email: 'alice@crm.com',
+  role: 'sales',
+  is_active: true,
+  created_at: new Date('2025-01-01T00:00:00Z'),
+};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
+});
+
+describe('createUser', () => {
+  it('rejects when email already exists (409)', async () => {
+    (findUserByEmail as jest.Mock).mockResolvedValue(sampleUser);
+    await expect(
+      createUser({
+        name: 'Bob',
+        email: 'alice@crm.com',
+        password: 'pw12345',
+        role: 'sales',
+        is_active: true,
+      }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+    expect(insertUser).not.toHaveBeenCalled();
+  });
+
+  it('hashes the password with bcrypt cost 12 and inserts the user', async () => {
+    (findUserByEmail as jest.Mock).mockResolvedValue(null);
+    (insertUser as jest.Mock).mockResolvedValue({ ...sampleUser, id: 'mock-uuid-v4' });
+
+    const result = await createUser({
+      name: 'Bob',
+      email: 'BOB@CRM.COM',
+      password: 'pw12345',
+      role: 'sales',
+      is_active: true,
+    });
+
+    expect(bcrypt.hash).toHaveBeenCalledWith('pw12345', 12);
+    expect(insertUser).toHaveBeenCalledWith(
+      'mock-uuid-v4',
+      {
+        name: 'Bob',
+        email: 'BOB@CRM.COM',
+        password: 'pw12345',
+        role: 'sales',
+        is_active: true,
+      },
+      'hashed-password',
+    );
+    expect(result.id).toBe('mock-uuid-v4');
+  });
+
+  it('lowercases the email when checking for duplicates and inserting', async () => {
+    (findUserByEmail as jest.Mock).mockResolvedValue(null);
+    (insertUser as jest.Mock).mockResolvedValue(sampleUser);
+
+    await createUser({
+      name: 'Bob',
+      email: 'MixedCase@CRM.com',
+      password: 'pw12345',
+      role: 'admin',
+      is_active: false,
+    });
+
+    expect(findUserByEmail).toHaveBeenCalledWith('mixedcase@crm.com');
+    expect(insertUser).toHaveBeenCalledWith(
+      'mock-uuid-v4',
+      expect.objectContaining({ email: 'MixedCase@CRM.com', is_active: false }),
+      'hashed-password',
+    );
+  });
+});
+
+describe('listUsers', () => {
+  it('returns all users from the repository', async () => {
+    (findAllUsers as jest.Mock).mockResolvedValue([sampleUser]);
+    const result = await listUsers();
+    expect(result).toEqual([sampleUser]);
+    expect(findAllUsers).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an empty array when there are no users', async () => {
+    (findAllUsers as jest.Mock).mockResolvedValue([]);
+    const result = await listUsers();
+    expect(result).toEqual([]);
+  });
+});
+
+describe('getUser', () => {
+  it('allows admin to retrieve any user', async () => {
+    (findUserById as jest.Mock).mockResolvedValue(sampleUser);
+    const result = await getUser('user-1', adminUser);
+    expect(result).toEqual(sampleUser);
+  });
+
+  it('allows manager to retrieve any user', async () => {
+    (findUserById as jest.Mock).mockResolvedValue(sampleUser);
+    const manager: AuthenticatedUser = { id: 'mgr-1', email: 'mgr@crm.com', role: 'manager' };
+    const result = await getUser('user-1', manager);
+    expect(result).toEqual(sampleUser);
+  });
+
+  it('allows sales actor to retrieve their own profile', async () => {
+    (findUserById as jest.Mock).mockResolvedValue({ ...sampleUser, id: 'sales-1' });
+    const result = await getUser('sales-1', salesUser);
+    expect(result.id).toBe('sales-1');
+  });
+
+  it('forbids sales actor from retrieving another user (403)', async () => {
+    await expect(getUser('user-1', salesUser)).rejects.toMatchObject({ statusCode: 403 });
+    expect(findUserById).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when user not found (admin)', async () => {
+    (findUserById as jest.Mock).mockResolvedValue(null);
+    await expect(getUser('missing', adminUser)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('updateProfile', () => {
+  it('allows admin to update any profile', async () => {
+    (updateUserProfile as jest.Mock).mockResolvedValue({ ...sampleUser, name: 'Bob' });
+    const result = await updateProfile('user-1', { name: 'Bob' }, adminUser);
+    expect(result.name).toBe('Bob');
+    expect(updateUserProfile).toHaveBeenCalledWith('user-1', { name: 'Bob' });
+  });
+
+  it('allows sales actor to update their own profile', async () => {
+    (updateUserProfile as jest.Mock).mockResolvedValue({ ...sampleUser, id: 'sales-1', name: 'Carl' });
+    const result = await updateProfile('sales-1', { name: 'Carl' }, salesUser);
+    expect(result.name).toBe('Carl');
+  });
+
+  it('forbids sales actor from updating another user (403)', async () => {
+    await expect(updateProfile('user-1', { name: 'Hacked' }, salesUser)).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    expect(updateUserProfile).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the target user does not exist', async () => {
+    (updateUserProfile as jest.Mock).mockResolvedValue(null);
+    await expect(updateProfile('missing', { name: 'X' }, adminUser)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+});
