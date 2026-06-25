@@ -16,11 +16,11 @@ const router = Router();
 
 router.use(authenticate, authenticatedLimiter);
 
-router.get('/config', wrap(getConfigHandler));
+router.get('/config', authorize('admin', 'manager'), wrap(getConfigHandler));
 router.put('/config', authorize('admin', 'manager'), wrap(updateConfigHandler));
 router.get('/eligible-users', authorize('admin', 'manager'), wrap(listEligibleUsersHandler));
 router.post('/manual', authorize('admin', 'manager'), wrap(manualAssignHandler));
 router.post('/override', authorize('admin', 'manager'), wrap(overrideAssignHandler));
-router.get('/user/:userId', wrap(getUserAssignmentsHandler));
+router.get('/user/:userId', authorize('admin', 'manager'), wrap(getUserAssignmentsHandler));
 
 export { router as assignmentsRoutes };

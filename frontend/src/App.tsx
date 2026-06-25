@@ -17,6 +17,19 @@ import { CampaignsPage } from '@/pages/CampaignsPage';
 import { CampaignFormPage } from '@/pages/CampaignFormPage';
 import { PipelinePage } from '@/pages/PipelinePage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { UsersPage } from '@/pages/UsersPage';
+import { ReportsPage } from '@/pages/ReportsPage';
+import { ScraperConfigPage } from '@/pages/ScraperConfigPage';
+import { ScoringPage } from '@/pages/ScoringPage';
+import { AssignmentsPage } from '@/pages/AssignmentsPage';
+import { IntegrationsPage } from '@/pages/IntegrationsPage';
+import AISettingsPage from '@/pages/AISettingsPage';
+import { OutreachSequencesPage } from '@/pages/OutreachSequencesPage';
+import { AutomationRulesPage } from '@/pages/AutomationRulesPage';
+import { LeadDetailPage } from '@/pages/LeadDetailPage';
+import { TemplatesPage } from '@/pages/TemplatesPage';
+import { TemplateFormPage } from '@/pages/TemplateFormPage';
+import { CustomFieldsPage } from '@/pages/CustomFieldsPage';
 import { ToastProvider } from '@/components/ui/Toast';
 
 const queryClient = new QueryClient({
@@ -114,12 +127,26 @@ function App() {
                 <Route index element={<DashboardPage />} />
                 <Route path="leads" element={<LeadsPage />} />
                 <Route path="leads/new" element={<LeadFormPage />} />
-                <Route path="leads/:id/edit" element={<LeadFormPage />} />
                 <Route path="leads/import" element={<ImportLeadsPage />} />
+                <Route path="leads/:id" element={<LeadDetailPage />} />
+                <Route path="leads/:id/edit" element={<LeadFormPage />} />
                 <Route path="campaigns" element={<CampaignsPage />} />
                 <Route path="campaigns/new" element={<CampaignFormPage />} />
                 <Route path="pipelines" element={<PipelinePage />} />
+                <Route path="reports" element={<ReportsPage />} />
+                <Route path="scraper" element={<ScraperConfigPage />} />
                 <Route path="settings" element={<SettingsPage />} />
+                <Route path="settings/users" element={<UsersPage />} />
+                <Route path="settings/ai" element={<AISettingsPage />} />
+                <Route path="settings/scoring" element={<ScoringPage />} />
+                <Route path="settings/assignments" element={<AssignmentsPage />} />
+                <Route path="settings/integrations" element={<IntegrationsPage />} />
+                <Route path="automation/rules" element={<AutomationRulesPage />} />
+                <Route path="outreach/sequences" element={<OutreachSequencesPage />} />
+                <Route path="templates" element={<TemplatesPage />} />
+                <Route path="templates/new" element={<TemplateFormPage />} />
+                <Route path="templates/:id/edit" element={<TemplateFormPage />} />
+                <Route path="settings/custom-fields" element={<CustomFieldsPage />} />
               </Route>
             </Routes>
           </AppInitializer>

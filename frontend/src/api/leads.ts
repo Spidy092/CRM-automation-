@@ -26,8 +26,12 @@ export function useLeads(filters: LeadFilters = {}) {
       if (filters.limit) params.append('limit', filters.limit.toString());
       if (filters.cursor) params.append('cursor', filters.cursor);
 
-      const response = await apiClient.get<PaginatedResponse<Lead>>('/leads', { params });
-      return response.data;
+      const response = await apiClient.get<ApiResponse<Lead[]>>('/leads', { params });
+      const meta = response.data.meta as { limit: number; hasMore: boolean; nextCursor?: string } | undefined;
+      return {
+        items: response.data.data,
+        meta: meta ?? { limit: 25, hasMore: false },
+      } as PaginatedResponse<Lead>;
     },
   });
 }
@@ -118,6 +122,62 @@ export function usePauseLead() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['leads', id] });
+    },
+  });
+}
+
+export interface LeadActivityEntry {
+  id: string;
+  kind: 'audit' | 'outreach';
+  action: string | null;
+  channel: string | null;
+  status: string | null;
+  actor_id: string | null;
+  old_value: unknown;
+  new_value: unknown;
+  created_at: string;
+}
+
+export function useLeadActivity(leadId: string, limit = 50) {
+  return useQuery({
+    queryKey: ['leads', leadId, 'activity', limit],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<LeadActivityEntry[]>>(
+        `/leads/${leadId}/activity`,
+        { params: { limit } },
+      );
+      return response.data.data ?? [];
+    },
+    enabled: !!leadId,
+  });
+}
+
+export function useBulkUpdateLeads() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ ids, patch }: { ids: string[]; patch: Partial<import('@/types').LeadInput> }) => {
+      await Promise.all(
+        ids.map((id) => apiClient.put<ApiResponse<Lead>>(`/leads/${id}`, patch)),
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+    },
+  });
+}
+
+export function useBulkPauseLeads() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ ids, paused }: { ids: string[]; paused: boolean }) => {
+      await Promise.all(
+        ids.map((id) => apiClient.post<ApiResponse<Lead>>(`/leads/${id}/pause`, { paused })),
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
     },
   });
 }

@@ -14,6 +14,7 @@ export interface Campaign {
   target_countries: string[];
   sequence_id: string | null;
   pipeline_id: string | null;
+  ai_personalization_enabled: boolean;
   created_by: string;
   launched_at: string | null;
   created_at: string;
@@ -29,6 +30,29 @@ export interface CampaignStats {
   failed: number;
 }
 
+export interface AutomationPreview {
+  campaignId: string;
+  sequenceId: string | null;
+  firstStep: {
+    stepNumber: number;
+    channel: 'whatsapp' | 'email' | 'sms' | 'phone_call';
+    templateId: string;
+    delayHours: number;
+  } | null;
+  eligibleLeads: Array<{ leadId: string; businessName: string; destination: string }>;
+  skippedLeads: Array<{ leadId: string; businessName: string; reasons: string[] }>;
+  templateIssues: string[];
+  connectorIssues: string[];
+  expectedJobs: number;
+  mockMode: boolean;
+}
+
+export interface AutomationLaunchMeta {
+  enqueued: number;
+  skipped: number;
+  mockMode: boolean;
+}
+
 export interface CreateCampaignInput {
   name: string;
   tone?: OutreachTone;
@@ -36,6 +60,7 @@ export interface CreateCampaignInput {
   target_countries?: string[];
   sequence_id?: string;
   pipeline_id?: string;
+  ai_personalization_enabled?: boolean;
 }
 
 export interface UpdateCampaignInput {
@@ -45,6 +70,7 @@ export interface UpdateCampaignInput {
   target_countries?: string[];
   sequence_id?: string;
   pipeline_id?: string;
+  ai_personalization_enabled?: boolean;
 }
 
 export function useCampaigns() {
@@ -65,6 +91,19 @@ export function useCampaign(id: string) {
       return response.data.data;
     },
     enabled: !!id,
+  });
+}
+
+export function useAutomationPreview(id: string, enabled = false) {
+  return useQuery({
+    queryKey: ['campaigns', id, 'automation-preview'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<AutomationPreview>>(
+        `/campaigns/${id}/automation-preview`,
+      );
+      return response.data.data;
+    },
+    enabled: !!id && enabled,
   });
 }
 
@@ -127,7 +166,10 @@ export function useLaunchCampaign() {
   return useMutation({
     mutationFn: async (id: string) => {
       const response = await apiClient.post<ApiResponse<Campaign>>(`/campaigns/${id}/launch`);
-      return response.data.data;
+      return {
+        campaign: response.data.data,
+        automation: response.data.meta?.automation as AutomationLaunchMeta | undefined,
+      };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });

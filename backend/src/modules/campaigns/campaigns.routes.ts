@@ -9,6 +9,7 @@ import {
   createCampaignHandler,
   updateCampaignHandler,
   deleteCampaignHandler,
+  automationPreviewHandler,
   launchCampaignHandler,
   pauseCampaignHandler,
   resumeCampaignHandler,
@@ -28,6 +29,7 @@ router.post('/', authorize('admin', 'manager', 'marketing'), wrap(createCampaign
 router.put('/:id', authorize('admin', 'manager', 'marketing'), wrap(updateCampaignHandler));
 router.delete('/:id', authorize('admin', 'manager'), wrap(deleteCampaignHandler));
 
+router.get('/:id/automation-preview', authorize('admin', 'manager'), wrap(automationPreviewHandler));
 router.post('/:id/launch', authorize('admin', 'manager'), wrap(launchCampaignHandler));
 router.post('/:id/pause', authorize('admin', 'manager'), wrap(pauseCampaignHandler));
 router.post('/:id/resume', authorize('admin', 'manager'), wrap(resumeCampaignHandler));

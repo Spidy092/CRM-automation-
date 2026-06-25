@@ -1,13 +1,28 @@
 import { pool } from '../../shared/utils/db';
+import { logger } from '../../shared/utils/logger';
+import { AppError } from '../../shared/middleware/errorHandler';
 import { Campaign, CampaignLead, CampaignStats } from './campaigns.types';
 
 export async function findCampaigns(): Promise<Campaign[]> {
-  const result = await pool.query<Campaign>('SELECT * FROM campaigns ORDER BY created_at DESC');
+  const result = await pool.query<Campaign>(
+    'SELECT * FROM campaigns WHERE deleted_at IS NULL ORDER BY created_at DESC',
+  );
+  return result.rows;
+}
+
+export async function findActiveCampaignsByPipeline(pipelineId: string): Promise<Campaign[]> {
+  const result = await pool.query<Campaign>(
+    `SELECT * FROM campaigns WHERE pipeline_id = $1 AND status = 'active' AND sequence_id IS NOT NULL AND deleted_at IS NULL`,
+    [pipelineId],
+  );
   return result.rows;
 }
 
 export async function findCampaignById(id: string): Promise<Campaign | null> {
-  const result = await pool.query<Campaign>('SELECT * FROM campaigns WHERE id = $1', [id]);
+  const result = await pool.query<Campaign>(
+    'SELECT * FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+    [id],
+  );
   return result.rows[0] || null;
 }
 
@@ -19,12 +34,13 @@ export async function insertCampaign(
     target_countries: string[];
     sequence_id?: string;
     pipeline_id?: string;
+    ai_personalization_enabled?: boolean;
   },
   createdBy: string,
 ): Promise<Campaign> {
   const result = await pool.query<Campaign>(
-    `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id, ai_personalization_enabled, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [
       data.name,
       data.tone,
@@ -32,6 +48,7 @@ export async function insertCampaign(
       data.target_countries,
       data.sequence_id || null,
       data.pipeline_id || null,
+      data.ai_personalization_enabled ?? false,
       createdBy,
     ],
   );
@@ -47,6 +64,7 @@ export async function updateCampaign(
     target_countries?: string[];
     sequence_id?: string;
     pipeline_id?: string;
+    ai_personalization_enabled?: boolean;
   },
 ): Promise<Campaign> {
   const fields: string[] = [];
@@ -77,41 +95,55 @@ export async function updateCampaign(
     fields.push(`pipeline_id = $${paramIndex++}`);
     values.push(data.pipeline_id);
   }
+  if (data.ai_personalization_enabled !== undefined) {
+    fields.push(`ai_personalization_enabled = $${paramIndex++}`);
+    values.push(data.ai_personalization_enabled);
+  }
 
   values.push(id);
   const result = await pool.query<Campaign>(
-    `UPDATE campaigns SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+    `UPDATE campaigns SET ${fields.join(', ')} WHERE id = $${paramIndex} AND deleted_at IS NULL RETURNING *`,
     values,
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Campaign not found', 404);
+  return row;
 }
 
 export async function deleteCampaign(id: string): Promise<void> {
-  await pool.query('DELETE FROM campaigns WHERE id = $1', [id]);
+  await pool.query('UPDATE campaigns SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [
+    id,
+  ]);
 }
 
 export async function launchCampaign(id: string): Promise<Campaign> {
   const result = await pool.query<Campaign>(
-    `UPDATE campaigns SET status = 'active', launched_at = NOW() WHERE id = $1 RETURNING *`,
+    `UPDATE campaigns SET status = 'active', launched_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
     [id],
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Campaign not found', 404);
+  return row;
 }
 
 export async function pauseCampaign(id: string): Promise<Campaign> {
   const result = await pool.query<Campaign>(
-    `UPDATE campaigns SET status = 'paused' WHERE id = $1 RETURNING *`,
+    `UPDATE campaigns SET status = 'paused' WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
     [id],
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Campaign not found', 404);
+  return row;
 }
 
 export async function resumeCampaign(id: string): Promise<Campaign> {
   const result = await pool.query<Campaign>(
-    `UPDATE campaigns SET status = 'active' WHERE id = $1 RETURNING *`,
+    `UPDATE campaigns SET status = 'active' WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
     [id],
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Campaign not found', 404);
+  return row;
 }
 
 export async function addLeadsToCampaign(
@@ -130,7 +162,18 @@ export async function addLeadsToCampaign(
         results.push(result.rows[0]);
       }
     } catch (error) {
-      // Skip duplicates or invalid leads
+      const pgCode = (error as { code?: string }).code;
+      if (pgCode === '23505') {
+        // Duplicate — skip silently (ON CONFLICT should already handle this, but be safe)
+        continue;
+      }
+      logger.warn('Failed to add lead to campaign', {
+        campaignId,
+        leadId,
+        pgCode,
+        error: String(error),
+      });
+      throw error;
     }
   }
   return results;
@@ -145,15 +188,42 @@ export async function removeLeadFromCampaign(campaignId: string, leadId: string)
 
 export async function findCampaignLeads(campaignId: string): Promise<string[]> {
   const result = await pool.query<{ lead_id: string }>(
-    'SELECT lead_id FROM campaign_leads WHERE campaign_id = $1',
+    `SELECT cl.lead_id FROM campaign_leads cl
+     JOIN campaigns c ON c.id = cl.campaign_id
+     WHERE cl.campaign_id = $1 AND c.deleted_at IS NULL`,
     [campaignId],
   );
   return result.rows.map((r) => r.lead_id);
 }
 
+export interface CampaignLeadRow {
+  id: string;
+  business_name: string;
+  phone: string;
+  email: string;
+  status: 'active' | 'paused' | 'won' | 'lost' | 'opted_out';
+}
+
+export async function findCampaignLeadRows(campaignId: string): Promise<CampaignLeadRow[]> {
+  const result = await pool.query<CampaignLeadRow>(
+    `SELECT l.id, l.business_name, l.phone, l.email, l.status
+     FROM campaign_leads cl
+     JOIN campaigns c ON c.id = cl.campaign_id
+     JOIN leads l ON l.id = cl.lead_id
+     WHERE cl.campaign_id = $1
+       AND c.deleted_at IS NULL
+       AND l.deleted_at IS NULL
+     ORDER BY cl.added_at ASC`,
+    [campaignId],
+  );
+  return result.rows;
+}
+
 export async function getCampaignStats(campaignId: string): Promise<CampaignStats> {
   const leadsResult = await pool.query<{ total: string }>(
-    'SELECT COUNT(*) as total FROM campaign_leads WHERE campaign_id = $1',
+    `SELECT COUNT(*) as total FROM campaign_leads cl
+     JOIN campaigns c ON c.id = cl.campaign_id
+     WHERE cl.campaign_id = $1 AND c.deleted_at IS NULL`,
     [campaignId],
   );
 

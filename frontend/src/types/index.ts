@@ -160,3 +160,109 @@ export interface LoginResult {
     role: UserRole;
   };
 }
+
+/* ─── Reports Types ─── */
+
+export interface DashboardMetrics {
+  totalLeads: number;
+  qualifiedLeads: number;
+  totalCampaigns: number;
+  activeOutreach: number;
+  pipelineConversion: number;
+  recentActivity: Array<{
+    date: string;
+    leads: number;
+    outreach: number;
+  }>;
+}
+
+export interface LeadGenerationRow {
+  date: string;
+  source: string;
+  count: number;
+}
+
+export interface OutreachPerformanceRow {
+  date: string;
+  channel: string;
+  sent: number;
+  delivered: number;
+  opened: number;
+  replied: number;
+  failed: number;
+}
+
+export interface PipelineConversionRow {
+  stageName: string;
+  leadCount: number;
+  conversionRate: number;
+  avgDays: number;
+}
+
+export interface SalesRepPerformanceRow {
+  repId: string;
+  repName: string;
+  leadsAssigned: number;
+  leadsConverted: number;
+  conversionRate: number;
+  avgResponseTime: number;
+}
+
+export interface ReportListFilters {
+  limit?: number;
+  offset?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface ExportJobInput {
+  reportType: string;
+  format: 'csv' | 'xlsx' | 'pdf';
+  filters?: Record<string, unknown>;
+}
+
+export interface ExportJobResult {
+  jobId: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+}
+
+/* ─── Scraper Types ─── */
+
+export type ScraperSourceType = 'google_places' | 'facebook' | 'youtube' | 'web_scrape';
+
+export type ScraperLogStatus = 'running' | 'completed' | 'failed' | 'partially_completed';
+
+export interface ScraperConfig {
+  id: string;
+  name: string;
+  source_type: ScraperSourceType;
+  is_active: boolean;
+  config: Record<string, unknown>;
+  schedule_cron: string | null;
+  last_run_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScraperLog {
+  id: string;
+  config_id: string;
+  status: ScraperLogStatus;
+  started_at: string;
+  completed_at: string | null;
+  records_found: number;
+  records_imported: number;
+  records_failed: number;
+  error_message: string | null;
+  raw_response: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ScraperRunResult {
+  logId: string;
+  recordsFound: number;
+  recordsImported: number;
+  recordsFailed: number;
+  status: ScraperLogStatus;
+}

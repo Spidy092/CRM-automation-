@@ -15,6 +15,13 @@ import {
   IntegrationTestResult,
   IntegrationUpdateInput,
 } from './integrations.types';
+import * as whatsappConnector from './whatsapp/whatsapp.connector';
+import * as twilioConnector from './twilio/twilio.connector';
+import * as sendgridConnector from './sendgrid/sendgrid.connector';
+import * as smtpConnector from './smtp/smtp.connector';
+import * as googleSheetsConnector from './google-sheets/google-sheets.connector';
+import * as googleCalendarConnector from './google-calendar/google-calendar.connector';
+import * as outlookConnector from './outlook/outlook.connector';
 
 function toPublic(row: Integration | IntegrationPublic): IntegrationPublic {
   // Explicit field projection — keeps `encrypted_credentials` out of the response.
@@ -78,9 +85,9 @@ export async function updateIntegration(
 }
 
 /**
- * Tests the integration. For S3-01 this validates that stored credentials
- * decrypt cleanly and have the expected shape. Once connectors land in
- * S3-07/08/09, this will dispatch to `connectors/<name>.test(integration)`.
+ * Tests the integration — decrypts credentials, validates schema via the
+ * connector's loadCredentials(), and (where supported) performs a live
+ * vendor handshake.
  *
  * NEVER returns decrypted credentials. NEVER logs them.
  */
@@ -95,7 +102,6 @@ export async function testIntegration(
   try {
     credentials = await findCredentialsById(id);
   } catch (err) {
-    // DB failure — record and surface.
     const message = err instanceof Error ? err.message : 'unknown error';
     await recordTestResult(id, 'failed');
     return {
@@ -116,8 +122,7 @@ export async function testIntegration(
     };
   }
 
-  // Decrypt-then-validate. We only check parseability here — vendor-specific
-  // shape validation belongs in the connector (S3-07/08/09).
+  // Base sanity-check: credentials must decrypt to valid JSON.
   try {
     JSON.parse(decrypt(credentials));
   } catch (err) {
@@ -139,6 +144,60 @@ export async function testIntegration(
     };
   }
 
+  // Per-connector credential shape validation (and live ping where possible).
+  let testMessage = 'Credentials validated successfully.';
+  try {
+    switch (integration.name) {
+      case 'whatsapp':
+        await whatsappConnector.loadCredentials();
+        testMessage = 'WhatsApp credentials validated (shape + decryption OK).';
+        break;
+      case 'twilio':
+        await twilioConnector.loadCredentials();
+        testMessage = 'Twilio credentials validated (shape + decryption OK).';
+        break;
+      case 'sendgrid':
+        await sendgridConnector.loadCredentials();
+        testMessage = 'SendGrid credentials validated (shape + decryption OK).';
+        break;
+      case 'smtp':
+        await smtpConnector.loadCredentials();
+        testMessage = 'SMTP credentials validated (shape + decryption OK).';
+        break;
+      case 'google_sheets':
+        await googleSheetsConnector.loadCredentials();
+        testMessage = 'Google Sheets credentials validated (shape + decryption OK).';
+        break;
+      case 'google_calendar':
+        await googleCalendarConnector.loadCredentials();
+        testMessage = 'Google Calendar credentials validated (shape + decryption OK).';
+        break;
+      case 'outlook':
+        await outlookConnector.loadCredentials();
+        testMessage = 'Outlook credentials validated (shape + decryption OK).';
+        break;
+      default:
+        testMessage = `Credentials for "${integration.display_name}" decrypted and parsed successfully.`;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown error';
+    await recordTestResult(id, 'failed');
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'integration.test_failed',
+      entityType: 'integration',
+      entityId: id,
+      newValue: { reason: 'connector_validation_failed', error: message },
+      ipAddress: actor.ipAddress ?? null,
+    });
+    return {
+      ok: false,
+      status: 'failed',
+      message: `Connector credential validation failed: ${message}`,
+      tested_at: new Date().toISOString(),
+    };
+  }
+
   await recordTestResult(id, 'ok');
   await writeAuditLog({
     userId: actor.id,
@@ -151,7 +210,7 @@ export async function testIntegration(
   return {
     ok: true,
     status: 'ok',
-    message: 'Credentials decrypt successfully. Vendor handshake will be added in S3-07/08/09.',
+    message: testMessage,
     tested_at: new Date().toISOString(),
   };
 }

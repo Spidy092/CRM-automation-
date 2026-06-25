@@ -1,0 +1,51 @@
+
+ RUN  v3.2.6 /home/sr-user91/Videos/CRM/frontend
+      Coverage enabled with v8
+
+ ✓ src/pages/__tests__/CampaignFormPage.test.tsx (1 test) 94ms
+ ✓ src/pages/__tests__/PipelinePage.test.tsx (1 test) 49ms
+ ✓ src/pages/__tests__/DashboardPage.test.tsx (1 test) 141ms
+ ✓ src/pages/__tests__/ScraperConfigPage.test.tsx (1 test) 59ms
+ ✓ src/pages/__tests__/ResetPasswordPage.test.tsx (1 test) 340ms
+   ✓ ResetPasswordPage > renders successfully  338ms
+ ❯ src/pages/__tests__/ScoringPage.test.tsx (1 test | 1 failed) 52ms
+   × ScoringPage > renders successfully 50ms
+     → useToast must be used within ToastProvider
+ ❯ src/pages/__tests__/AssignmentsPage.test.tsx (1 test | 1 failed) 106ms
+   × AssignmentsPage > renders successfully 104ms
+     → useToast must be used within ToastProvider
+ ❯ src/pages/__tests__/LeadsPage.test.tsx (1 test | 1 failed) 109ms
+   × LeadsPage > renders successfully 105ms
+     → useToast must be used within ToastProvider
+ ✓ src/pages/__tests__/CampaignsPage.test.tsx (1 test) 82ms
+ ❯ src/pages/__tests__/LeadFormPage.test.tsx (1 test | 1 failed) 55ms
+   × LeadFormPage > renders successfully 53ms
+     → useToast must be used within ToastProvider
+ ✓ src/pages/__tests__/SettingsPage.test.tsx (1 test) 76ms
+ ✓ src/pages/__tests__/LoginPage.test.tsx (1 test) 351ms
+   ✓ LoginPage > renders successfully  349ms
+ ✓ src/pages/__tests__/ImportLeadsPage.test.tsx (1 test) 121ms
+ ✓ src/pages/__tests__/ForgotPasswordPage.test.tsx (1 test) 630ms
+   ✓ ForgotPasswordPage > renders successfully  626ms
+ ✓ src/pages/__tests__/ReportsPage.test.tsx (1 test) 69ms
+ ✓ src/store/__tests__/authStore.test.ts (7 tests) 16ms
+ ✓ src/api/__tests__/auth.test.ts (1 test) 10ms
+ ❯ src/pages/__tests__/UsersPage.test.tsx (1 test | 1 failed) 85ms
+   × UsersPage > renders successfully 80ms
+     → useToast must be used within ToastProvider
+ ✓ src/store/__tests__/reportsStore.test.ts (7 tests) 9ms
+ ✓ src/api/__tests__/reports.test.ts (1 test) 4ms
+ ✓ src/api/__tests__/scraper.test.ts (1 test) 8ms
+ ✓ src/api/__tests__/assignments.test.ts (1 test) 5ms
+ ✓ src/api/__tests__/client.test.ts (3 tests) 11ms
+ ✓ src/api/__tests__/users.test.ts (1 test) 5ms
+ ✓ src/api/__tests__/campaigns.test.ts (1 test) 4ms
+ ✓ src/api/__tests__/pipelines.test.ts (1 test) 8ms
+ ✓ src/api/__tests__/scoring.test.ts (1 test) 9ms
+ ✓ src/api/__tests__/leads.test.ts (1 test) 4ms
+
+ Test Files  5 failed | 23 passed (28)
+      Tests  5 failed | 37 passed (42)
+   Start at  11:12:56
+   Duration  19.31s (transform 1.24s, setup 6.65s, collect 6.76s, tests 2.51s, environment 23.77s, prepare 4.68s)
+

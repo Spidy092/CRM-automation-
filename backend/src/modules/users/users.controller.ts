@@ -1,8 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import { sendSuccess } from '../../shared/utils/response';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { updateProfileSchema } from './users.schema';
+import { updateProfileSchema, createUserSchema } from './users.schema';
 import * as usersService from './users.service';
+
+export async function createUserHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const input = createUserSchema.parse(req.body);
+    const user = await usersService.createUser(input);
+    sendSuccess(res, user, 201);
+  } catch (err) {
+    next(err);
+  }
+}
 
 export async function listUsersHandler(
   _req: Request,

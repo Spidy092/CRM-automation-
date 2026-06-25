@@ -24,6 +24,9 @@ import {
   type ScoringRecalculateAllJob,
 } from './queue';
 import { logger } from '../shared/utils/logger';
+import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
+import { moveToDLQ } from '../lib/dlq';
+import { Sentry } from '../shared/utils/sentry';
 import { findScoringConfig } from '../modules/scoring/scoring.repository';
 import { calculateLeadScore } from '../modules/scoring/scoring.service';
 
@@ -31,13 +34,33 @@ export function startScoringWorker(): Worker {
   const worker = new Worker(
     SCORING_QUEUE,
     async (job: Job) => {
-      if (job.name === SCORING_CALCULATE_LEAD) {
-        return handleCalculateLead(job.data as ScoringCalculateLeadJob);
+      const start = Date.now();
+      const baseMeta = { jobId: job.id, jobName: job.name };
+      logger.info('scoring job started', baseMeta);
+
+      try {
+        let result: unknown;
+        if (job.name === SCORING_CALCULATE_LEAD) {
+          result = await handleCalculateLead(job.data as ScoringCalculateLeadJob);
+        } else if (job.name === SCORING_RECALCULATE_ALL) {
+          result = await handleRecalculateAll(job.data as ScoringRecalculateAllJob);
+        } else {
+          throw new Error(`Unknown scoring job: ${job.name}`);
+        }
+
+        const durationSec = (Date.now() - start) / 1000;
+        observeJobDuration({ name: job.name, queue: SCORING_QUEUE }, durationSec);
+        incJobsProcessed({ name: job.name, queue: SCORING_QUEUE, status: 'success' });
+        logger.info('scoring job completed', { ...baseMeta, durationSec, result });
+        return result;
+      } catch (err) {
+        incJobsFailed({ name: job.name, queue: SCORING_QUEUE });
+        logger.error('scoring job failed', {
+          ...baseMeta,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
       }
-      if (job.name === SCORING_RECALCULATE_ALL) {
-        return handleRecalculateAll(job.data as ScoringRecalculateAllJob);
-      }
-      throw new Error(`Unknown scoring job: ${job.name}`);
     },
     {
       connection: getBullConnection() as unknown as ConnectionOptions,
@@ -49,9 +72,16 @@ export function startScoringWorker(): Worker {
   worker.on('failed', (job, err) => {
     const id = job?.id ?? 'unknown';
     logger.error('scoring job failed', { id, name: job?.name, error: err.message });
-  });
-  worker.on('completed', (job, result: unknown) => {
-    logger.info('scoring job completed', { id: job.id, name: job.name, result });
+    Sentry.captureException(err, { extra: { jobId: id, jobName: job?.name } });
+    if (job && job.attemptsMade >= (job.opts?.attempts ?? 3)) {
+      void moveToDLQ(SCORING_QUEUE, {
+        id: job.id,
+        name: job.name,
+        data: job.data,
+        failedReason: err.message,
+        attemptsMade: job.attemptsMade,
+      });
+    }
   });
 
   return worker;

@@ -12,11 +12,11 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
-    "migrate": "node-pg-migrate up",
-    "migrate:up": "node-pg-migrate up",
-    "migrate:down": "node-pg-migrate down",
-    "migrate:status": "node-pg-migrate status",
-    "migrate:create": "node-pg-migrate create"
+    "migrate": "node-pg-migrate up --envPath ../.env --migrations-dir ../migrations",
+    "migrate:up": "node-pg-migrate up --envPath ../.env --migrations-dir ../migrations",
+    "migrate:down": "node-pg-migrate down --envPath ../.env --migrations-dir ../migrations",
+    "migrate:status": "node-pg-migrate status --envPath ../.env --migrations-dir ../migrations",
+    "migrate:create": "node-pg-migrate create --envPath ../.env --migrations-dir ../migrations"
   },
   "node-pg-migrate": {
     "migrationsTable": "pgmigrations",
@@ -24,8 +24,10 @@
     "databaseUrlVar": "DATABASE_URL"
   },
   "dependencies": {
+    "@sentry/node": "^10.59.0",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.7.0",
+    "cheerio": "^1.2.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.6",
@@ -42,6 +44,7 @@
     "nodemailer": "^6.9.14",
     "openai": "^4.52.7",
     "pg": "^8.12.0",
+    "prom-client": "^15.1.3",
     "uuid": "^10.0.0",
     "winston": "^3.13.0",
     "xlsx": "^0.18.5",

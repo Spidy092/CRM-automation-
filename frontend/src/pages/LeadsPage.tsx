@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useLeads, useDeleteLead, usePauseLead } from '@/api/leads';
+import { useLeads, useDeleteLead, usePauseLead, useBulkPauseLeads } from '@/api/leads';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { useToast } from '@/components/ui/Toast';
 import type { Lead, LeadStatus } from '@/types';
@@ -17,32 +20,58 @@ import {
   Play,
   AlertCircle,
   InboxIcon,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 
-const statusColors: Record<LeadStatus, string> = {
-  active: 'bg-emerald-100 text-emerald-800',
-  paused: 'bg-amber-100 text-amber-800',
-  won: 'bg-blue-100 text-blue-800',
-  lost: 'bg-red-100 text-red-800',
-  opted_out: 'bg-gray-100 text-gray-600',
+const statusTones: Record<LeadStatus, StatusTone> = {
+  active: 'green',
+  paused: 'amber',
+  won: 'blue',
+  lost: 'red',
+  opted_out: 'gray',
 };
 
 export function LeadsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
   const { data, isLoading, error } = useLeads({
     search: search || undefined,
     status: statusFilter || undefined,
   });
   const deleteLead = useDeleteLead();
   const pauseLead = usePauseLead();
+  const bulkPause = useBulkPauseLeads();
   const { showToast } = useToast();
+
+  const leads = data?.items ?? [];
+  const allSelected = leads.length > 0 && leads.every((l) => selected.has(l.id));
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(leads.map((l) => l.id)));
+    }
+  }
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const handleDelete = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this lead?')) {
       try {
         await deleteLead.mutateAsync(id);
         showToast('Lead deleted successfully.', 'success');
+        setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
       } catch {
         showToast('Failed to delete lead. Please try again.', 'error');
       }
@@ -59,28 +88,46 @@ export function LeadsPage() {
     }
   };
 
-  const leads = data?.items ?? [];
+  const handleBulkPause = async (paused: boolean) => {
+    const ids = Array.from(selected);
+    try {
+      await bulkPause.mutateAsync({ ids, paused });
+      showToast(paused ? `${ids.length} leads paused.` : `${ids.length} leads resumed.`, 'success');
+      setSelected(new Set());
+    } catch {
+      showToast('Bulk action failed.', 'error');
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Leads</h1>
-        <div className="flex gap-2">
-          <Button variant="outline" asChild>
-            <Link to="/leads/import">
-              <Upload className="mr-2 h-4 w-4" />
-              Import
-            </Link>
-          </Button>
-          <Button asChild>
-            <Link to="/leads/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Lead
-            </Link>
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        eyebrow="Lead workspace"
+        title="Leads"
+        description="Find, qualify, pause, and update prospects before they move into campaigns or pipeline stages."
+        metrics={[
+          { label: 'Visible leads', value: leads.length },
+          { label: 'Active', value: leads.filter((lead) => lead.status === 'active').length, tone: 'success' },
+          { label: 'Paused', value: leads.filter((lead) => lead.status === 'paused').length, tone: 'warning' },
+          { label: 'Won', value: leads.filter((lead) => lead.status === 'won').length, tone: 'success' },
+        ]}
+        actions={
+          <>
+            <Button variant="outline" asChild>
+              <Link to="/leads/import">
+                <Upload className="mr-2 h-4 w-4" />
+                Import
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link to="/leads/new">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Lead
+              </Link>
+            </Button>
+          </>
+        }
+      />
 
       <Card>
         <CardHeader>
@@ -99,7 +146,7 @@ export function LeadsPage() {
               id="leads-status-filter"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">All Statuses</option>
               <option value="active">Active</option>
@@ -109,6 +156,41 @@ export function LeadsPage() {
               <option value="opted_out">Opted Out</option>
             </select>
           </div>
+
+          {/* Bulk action toolbar */}
+          {selected.size > 0 && (
+            <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mt-3">
+              <span className="text-sm font-medium text-blue-700">{selected.size} selected</span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleBulkPause(true)}
+                  disabled={bulkPause.isPending}
+                >
+                  <Pause className="mr-1.5 h-3.5 w-3.5" />
+                  Pause all
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleBulkPause(false)}
+                  disabled={bulkPause.isPending}
+                >
+                  <Play className="mr-1.5 h-3.5 w-3.5" />
+                  Resume all
+                </Button>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-auto h-7 w-7"
+                onClick={() => setSelected(new Set())}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </CardHeader>
 
         <CardContent>
@@ -131,17 +213,19 @@ export function LeadsPage() {
 
           {/* ── Empty state ── */}
           {!isLoading && !error && leads.length === 0 && (
-            <div className="flex flex-col items-center gap-3 py-16 text-center">
-              <InboxIcon className="h-10 w-10 text-gray-300" />
-              <p className="font-medium text-gray-500">No leads found</p>
-              <p className="text-sm text-gray-400">Import a CSV or add your first lead manually.</p>
-              <Button asChild size="sm" className="mt-2">
-                <Link to="/leads/new">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Lead
-                </Link>
-              </Button>
-            </div>
+            <EmptyState
+              icon={<InboxIcon className="h-6 w-6" />}
+              title="No leads found"
+              description="Import a CSV or add a lead manually to start qualification and outreach."
+              action={
+                <Button asChild size="sm">
+                  <Link to="/leads/new">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Lead
+                  </Link>
+                </Button>
+              }
+            />
           )}
 
           {/* ── Data table ── */}
@@ -150,6 +234,15 @@ export function LeadsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
+                    <th className="pb-3 pr-3 text-left">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        className="h-4 w-4 rounded border-gray-300"
+                        aria-label="Select all"
+                      />
+                    </th>
                     <th className="pb-3 text-left font-medium text-gray-500">Business</th>
                     <th className="pb-3 text-left font-medium text-gray-500">Contact</th>
                     <th className="pb-3 text-left font-medium text-gray-500">Email</th>
@@ -161,24 +254,44 @@ export function LeadsPage() {
                 </thead>
                 <tbody>
                   {leads.map((lead: Lead) => (
-                    <tr key={lead.id} className="border-b transition-colors hover:bg-slate-50">
+                    <tr
+                      key={lead.id}
+                      className={`border-b transition-colors hover:bg-slate-50 ${selected.has(lead.id) ? 'bg-blue-50/60' : ''}`}
+                    >
+                      <td className="py-3 pr-3">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(lead.id)}
+                          onChange={() => toggleOne(lead.id)}
+                          className="h-4 w-4 rounded border-gray-300"
+                          aria-label={`Select ${lead.business_name}`}
+                        />
+                      </td>
                       <td className="py-3">
-                        <div className="font-medium text-gray-900">{lead.business_name}</div>
+                        <Link
+                          to={`/leads/${lead.id}`}
+                          className="font-medium text-slate-900 underline-offset-2 hover:text-slate-700 hover:underline"
+                        >
+                          {lead.business_name}
+                        </Link>
                         <div className="text-xs text-gray-400">{lead.industry}</div>
                       </td>
                       <td className="py-3 text-gray-700">{lead.contact_name}</td>
                       <td className="py-3 text-gray-700">{lead.email}</td>
                       <td className="py-3 text-gray-700">{lead.phone}</td>
                       <td className="py-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusColors[lead.status]}`}
-                        >
+                        <StatusBadge tone={statusTones[lead.status]}>
                           {lead.status.replace('_', ' ')}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td className="py-3 font-medium text-gray-700">{lead.lead_score}</td>
                       <td className="py-3 text-right">
                         <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon" asChild title="View detail">
+                            <Link to={`/leads/${lead.id}`}>
+                              <ExternalLink className="h-4 w-4" />
+                            </Link>
+                          </Button>
                           <Button variant="ghost" size="icon" asChild title="Edit">
                             <Link to={`/leads/${lead.id}/edit`}>
                               <Edit className="h-4 w-4" />

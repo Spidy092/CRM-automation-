@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useLead, useCreateLead, useUpdateLead } from '@/api/leads';
+import { useLead, useCreateLead, useUpdateLead, usePauseLead } from '@/api/leads';
+import { useCampaigns } from '@/api/campaigns';
+import { useSequences, useManualOutreachSend } from '@/api/outreach';
+import { useTemplates } from '@/api/templates';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
+import { LeadTimeline } from '@/components/LeadTimeline';
+import { Pause, Play, Send } from 'lucide-react';
 import type { LeadInput } from '@/types';
 
 export function LeadFormPage() {
@@ -18,6 +23,18 @@ export function LeadFormPage() {
   const { data: lead, isLoading: isLoadingLead } = useLead(id || '');
   const createLead = useCreateLead();
   const updateLead = useUpdateLead();
+  const pauseLead = usePauseLead();
+  const manualSend = useManualOutreachSend();
+  const { data: campaigns = [] } = useCampaigns();
+  const { data: sequenceData } = useSequences();
+  const { data: templates = [] } = useTemplates({ approval_status: 'approved' });
+
+  const [manualSendData, setManualSendData] = useState({
+    campaignId: '',
+    sequenceId: '',
+    channel: 'email' as 'whatsapp' | 'email' | 'sms' | 'phone_call',
+    templateId: '',
+  });
 
   const [formData, setFormData] = useState<LeadInput>({
     business_name: '',
@@ -111,11 +128,68 @@ export function LeadFormPage() {
     );
   }
 
+  const isPaused = lead?.status === 'paused';
+  const sequences = (sequenceData as { items?: Array<{ id: string; name: string }> } | undefined)?.items ?? [];
+  const approvedTemplates = templates.filter((template) => template.channel === manualSendData.channel);
+
+  const handleManualSend = async () => {
+    if (!id) return;
+    try {
+      await manualSend.mutateAsync({
+        leadId: id,
+        campaignId: manualSendData.campaignId,
+        sequenceId: manualSendData.sequenceId,
+        stepNumber: 1,
+        channel: manualSendData.channel,
+        templateId: manualSendData.templateId,
+      });
+      showToast('Manual send queued.', 'success');
+    } catch {
+      showToast('Manual send was blocked. Check campaign, template, and lead status.', 'error');
+    }
+  };
+
+  const handleTogglePause = async () => {
+    if (!id) return;
+    try {
+      await pauseLead.mutateAsync({ id, paused: !isPaused });
+      showToast(
+        isPaused ? 'Automation resumed.' : 'Automation paused.',
+        'success',
+      );
+    } catch {
+      showToast('Failed to update automation status.', 'error');
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900">
-        {isEditing ? 'Edit Lead' : 'Add New Lead'}
-      </h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold text-gray-900">
+          {isEditing ? 'Edit Lead' : 'Add New Lead'}
+        </h1>
+        {isEditing && lead && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleTogglePause}
+            disabled={pauseLead.isPending}
+            className={isPaused ? 'border-green-300 text-green-700 hover:bg-green-50' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}
+          >
+            {isPaused ? (
+              <>
+                <Play className="mr-1.5 h-3.5 w-3.5" />
+                Resume Automation
+              </>
+            ) : (
+              <>
+                <Pause className="mr-1.5 h-3.5 w-3.5" />
+                Pause Automation
+              </>
+            )}
+          </Button>
+        )}
+      </div>
 
       <Card>
         <CardHeader>
@@ -292,6 +366,91 @@ export function LeadFormPage() {
           </form>
         </CardContent>
       </Card>
+
+      {isEditing && id && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Manual Guarded Send</CardTitle>
+            <CardDescription>Queue a one-off approved-template dispatch for recovery.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              <select
+                value={manualSendData.campaignId}
+                onChange={(e) => setManualSendData((prev) => ({ ...prev, campaignId: e.target.value }))}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Campaign</option>
+                {campaigns.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+                ))}
+              </select>
+              <select
+                value={manualSendData.sequenceId}
+                onChange={(e) => setManualSendData((prev) => ({ ...prev, sequenceId: e.target.value }))}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Sequence</option>
+                {sequences.map((sequence) => (
+                  <option key={sequence.id} value={sequence.id}>{sequence.name}</option>
+                ))}
+              </select>
+              <select
+                value={manualSendData.channel}
+                onChange={(e) => setManualSendData((prev) => ({ ...prev, channel: e.target.value as typeof prev.channel, templateId: '' }))}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">Email</option>
+                <option value="sms">SMS</option>
+                <option value="phone_call">Phone Call</option>
+              </select>
+              <select
+                value={manualSendData.templateId}
+                onChange={(e) => setManualSendData((prev) => ({ ...prev, templateId: e.target.value }))}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Approved template</option>
+                {approvedTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleManualSend}
+                disabled={
+                  manualSend.isPending ||
+                  !manualSendData.campaignId ||
+                  !manualSendData.sequenceId ||
+                  !manualSendData.templateId ||
+                  lead?.status !== 'active'
+                }
+              >
+                <Send className="mr-2 h-4 w-4" />
+                Queue Send
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Activity timeline — only shown when editing an existing lead */}
+      {isEditing && id && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Activity &amp; Outreach History</CardTitle>
+            <CardDescription>
+              Full communication history and outreach log for this lead.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LeadTimeline leadId={id} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

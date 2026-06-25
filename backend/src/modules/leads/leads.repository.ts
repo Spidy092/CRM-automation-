@@ -209,3 +209,37 @@ export async function runInTransaction<T>(
 ): Promise<T> {
   return withTransaction(fn);
 }
+
+export interface LeadActivityEntry {
+  id: string;
+  kind: 'audit' | 'outreach';
+  action: string | null;
+  channel: string | null;
+  status: string | null;
+  actor_id: string | null;
+  old_value: unknown;
+  new_value: unknown;
+  created_at: string;
+}
+
+/** Returns merged audit_logs + outreach_logs for a lead, newest first. */
+export async function findActivityForLead(
+  leadId: string,
+  limit: number,
+): Promise<LeadActivityEntry[]> {
+  const rows = await query<LeadActivityEntry>(
+    `SELECT id, 'audit' AS kind, action, NULL AS channel, NULL AS status,
+            user_id AS actor_id, old_value, new_value, created_at
+       FROM audit_logs
+      WHERE entity_type = 'lead' AND entity_id = $1
+     UNION ALL
+     SELECT id, 'outreach' AS kind, NULL AS action, channel::text, status::text,
+            NULL AS actor_id, NULL AS old_value, NULL AS new_value, created_at
+       FROM outreach_logs
+      WHERE lead_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [leadId, limit],
+  );
+  return rows;
+}

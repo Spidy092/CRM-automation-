@@ -1,5 +1,6 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { findLeadById } from '../leads/leads.repository';
 import {
   findAssignmentConfig,
   updateAssignmentConfig,
@@ -49,6 +50,9 @@ export async function assignManually(
   userId: string,
   actor: Actor,
 ): Promise<Assignment> {
+  const lead = await findLeadById(leadId);
+  if (!lead) throw new AppError('Lead not found', 404);
+
   const existing = await findAssignmentByLead(leadId);
   if (existing) {
     throw new AppError('Lead already has an active assignment', 409);
@@ -75,6 +79,9 @@ export async function overrideAssignment(
   reason: string,
   actor: Actor,
 ): Promise<Assignment> {
+  const lead = await findLeadById(leadId);
+  if (!lead) throw new AppError('Lead not found', 404);
+
   await updateLeadAssignment(leadId, newUserId);
   const assignment = await insertAssignment(leadId, newUserId, actor.id, 'override');
 
@@ -91,6 +98,9 @@ export async function overrideAssignment(
 }
 
 export async function autoAssignLead(leadId: string): Promise<Assignment | null> {
+  const lead = await findLeadById(leadId);
+  if (!lead) throw new AppError('Lead not found', 404);
+
   const config = await findAssignmentConfig();
   if (!config || !config.is_enabled) {
     return null;

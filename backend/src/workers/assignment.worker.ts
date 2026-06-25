@@ -13,19 +13,44 @@ import { Worker, type ConnectionOptions, type Job } from 'bullmq';
 import { getBullConnection } from './queue';
 import { ASSIGNMENT_QUEUE, ASSIGNMENT_ROUND_ROBIN, type AssignmentRoundRobinJob } from './queue';
 import { logger } from '../shared/utils/logger';
+import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
 import { autoAssignLead } from '../modules/assignments/assignments.service';
 import { findEligibleUsers } from '../modules/assignments/assignments.repository';
 import { findLeadById } from '../modules/leads/leads.repository';
+import { moveToDLQ } from '../lib/dlq';
+import { Sentry } from '../shared/utils/sentry';
 import { notifyAssignment } from '../modules/integrations/notifications';
+import { pushToUser } from '../modules/notifications/notifications.emitter';
 
 export function startAssignmentWorker(): Worker {
   const worker = new Worker(
     ASSIGNMENT_QUEUE,
     async (job: Job) => {
-      if (job.name === ASSIGNMENT_ROUND_ROBIN) {
-        return handleRoundRobin(job.data as AssignmentRoundRobinJob);
+      const start = Date.now();
+      const baseMeta = { jobId: job.id, jobName: job.name };
+      logger.info('assignment job started', baseMeta);
+
+      try {
+        let result: unknown;
+        if (job.name === ASSIGNMENT_ROUND_ROBIN) {
+          result = await handleRoundRobin(job.data as AssignmentRoundRobinJob);
+        } else {
+          throw new Error(`Unknown assignment job: ${job.name}`);
+        }
+
+        const durationSec = (Date.now() - start) / 1000;
+        observeJobDuration({ name: job.name, queue: ASSIGNMENT_QUEUE }, durationSec);
+        incJobsProcessed({ name: job.name, queue: ASSIGNMENT_QUEUE, status: 'success' });
+        logger.info('assignment job completed', { ...baseMeta, durationSec, result });
+        return result;
+      } catch (err) {
+        incJobsFailed({ name: job.name, queue: ASSIGNMENT_QUEUE });
+        logger.error('assignment job failed', {
+          ...baseMeta,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
       }
-      throw new Error(`Unknown assignment job: ${job.name}`);
     },
     {
       connection: getBullConnection() as unknown as ConnectionOptions,
@@ -37,9 +62,16 @@ export function startAssignmentWorker(): Worker {
   worker.on('failed', (job, err) => {
     const id = job?.id ?? 'unknown';
     logger.error('assignment job failed', { id, name: job?.name, error: err.message });
-  });
-  worker.on('completed', (job, result: unknown) => {
-    logger.info('assignment job completed', { id: job.id, name: job.name, result });
+    Sentry.captureException(err, { extra: { jobId: id, jobName: job?.name } });
+    if (job && job.attemptsMade >= (job.opts?.attempts ?? 3)) {
+      void moveToDLQ(ASSIGNMENT_QUEUE, {
+        id: job.id,
+        name: job.name,
+        data: job.data,
+        failedReason: err.message,
+        attemptsMade: job.attemptsMade,
+      });
+    }
   });
 
   return worker;
@@ -97,6 +129,15 @@ async function handleRoundRobin(payload: AssignmentRoundRobinJob): Promise<{
     const message = err instanceof Error ? err.message : String(err);
     logger.error('notifyAssignment threw unexpectedly', { leadId, error: message });
   }
+
+  void pushToUser(assignment.assigned_to, {
+    id: `assign:${leadId}`,
+    type: 'lead_assigned',
+    title: 'New lead assigned',
+    message: `${businessName ?? 'A lead'} (score ${payload.score}, ${payload.classification}) was assigned to you.`,
+    data: { leadId, score: payload.score, classification: payload.classification },
+    timestamp: new Date().toISOString(),
+  });
 
   return { leadId, assigned: true, assignedTo: assignment.assigned_to, notified };
 }

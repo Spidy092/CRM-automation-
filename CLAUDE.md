@@ -1,12 +1,16 @@
-# CLAUDE.md — CRM Automation Platform
+# CLAUDE.md — AI Sales Operator / CRM Automation Platform
 
 ## Project Identity
 
-**Project:** CRM Automation Platform
+**Project:** AI Sales Operator — CRM Automation Platform
 **Prepared By:** Chethan Gowda
-**Version:** 1.0 (Phase 1)
+**Version:** 2.0 (Phase 2 — AI Sales Operator)
+**Phase 1:** Complete (8 weeks, Sprints 1–4, ~80–85% done as of 2026-06-24)
+**Phase 2:** Planning → Implementation (8 weeks, Sprints 5–8, starts 2026-06-25)
 **Architecture:** Modular Monolith → future microservices extraction
-**Timeline:** 8 weeks (4 × 2-week sprints)
+**Timeline:** Phase 1: 8 weeks | Phase 2: 8 weeks | Total: 16 weeks
+
+> **Full Phase 2 spec:** `docs/phase-2-ai-sales-operator.md` — read this before implementing any Phase 2 module.
 
 ---
 
@@ -24,7 +28,7 @@
 - **Important folders:**
   - `src/modules/auth/` — JWT RS256, RBAC, sessions
   - `src/modules/leads/` — Lead CRUD, scoring, custom fields (JSONB)
-  - `src/modules/campaigns/` — Campaign management, targeting rules
+  - `src/modules/campaigns/` — Campaign management, targeting rules, autonomy config (Phase 2)
   - `src/modules/outreach/` — Message dispatch, sequence engine
   - `src/modules/pipeline/` — Stage management, transitions
   - `src/modules/assignments/` — Round Robin engine, override logic
@@ -32,9 +36,14 @@
   - `src/modules/integrations/` — WhatsApp, Twilio, SendGrid, Google Ads, Facebook
   - `src/modules/reports/` — Analytics, dashboards, exports
   - `src/modules/scraper/` — Google Business, Facebook, YouTube crawlers
-  - `src/workers/` — BullMQ job processors
+  - `src/modules/ai-intelligence/` — *(Phase 2)* Lead AI profiles, memory, research agent, decision log
+  - `src/modules/ai-reply/` — *(Phase 2)* Inbound reply classifier, intent detection, draft generator
+  - `src/modules/ai-campaign-brain/` — *(Phase 2)* Pre-launch campaign strategy brief
+  - `src/modules/ai-inbox/` — *(Phase 2)* AI Sales Copilot inbox for reps
+  - `src/workers/` — BullMQ job processors (Phase 2 adds: aiResearch, aiReply, aiDecision, aiCampaignBrain, aiInbox)
   - `src/webhooks/` — Inbound webhook handlers
   - `src/shared/` — Utilities, middleware, validators
+  - `src/shared/events/` — *(Phase 2)* Domain event bus and typed AI event definitions
   - `migrations/` — Database migrations (append-only, never edit)
 - **Do not edit without explicit approval:**
   - `migrations/` — run-once files, append new files only
@@ -48,28 +57,110 @@
 ## Current Sprint Context
 
 > **Update this block at the start of every sprint.**
+> **Last verified:** 2026-06-25 (Phase 2 planning complete — spec in `docs/phase-2-ai-sales-operator.md`).
 
-| Sprint | Weeks | Theme | Status |
-|---|---|---|---|
-| Sprint 1 | Week 1–2 | Foundation — Auth, Lead CRUD, CSV Import, Staging Deploy | ✅ Complete (DB migrations pending user approval) |
-| Sprint 2 | Week 3–4 | Core CRM — Pipeline, Scoring Engine, Round Robin, Campaigns | 🔲 Not Started |
-| Sprint 3 | Week 5–6 | Automation — Outreach Engine, All Integrations, Webhooks | 🔲 Not Started |
-| Sprint 4 | Week 7–8 | Intelligence — AI Personalization, Scrapers, Dashboards, UAT | 🔲 Not Started |
+### Phase 1 — Automation CRM (Weeks 1–8) — ~80–85% Complete
 
-**Sprint 1 sign-off checklist (run by user, not autonomously):**
+| Sprint | Weeks | Theme | Status | Notes |
+|---|---|---|---|---|
+| Sprint 1 | Week 1–2 | Foundation — Auth, Lead CRUD, CSV Import, Staging Deploy | 🟢 100% | auth, users, leads, custom-fields modules fully implemented + tested. 16 migrations shipped. |
+| Sprint 2 | Week 3–4 | Core CRM — Pipeline, Scoring Engine, Round Robin, Campaigns | 🟢 100% | pipeline, scoring, assignments, campaigns modules fully implemented + tested. All 4 modules clear 70% coverage gate on every metric. |
+| Sprint 3 | Week 5–6 | Automation — Outreach Engine, All Integrations, Webhooks | 🟢 ~85% | outreach, templates, integrations, webhooks modules fully implemented with tests. 5 BullMQ workers (scoring, assignment, outreach, reportExport, scraper). 8 integration connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook). Webhook handlers + verifiers for WhatsApp/Twilio/SendGrid. Remaining: OAuth flow not started (`integrations/oauth/` empty). |
+| Sprint 4 | Week 7–8 | Intelligence — AI Personalization, Scrapers, Dashboards, UAT | 🟡 ~75% | reports, scraper modules fully implemented with tests. AI settings module done. `outreach.prompt.ts` handles OpenAI personalization. 16 migrations include scraper tables + AI settings. Remaining: DLQ routing not implemented, Prometheus counters partial, Sentry wired but not verified. |
 
-1. Apply the staged migrations:
-   ```sh
-   cd /home/sr-user91/Videos/CRM
-   npm run migrate
-   # Migrations staged for review:
-   #   1750000000005_add-soft-delete-columns.js
-   #   1750000000006_add-assignments-table.js
-   #   1750000000007_rename-user-role-sales-rep-to-sales.js
-   ```
-2. Boot the stack: `docker compose up --build` (api on `:3000`, frontend on `:5173`, postgres `:5432`, redis `:6379`, minio `:9000`, bull-board `:3001`).
-3. `cd backend && npm test` — expect 8 suites / 79 tests green.
-4. `cd backend && npm run lint` — pre-existing `no-unsafe-*` warnings in stubbed Sprint 2+ modules (assignments / campaigns / pipeline / scoring / auth `getMeHandler`) are out of scope for Sprint 1.
+### Phase 2 — AI Sales Operator (Weeks 9–16) — 🔴 Not Started
+
+> **Full spec:** `docs/phase-2-ai-sales-operator.md` — read before implementing anything in Phase 2.
+
+| Sprint | Weeks | Theme | Status | Notes |
+|---|---|---|---|---|
+| Sprint 5 | Week 9–10 | AI Foundation + Memory — Lead AI profiles, event bus, research agent, next-action engine | 🔴 Not started | New modules: `ai-intelligence`. New workers: `aiResearch`, `aiDecision`. Migrations 017–019. |
+| Sprint 6 | Week 11–12 | AI Reply Handler + Campaign Brain — inbound classification, pre-launch brief | 🔴 Not started | New modules: `ai-reply`, `ai-campaign-brain`. New workers: `aiReply`, `aiCampaignBrain`, `aiInbox`. Migrations 020–021. |
+| Sprint 7 | Week 13–14 | AI Copilot Inbox + Autonomy Engine — rep inbox, autopilot/guarded/supervised modes | 🔴 Not started | New module: `ai-inbox`. Migration 022. Frontend: `AIInboxPage`, `CampaignBriefPage`. |
+| Sprint 8 | Week 15–16 | Polish + Coverage + Production Hardening — 70% coverage, observability, UAT | 🔴 Not started | All Phase 2 modules ≥70%. Prometheus AI metrics. Grafana dashboard. Load test. |
+
+### Overall Progress
+
+#### Phase 1 (last verified 2026-06-24)
+
+| Area | % done |
+|---|---|
+| Backend modules | ~95% (14 of 14 modules have code; all implemented with controller/service/repository/routes/schema/types) |
+| Backend tests | ~85% (63 test files covering all 14 modules + workers + webhooks + shared utils; overall stmts 53.9%, branches 39.3%, funcs 54.3%, lines 54.9%) |
+| Frontend pages | ~95% (22 pages, all wired in App.tsx routing; covers all major modules) |
+| Frontend tests | ~60% (31 test files covering 18 pages + 9 API clients + 2 stores + 1 component; overall stmts 56.2%, branches 67.8%) |
+| DevOps / CI-CD | ~40% (ci.yml with lint/test/build jobs; docker-compose.yml with postgres/redis/minio/api/worker/bull-board; Dockerfile + Dockerfile.dev; nginx config; prod compose not verified) |
+| **Overall Phase 1** | **~80–85%** |
+
+#### Phase 2 (as of 2026-06-25 — not started)
+
+| Area | Target | % done |
+|---|---|---|
+| AI backend modules (4 new + 1 extended) | ai-intelligence, ai-reply, ai-campaign-brain, ai-inbox | 0% |
+| AI workers (5 new) | aiResearch, aiReply, aiDecision, aiCampaignBrain, aiInbox | 0% |
+| Event bus | eventBus.ts + ai.events.ts | 0% |
+| DB migrations (6 new: 017–022) | lead_ai_profiles, ai_decision_log, ai_conversation_summaries, campaign_ai_briefs, ai_inbox_items, campaign autonomy columns | 0% |
+| Frontend AI pages (4 new) | AIInboxPage, LeadAIProfilePage, CampaignBriefPage, AIDecisionLogPage | 0% |
+| Test coverage Phase 2 | All modules ≥70%, ai-intelligence + ai-reply ≥80% | 0% |
+| **Overall Phase 2** | | **0%** |
+
+### What's Done (verified 2026-06-24)
+
+**Backend (14 modules, 63 test files, 16 migrations):**
+- `auth/` — JWT RS256, RBAC, sessions, password reset (8 files, 3 tests)
+- `users/` — User CRUD (7 files)
+- `leads/` — Lead CRUD, CSV/Excel import, custom fields (10 files, 3 tests)
+- `custom-fields/` — Custom field definitions, JSONB validation (7 files, 1 test)
+- `pipeline/` — Stage management, transitions, pipeline CRUD (11 files, 5+ tests)
+- `scoring/` — Scoring rules, auto-classification Hot/Warm/Cold (11 files, 5+ tests)
+- `assignments/` — Round Robin engine, override logic (11 files, 5+ tests)
+- `campaigns/` — Campaign CRUD, targeting rules (11 files, 5+ tests)
+- `outreach/` — Sequence engine, task dispatch, AI personalization prompt (13 files, 6 tests)
+- `templates/` — Template CRUD, approval workflow (11 files, 5 tests)
+- `integrations/` — 8 connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook), OAuth base, webhook signature verification (27+ files, 7 tests)
+- `reports/` — Dashboard metrics, 4 report types, CSV export via BullMQ (11 files, 4 tests)
+- `scraper/` — Cheerio-based scraper, config CRUD, run logs (11 files, 4 tests)
+- `ai-settings/` — OpenAI config management (6 files)
+
+**Workers (5 processors, 3 test files):**
+- `scoring.worker.ts` — `scoring:calculate-lead`, `scoring:recalculate-all`
+- `assignment.worker.ts` — `assignment:round-robin`
+- `outreach.worker.ts` — Outreach message dispatch
+- `reportExport.worker.ts` — Async CSV export
+- `scraper.worker.ts` — Background scraper runs
+
+**Webhooks (6 files, 3 tests):**
+- WhatsApp message/status handlers
+- Twilio SMS/call status handlers
+- SendGrid event webhook handlers
+- HMAC/Twilio signature verification
+
+**Shared infrastructure (15 utils, 7 middleware, 5 tests):**
+- Auth middleware, RBAC middleware, error handler, rate limiter, file upload, HTTP metrics
+- DB pool, Redis, logger (Winston), Sentry, audit logging, encryption, pagination, phone utils, metrics, response helpers
+
+**Frontend (22 pages, 15 API clients, 2 stores, 13 UI components, 31 tests):**
+- All pages routed in App.tsx with ProtectedRoute wrapper
+- TanStack Query for server state, Zustand for client state
+- shadcn/ui component library (button, card, input, textarea, label, switch, skeleton, etc.)
+- Layout with sidebar navigation, toast notifications, loading/empty states
+
+### Remaining Gaps (to reach 100% Phase 1)
+
+1. **Coverage gap** — Backend overall 53.9% stmts (target 70%); auth module likely needs 90%+. Sprint 2 modules individually pass but overall is dragged down by newer modules.
+2. **Frontend tests** — 34 test files exist (3 new added: `IntegrationsPage`, `LeadDetailPage`, `TemplateFormPage`). Overall coverage is 56.2% stmts.
+3. ~~**OAuth flow**~~ — ✅ **Done 2026-06-24** — `integrations/oauth/` fully implemented with Google Ads + Facebook OAuth 2.0 flows, state parameter CSRF protection, token exchange, and refresh.
+4. ~~**DLQ routing**~~ — ✅ **Already implemented** — `lib/dlq.ts` provides `moveToDLQ()` and `registerDLQHandler()`. All 5 workers use it.
+5. ~~**Prometheus metrics**~~ — ✅ **Done 2026-06-24** — All 5 workers now emit `crm_jobs_processed_total`, `crm_jobs_failed_total`, `crm_job_duration_seconds`.
+6. **Sentry integration** — ✅ **Already wired** — `initSentry()` called in `index.ts`, all workers capture exceptions. Needs end-to-end verification with real DSN.
+7. ~~**Prod deploy**~~ — ✅ **Done 2026-06-24** — `docker-compose.prod.yml` created with production-grade settings (health checks, networks, env vars). `.env.prod.example` added.
+
+### Phase 2 Starting Checklist
+
+Before Sprint 5 begins, these Phase 1 items must be resolved:
+- [ ] Backend coverage ≥70% (currently 53.9% stmts) — required gate before Phase 2
+- [ ] Sentry verified end-to-end with a real DSN
+- [ ] Inbound webhook handlers updated to emit `lead.reply.received` domain events (prerequisite for Sprint 6)
 
 ---
 
@@ -114,6 +205,18 @@ Use these short commands inside this agent session:
 /fix auth           → authentication/RBAC workflow
 /fix workers        → BullMQ job processor workflow
 /fix webhooks       → inbound webhook handler workflow
+```
+
+### Phase 2 AI Module Commands
+
+```txt
+/fix ai-intelligence    → lead AI profile, memory, research agent, next-action engine
+/fix ai-reply           → inbound reply classifier, intent detection, draft response
+/fix ai-campaign-brain  → pre-launch campaign brief generator
+/fix ai-inbox           → AI copilot inbox for sales reps
+/fix ai-workers         → AI BullMQ workers (aiResearch, aiReply, aiDecision, aiCampaignBrain, aiInbox)
+/fix event-bus          → domain event bus (eventBus.ts, ai.events.ts)
+/fix autonomy           → autonomy engine (supervised/guarded/autopilot modes)
 ```
 
 ---
@@ -279,6 +382,67 @@ These are the three highest-priority rules in this file. They override all other
 - Health check endpoint (`GET /health`) must remain lightweight — DB ping + Redis ping only, no business logic.
 - Never add heavy queries or external API calls to the health check path.
 
+---
+
+## Phase 2 AI Architecture Rules — No Exceptions
+
+> These rules extend the Absolute Rules above. They apply to all Phase 2 AI modules (`ai-intelligence`, `ai-reply`, `ai-campaign-brain`, `ai-inbox`, all AI workers, event bus).
+> **Before implementing any Phase 2 module, read the full spec: `docs/phase-2-ai-sales-operator.md`.**
+
+### AI Memory Rules
+- `lead_ai_profiles` is the single source of truth for all AI knowledge about a lead — never store AI state anywhere else.
+- Redis may cache `next_best_action` and `buying_intent` with a 1-hour TTL — the PostgreSQL record is always authoritative.
+- Memory fields `buying_signals`, `objection_log`, `do_not_say` are always **appended to** — never overwritten or deleted.
+- Conversation summaries are **regenerated** (not appended) from full history — keep under 500 tokens.
+- AI profile cache in Redis TTL: 24 hours — invalidated immediately on new inbound message or stage change.
+
+### AI Thinking / Reasoning Rules
+- Every AI decision must produce a `chain_of_thought` string logged to `ai_decision_log`.
+- Chain-of-thought structure: **Context → Options → Reasoning → Decision → Confidence**.
+- Workers must never make decisions with confidence < 30 — route to `request_review` inbox item instead.
+- Default confidence threshold for autonomous action: 75 (configurable per campaign via `ai_min_confidence`).
+- All reasoning must cite specific data from the lead profile — no generic or hallucinated reasoning.
+
+### Autonomous Operation Rules
+- AI may send messages autonomously only when: campaign `autonomy_level = 'autopilot'` **AND** confidence ≥ `ai_min_confidence`.
+- In `guarded` mode: AI drafts → creates `approve_response` inbox item → auto-sends after 4h if no human action.
+- In `supervised` mode: AI drafts → creates inbox item → waits for explicit human approval — no timeout auto-send.
+- **Opt-out / angry replies (`intent_class = 'opt_out'`) ALWAYS stop the sequence immediately — no AI override, ever.**
+- AI must never send more than 1 unsolicited message per lead per 24-hour window — enforced at worker level.
+- Manager can pause all AI autonomous actions for a campaign at any time — pause is respected within 1 job cycle.
+
+### Event-Driven Rules
+- AI workers must be purely event-reactive — never poll the database for leads to process.
+- Every domain event must be idempotent — processing the same event twice must produce no duplicate actions.
+- Event payloads carry only IDs — workers fetch full context from DB; never trust payload data directly.
+- All events logged with timestamp, event type, and payload to `ai_decision_log`.
+- Event dispatcher: `src/shared/events/eventBus.ts` wraps BullMQ — call it from service layer, never from controllers.
+
+### AI / LLM Extended Rules (Phase 2)
+- Research and chain-of-thought calls: `max_tokens = 800`.
+- Reply draft calls: `max_tokens = 300`.
+- Campaign brief calls: `max_tokens = 1200`.
+- System prompt for all AI workers must include: current date, lead data, conversation history, campaign context.
+- Never send credit card data, bank details, or passwords to OpenAI — ever.
+- Log every OpenAI call: `lead_id`, `campaign_id`, `decision_type`, `tokens_used`, `latency_ms`, `cache_hit`, `model_used`.
+- Validate all OpenAI JSON responses against Zod schemas — reject and log malformed outputs, never pass them downstream.
+- All OpenAI calls must have a fallback: research fails → mark `enrichment_status = 'failed'`, log error, continue. Never block lead processing on AI failure.
+
+### Human-in-the-Loop Rules
+- Inbox item expiry by type: `approve_response` → 4h, `urgent_reply` → 1h, `campaign_review` → 24h.
+- On expiry in `guarded` mode: execute AI recommendation, log `human_approval_required: false`.
+- On expiry in `supervised` mode: escalate urgency, notify manager — do not auto-execute.
+- Reps can override any AI action from the lead detail page — overrides logged to `ai_decision_log` with reason.
+- AI inbox items are auto-resolved when the corresponding action is taken elsewhere (direct message sent, stage moved manually, etc.)
+
+### Phase 2 Prometheus Metrics (required on all AI workers)
+- `crm_ai_research_total{status}` — research jobs completed / failed
+- `crm_ai_research_duration_seconds` — histogram of research job duration
+- `crm_ai_reply_classified_total{intent_class}` — per intent class counter
+- `crm_ai_decisions_total{decision_type,autonomy_level}` — all AI decisions
+- `crm_ai_inbox_items_total{item_type,status}` — inbox item creation and resolution
+- `crm_ai_openai_tokens_total{decision_type}` — token usage by decision type (cost tracking)
+
 ### Agent Behavior Rules
 - Always read the relevant module files before proposing or making any change.
 - Never assume file structure — verify with directory listing first.
@@ -323,18 +487,18 @@ For all serious work, use this exact format:
 
 ## Integrations Reference
 
-| Integration | Purpose | Auth Method |
-|---|---|---|
-| WhatsApp Business API | Outreach messaging | Bearer token + HMAC webhook verify |
-| Twilio | SMS outreach | Account SID + Auth Token |
-| SendGrid | Email outreach | API Key |
-| OpenAI GPT-4o | Message personalization | API Key |
-| Google Ads | Lead form ingestion | OAuth 2.0 |
-| Facebook Business | Lead form ingestion | OAuth 2.0 |
-| Google Business/Places | Scraper source | Places API Key |
-| AWS S3 / MinIO | File storage | IAM Role / Access Key |
-| Sentry | Error monitoring | DSN |
-| Prometheus + Grafana | Metrics | Internal |
+| Integration | Purpose | Auth Method | Phase |
+|---|---|---|---|
+| WhatsApp Business API | Outreach messaging | Bearer token + HMAC webhook verify | Phase 1 |
+| Twilio | SMS outreach | Account SID + Auth Token | Phase 1 |
+| SendGrid | Email outreach | API Key | Phase 1 |
+| OpenAI GPT-4o | Message personalization + AI reasoning | API Key | Phase 1 + 2 |
+| Google Ads | Lead form ingestion | OAuth 2.0 | Phase 1 |
+| Facebook Business | Lead form ingestion | OAuth 2.0 | Phase 1 |
+| Google Business/Places | Scraper source | Places API Key | Phase 1 |
+| AWS S3 / MinIO | File storage | IAM Role / Access Key | Phase 1 |
+| Sentry | Error monitoring | DSN | Phase 1 |
+| Prometheus + Grafana | Metrics + AI operations dashboard | Internal | Phase 1 + 2 |
 
 ---
 

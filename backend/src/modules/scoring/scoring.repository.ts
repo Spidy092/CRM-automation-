@@ -1,4 +1,5 @@
 import { pool } from '../../shared/utils/db';
+import { AppError } from '../../shared/middleware/errorHandler';
 import { ScoringConfig, ScoringRule } from './scoring.types';
 
 export async function findScoringConfig(): Promise<ScoringConfig | null> {
@@ -51,7 +52,9 @@ export async function updateScoringConfig(
     `UPDATE scoring_config SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
     values,
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Scoring config not found', 404);
+  return row;
 }
 
 export async function findScoringRules(): Promise<ScoringRule[]> {
@@ -138,7 +141,9 @@ export async function updateScoringRule(
     `UPDATE scoring_rules SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
     values,
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Scoring rule not found', 404);
+  return row;
 }
 
 export async function deleteScoringRule(id: string): Promise<void> {

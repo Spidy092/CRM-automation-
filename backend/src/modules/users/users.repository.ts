@@ -1,5 +1,5 @@
 import { query, queryOne } from '../../shared/utils/db';
-import { User, UpdateProfileInput } from './users.types';
+import { User, UpdateProfileInput, CreateUserInput } from './users.types';
 
 /**
  * Fetches all non-deleted users ordered by creation date (newest first).
@@ -26,6 +26,31 @@ export async function findUserById(id: string): Promise<User | null> {
        AND deleted_at IS NULL`,
     [id],
   );
+}
+
+export async function findUserByEmail(email: string): Promise<User | null> {
+  return queryOne<User>(
+    `SELECT id, name, email, role, is_active, created_at
+     FROM users
+     WHERE email = $1
+       AND deleted_at IS NULL`,
+    [email.toLowerCase()],
+  );
+}
+
+export async function insertUser(
+  id: string,
+  input: CreateUserInput,
+  passwordHash: string,
+): Promise<User> {
+  const user = await queryOne<User>(
+    `INSERT INTO users (id, name, email, password_hash, role, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, name, email, role, is_active, created_at`,
+    [id, input.name, input.email.toLowerCase(), passwordHash, input.role, input.is_active],
+  );
+  if (!user) throw new Error('Insert did not return a row');
+  return user;
 }
 
 /**

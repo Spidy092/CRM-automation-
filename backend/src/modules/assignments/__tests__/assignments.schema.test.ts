@@ -77,7 +77,7 @@ describe('Assignments Schema Validation', () => {
       const input = {
         is_enabled: true,
         threshold_score: 80,
-        eligible_roles: ['sales_rep', 'manager'],
+        eligible_roles: ['sales', 'manager'],
       };
 
       const result = updateAssignmentConfigSchema.safeParse(input);

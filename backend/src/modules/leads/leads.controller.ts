@@ -135,6 +135,20 @@ export async function pauseLeadHandler(
   }
 }
 
+export async function getLeadActivityHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const activity = await leadsService.getLeadActivity(req.params.id, actorFromReq(req), limit);
+    sendSuccess(res, activity);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function importLeadsHandler(
   req: Request,
   res: Response,
@@ -142,7 +156,12 @@ export async function importLeadsHandler(
 ): Promise<void> {
   try {
     if (!req.file) throw new AppError('No file uploaded (field name must be "file")', 400);
-    if (!isSupportedFile(req.file.originalname)) {
+    const ALLOWED_MIMES = [
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+    ];
+    if (!ALLOWED_MIMES.includes(req.file.mimetype) || !isSupportedFile(req.file.originalname)) {
       throw new AppError('Unsupported file type. Allowed: .csv, .xlsx, .xls', 400);
     }
 

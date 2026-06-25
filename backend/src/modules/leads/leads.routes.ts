@@ -7,6 +7,7 @@ import { leadImportUpload } from '../../shared/middleware/upload';
 import {
   createLeadHandler,
   deleteLeadHandler,
+  getLeadActivityHandler,
   getLeadHandler,
   importLeadsHandler,
   listLeadsHandler,
@@ -19,9 +20,9 @@ const router = Router();
 // All lead routes require authentication + authenticated-tier rate limit.
 router.use(authenticate, authenticatedLimiter);
 
-// GET /api/v1/leads — All roles (sales are auto-scoped to own leads).
-router.get('/', wrap(listLeadsHandler));
-router.get('/:id', wrap(getLeadHandler));
+// GET /api/v1/leads — admin/manager/sales/viewer only; marketing excluded per RBAC spec.
+router.get('/', authorize('admin', 'manager', 'sales', 'viewer'), wrap(listLeadsHandler));
+router.get('/:id', authorize('admin', 'manager', 'sales', 'viewer'), wrap(getLeadHandler));
 
 // Create — Admin, Manager.
 router.post('/', authorize('admin', 'manager'), wrap(createLeadHandler));
@@ -39,6 +40,9 @@ router.post(
   leadImportUpload.single('file'),
   wrap(importLeadsHandler),
 );
+
+// Activity timeline — Admin, Manager, Sales, Viewer.
+router.get('/:id/activity', authorize('admin', 'manager', 'sales', 'viewer'), wrap(getLeadActivityHandler));
 
 // Pause/resume outreach — Sales, Manager, Admin (sales: own only, enforced in service).
 router.post('/:id/pause', authorize('admin', 'manager', 'sales'), wrap(pauseLeadHandler));

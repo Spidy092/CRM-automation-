@@ -21,7 +21,7 @@ jest.mock('../../shared/middleware/rbac', () => ({
 jest.mock('../../shared/middleware/upload', () => ({
   leadImportUpload: {
     single: () => (req: any, res: any, next: any) => {
-      req.file = { buffer: Buffer.from('test'), originalname: 'test.csv' };
+      req.file = { buffer: Buffer.from('test'), originalname: 'test.csv', mimetype: 'text/csv' };
       next();
     },
   },

@@ -1,4 +1,5 @@
 import { pool } from '../../shared/utils/db';
+import { AppError } from '../../shared/middleware/errorHandler';
 import { Pipeline, PipelineStage, PipelineWithStages } from './pipeline.types';
 
 export async function findPipelines(): Promise<Pipeline[]> {
@@ -62,7 +63,9 @@ export async function updatePipeline(
     `UPDATE pipelines SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
     values,
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Pipeline not found', 404);
+  return row;
 }
 
 export async function deletePipeline(id: string): Promise<void> {
@@ -114,7 +117,9 @@ export async function updateStage(
     `UPDATE pipeline_stages SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
     values,
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) throw new AppError('Pipeline stage not found', 404);
+  return row;
 }
 
 export async function deleteStage(id: string): Promise<void> {

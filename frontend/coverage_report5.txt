@@ -1,0 +1,30 @@
+
+ RUN  v3.2.6 /home/sr-user91/Videos/CRM/frontend
+      Coverage enabled with v8
+
+ ✓ src/pages/__tests__/ResetPasswordPage.test.tsx (1 test) 298ms
+ ✓ src/pages/__tests__/LoginPage.test.tsx (1 test) 289ms
+ ✓ src/pages/__tests__/ForgotPasswordPage.test.tsx (1 test) 308ms
+   ✓ ForgotPasswordPage > renders successfully  306ms
+ ✓ src/pages/__tests__/ReportsPage.test.tsx (1 test) 67ms
+ ✓ src/pages/__tests__/ImportLeadsPage.test.tsx (1 test) 107ms
+ ✓ src/pages/__tests__/CampaignFormPage.test.tsx (1 test) 117ms
+ ✓ src/pages/__tests__/SettingsPage.test.tsx (1 test) 87ms
+ ✓ src/pages/__tests__/LeadFormPage.test.tsx (1 test) 94ms
+ ✓ src/pages/__tests__/LeadsPage.test.tsx (1 test) 105ms
+ ✓ src/pages/__tests__/ScraperConfigPage.test.tsx (1 test) 49ms
+ ✓ src/pages/__tests__/UsersPage.test.tsx (1 test) 65ms
+ ✓ src/pages/__tests__/DashboardPage.test.tsx (1 test) 105ms
+ ✓ src/pages/__tests__/AssignmentsPage.test.tsx (1 test) 54ms
+ ✓ src/pages/__tests__/ScoringPage.test.tsx (1 test) 61ms
+ ✓ src/pages/__tests__/PipelinePage.test.tsx (1 test) 63ms
+ ✓ src/store/__tests__/authStore.test.ts (7 tests) 11ms
+ ✓ src/pages/__tests__/CampaignsPage.test.tsx (1 test) 51ms
+ ✓ src/api/__tests__/client.test.ts (3 tests) 8ms
+ ✓ src/store/__tests__/reportsStore.test.ts (7 tests) 8ms
+
+ Test Files  9 failed | 19 passed (28)
+      Tests  33 passed (33)
+   Start at  11:15:19
+   Duration  17.43s (transform 1.30s, setup 6.27s, collect 5.89s, tests 1.94s, environment 21.71s, prepare 3.93s)
+

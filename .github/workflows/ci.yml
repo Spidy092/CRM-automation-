@@ -1,0 +1,205 @@
+name: CI
+
+# Run on push and PR to the three protected branches defined in AGENTS.md.
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging, develop]
+
+# Cancel in-progress runs for the same branch/PR — saves CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend — Lint
+  # ──────────────────────────────────────────────────────────────────────────
+  backend-lint:
+    name: Backend · Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend — Test (with real Postgres + Redis services)
+  # ──────────────────────────────────────────────────────────────────────────
+  backend-test:
+    name: Backend · Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm_test
+          POSTGRES_PASSWORD: crm_test
+          POSTGRES_DB: crm_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://crm_test:crm_test@localhost:5432/crm_test
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      # 32-byte (64 hex char) deterministic test key — NOT a production secret
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate test JWT keys
+        # Generate fresh RSA keys, escape newlines for use as env values
+        # (matches the .replace(/\\n/g, '\n') logic in src/shared/middleware/auth.ts)
+        run: |
+          mkdir -p /tmp/jwt
+          openssl genrsa -out /tmp/jwt/private.pem 2048
+          openssl rsa -in /tmp/jwt/private.pem -pubout -out /tmp/jwt/public.pem
+          PRIV=$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/jwt/private.pem)
+          PUB=$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/jwt/public.pem)
+          {
+            echo "JWT_PRIVATE_KEY=$PRIV"
+            echo "JWT_PUBLIC_KEY=$PUB"
+          } >> $GITHUB_ENV
+
+      - name: Run migrations against test DB
+        run: npm run migrate
+
+      - name: Run tests with coverage
+        run: npm run test
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend — Build
+  # ──────────────────────────────────────────────────────────────────────────
+  backend-build:
+    name: Backend · Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript compile
+        run: npm run build
+
+      - name: Upload compiled JS
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: backend/dist/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Frontend — Lint
+  # ──────────────────────────────────────────────────────────────────────────
+  frontend-lint:
+    name: Frontend · Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Frontend — Build
+  # ──────────────────────────────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend · Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build SPA
+        run: npm run build
+
+      - name: Upload built SPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7

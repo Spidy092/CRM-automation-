@@ -1,0 +1,108 @@
+
+ RUN  v3.2.6 /home/sr-user91/Videos/CRM/frontend
+      Coverage enabled with v8
+
+ ✓ src/components/__tests__/Layout.test.tsx (1 test) 350ms
+   ✓ Layout > renders successfully  348ms
+ ✓ src/pages/__tests__/ResetPasswordPage.test.tsx (1 test) 440ms
+   ✓ ResetPasswordPage > renders successfully  435ms
+ ✓ src/pages/__tests__/LoginPage.test.tsx (1 test) 610ms
+   ✓ LoginPage > renders successfully  605ms
+ ✓ src/pages/__tests__/ForgotPasswordPage.test.tsx (1 test) 437ms
+   ✓ ForgotPasswordPage > renders successfully  427ms
+ ✓ src/pages/__tests__/AssignmentsPage.test.tsx (1 test) 98ms
+ ✓ src/pages/__tests__/LeadsPage.test.tsx (1 test) 134ms
+ ✓ src/pages/__tests__/CampaignFormPage.test.tsx (1 test) 127ms
+ ✓ src/api/__tests__/campaigns.test.tsx (10 tests) 59ms
+ ✓ src/pages/__tests__/PipelinePage.test.tsx (1 test) 93ms
+ ✓ src/pages/__tests__/ImportLeadsPage.test.tsx (1 test) 127ms
+ ✓ src/pages/__tests__/ReportsPage.test.tsx (1 test) 125ms
+ ✓ src/pages/__tests__/LeadFormPage.test.tsx (1 test) 128ms
+ ✓ src/pages/__tests__/DashboardPage.test.tsx (1 test) 147ms
+ ✓ src/pages/__tests__/UsersPage.test.tsx (1 test) 147ms
+ ✓ src/__tests__/App.test.tsx (1 test) 392ms
+   ✓ App > renders successfully  390ms
+ ✓ src/pages/__tests__/SettingsPage.test.tsx (1 test) 126ms
+ ✓ src/pages/__tests__/CampaignsPage.test.tsx (1 test) 155ms
+ ✓ src/pages/__tests__/ScoringPage.test.tsx (1 test) 221ms
+ ✓ src/api/__tests__/reports.test.tsx (6 tests) 73ms
+ ✓ src/api/__tests__/scraper.test.tsx (7 tests) 70ms
+ ✓ src/pages/__tests__/ScraperConfigPage.test.tsx (1 test) 123ms
+ ✓ src/api/__tests__/auth.test.tsx (6 tests) 64ms
+ ✓ src/api/__tests__/assignments.test.tsx (6 tests) 63ms
+ ✓ src/api/__tests__/scoring.test.tsx (9 tests) 97ms
+ ✓ src/api/__tests__/leads.test.tsx (7 tests) 124ms
+ ✓ src/api/__tests__/pipelines.test.tsx (6 tests) 59ms
+ ✓ src/api/__tests__/users.test.tsx (2 tests) 64ms
+ ✓ src/store/__tests__/authStore.test.ts (7 tests) 16ms
+ ✓ src/store/__tests__/reportsStore.test.ts (7 tests) 17ms
+
+ Test Files  29 passed (29)
+      Tests  91 passed (91)
+     Errors  1 error
+   Start at  11:44:30
+   Duration  35.08s (transform 3.79s, setup 8.59s, collect 41.29s, tests 4.69s, environment 28.63s, prepare 4.78s)
+
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------------|---------|----------|---------|---------|-------------------
+All files          |   61.36 |    69.56 |   61.34 |   61.36 |                   
+ frontend          |       0 |       20 |      20 |       0 |                   
+  eslint.config.js |       0 |        0 |       0 |       0 | 1-28              
+  gen_api_tests.js |       0 |        0 |       0 |       0 | 1-74              
+  ...page_tests.js |       0 |        0 |       0 |       0 | 1-104             
+  gen_tests.js     |       0 |        0 |       0 |       0 | 1-45              
+  vite.config.ts   |       0 |      100 |     100 |       0 | 2-33              
+ ...nd/dist/assets |       0 |        0 |       0 |       0 |                   
+  ...x-C-Pem5xm.js |       0 |        0 |       0 |       0 | 1-24              
+ frontend/src      |   77.68 |     62.5 |      75 |   77.68 |                   
+  App.tsx          |   83.92 |    71.42 |     100 |   83.92 | 54-73,98-99       
+  main.tsx         |       0 |        0 |       0 |       0 | 1-10              
+ frontend/src/api  |   94.21 |    88.43 |   99.33 |   94.21 |                   
+  assignments.ts   |     100 |      100 |     100 |     100 |                   
+  auth.ts          |     100 |      100 |     100 |     100 |                   
+  campaigns.ts     |     100 |      100 |     100 |     100 |                   
+  client.ts        |       0 |        0 |       0 |       0 | 1-57              
+  leads.ts         |     100 |    73.07 |     100 |     100 | 21-27             
+  pipelines.ts     |     100 |      100 |     100 |     100 |                   
+  reports.ts       |     100 |    58.62 |     100 |     100 | ...58,76-78,96-98 
+  scoring.ts       |     100 |      100 |     100 |     100 |                   
+  scraper.ts       |     100 |      100 |     100 |     100 |                   
+  users.ts         |     100 |      100 |     100 |     100 |                   
+ ...src/components |   91.97 |    61.11 |   16.66 |   91.97 |                   
+  Layout.tsx       |   91.97 |    61.11 |   16.66 |   91.97 | 34-39,173-177     
+ .../components/ui |   84.75 |    88.23 |      80 |   84.75 |                   
+  LoadingTable.tsx |     100 |      100 |     100 |     100 |                   
+  Skeleton.tsx     |     100 |       50 |     100 |     100 | 2                 
+  Toast.tsx        |   46.15 |    66.66 |   66.66 |   46.15 | 28-32,36-37,49-75 
+  button.tsx       |     100 |      100 |     100 |     100 |                   
+  card.tsx         |   89.65 |      100 |     100 |   89.65 | 71-76             
+  input.tsx        |     100 |      100 |     100 |     100 |                   
+  label.tsx        |     100 |      100 |     100 |     100 |                   
+ frontend/src/lib  |     100 |    83.33 |   57.14 |     100 |                   
+  test-utils.tsx   |     100 |       80 |      50 |     100 | 38                
+  utils.ts         |     100 |      100 |     100 |     100 |                   
+ ...tend/src/pages |   55.07 |    53.42 |   15.32 |   55.07 |                   
+  ...mentsPage.tsx |   88.78 |    84.61 |      25 |   88.78 | 29-38,120-122     
+  ...nFormPage.tsx |   84.21 |       80 |    12.5 |   84.21 | 22-40             
+  ...aignsPage.tsx |   68.75 |    44.44 |   11.11 |   68.75 | ...15-122,145-159 
+  ...boardPage.tsx |   59.58 |    52.94 |      40 |   59.58 | ...93-826,831,895 
+  ...swordPage.tsx |   75.75 |       20 |   33.33 |   75.75 | ...90-103,137-140 
+  ...LeadsPage.tsx |   51.74 |       20 |   14.28 |   51.74 | ...,89-92,109-161 
+  LeadFormPage.tsx |   71.11 |       20 |   14.28 |   71.11 | ...57-262,286,288 
+  LeadsPage.tsx    |   51.68 |    85.71 |   16.66 |   51.68 | ...20-129,149-213 
+  LoginPage.tsx    |   79.35 |       25 |   16.66 |   79.35 | ...63-166,169-172 
+  PipelinePage.tsx |   33.97 |    71.42 |    9.09 |   33.97 | ...99-198,236-240 
+  ReportsPage.tsx  |   49.33 |       50 |   14.28 |   49.33 | ...66-268,271-273 
+  ...swordPage.tsx |   74.53 |       20 |      25 |   74.53 | ...03-117,171-174 
+  ScoringPage.tsx  |   77.64 |    86.66 |      10 |   77.64 | ...,70-78,190-192 
+  ...onfigPage.tsx |   19.08 |    54.16 |    5.55 |   19.08 | ...27-566,573-601 
+  SettingsPage.tsx |     100 |      100 |      25 |     100 |                   
+  UsersPage.tsx    |   21.66 |    18.75 |      10 |   21.66 | ...25-231,236-280 
+ ...tend/src/store |     100 |      100 |     100 |     100 |                   
+  authStore.ts     |     100 |      100 |     100 |     100 |                   
+  reportsStore.ts  |     100 |      100 |     100 |     100 |                   
+ ...tend/src/types |       0 |        0 |       0 |       0 |                   
+  index.ts         |       0 |        0 |       0 |       0 |                   
+-------------------|---------|----------|---------|---------|-------------------

@@ -1,80 +1,91 @@
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Settings, Users, Link2, FileText } from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Settings, Users, Link2, FileText, Bot, Route, SlidersHorizontal } from 'lucide-react';
+
+const settingsGroups = [
+  {
+    title: 'User Management',
+    description: 'Manage users, roles, and permissions.',
+    icon: Users,
+    action: 'Manage Users',
+    path: '/settings/users',
+  },
+  {
+    title: 'Integrations',
+    description: 'Connect WhatsApp, Twilio, SendGrid, ads, and other services.',
+    icon: Link2,
+    action: 'Configure Integrations',
+    path: '/settings/integrations',
+  },
+  {
+    title: 'Custom Fields',
+    description: 'Define CRM-specific lead and contact fields.',
+    icon: FileText,
+    action: 'Manage Fields',
+  },
+  {
+    title: 'Lead Scoring',
+    description: 'Configure lead scoring rules and hot/warm/cold thresholds.',
+    icon: SlidersHorizontal,
+    action: 'Manage Scoring',
+    path: '/settings/scoring',
+  },
+  {
+    title: 'Assignments',
+    description: 'Tune round-robin routing and override rules.',
+    icon: Route,
+    action: 'Manage Routing',
+    path: '/settings/assignments',
+  },
+  {
+    title: 'AI Personalization',
+    description: 'Configure model settings used by outreach personalization.',
+    icon: Bot,
+    action: 'AI Settings',
+    path: '/settings/ai',
+  },
+];
 
 export function SettingsPage() {
+  const navigate = useNavigate();
+
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
+      <PageHeader
+        eyebrow="Administration"
+        title="Settings"
+        description="Control access, routing, integrations, scoring, and AI behavior from one operational hub."
+      />
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center space-x-2">
-              <Users className="h-5 w-5 text-gray-500" />
-              <CardTitle className="text-lg">User Management</CardTitle>
-            </div>
-            <CardDescription>
-              Manage users, roles, and permissions
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full">
-              Manage Users
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center space-x-2">
-              <Link2 className="h-5 w-5 text-gray-500" />
-              <CardTitle className="text-lg">Integrations</CardTitle>
-            </div>
-            <CardDescription>
-              Connect with WhatsApp, email, and other services
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full">
-              Configure Integrations
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center space-x-2">
-              <FileText className="h-5 w-5 text-gray-500" />
-              <CardTitle className="text-lg">Custom Fields</CardTitle>
-            </div>
-            <CardDescription>
-              Define custom fields for leads and contacts
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full">
-              Manage Fields
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-md transition-shadow">
-          <CardHeader>
-            <div className="flex items-center space-x-2">
-              <Settings className="h-5 w-5 text-gray-500" />
-              <CardTitle className="text-lg">General Settings</CardTitle>
-            </div>
-            <CardDescription>
-              Configure application settings and preferences
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full">
-              Open Settings
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {settingsGroups.map((group) => (
+          <Card key={group.title}>
+            <CardHeader>
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600">
+                  <group.icon className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle>{group.title}</CardTitle>
+                  <CardDescription className="mt-1 leading-5">{group.description}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="outline"
+                className="w-full justify-between"
+                onClick={() => group.path && navigate(group.path)}
+                disabled={!group.path}
+              >
+                {group.action}
+                <Settings className="h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
   );

@@ -1,0 +1,316 @@
+/**
+ * Unit tests for webhook-handlers.ts
+ *
+ * Covers:
+ *   - handleWhatsAppMessage: reply recorded, new lead created
+ *   - handleWhatsAppStatus: status mapped to outreach_log
+ *   - handleTwilioMessage: reply recorded, new lead created
+ *   - handleTwilioStatus: delivery status update
+ *   - handleSendGridEvents: delivered, open, bounce, unsubscribe
+ *   - handleGoogleAdsLeadForm: new lead, duplicate skipped
+ */
+
+import {
+  handleWhatsAppMessage,
+  handleWhatsAppStatus,
+  handleTwilioMessage,
+  handleTwilioStatus,
+  handleSendGridEvents,
+  handleGoogleAdsLeadForm,
+} from './webhook-handlers';
+
+// ── DB mock ───────────────────────────────────────────────────────────────
+
+const mockQueryOne = jest.fn();
+const mockQuery = jest.fn();
+
+jest.mock('../shared/utils/db', () => ({
+  pool: { query: (...args: unknown[]) => mockQuery(...args) },
+  queryOne: (...args: unknown[]) => mockQueryOne(...args),
+}));
+
+jest.mock('../shared/utils/logger', () => ({
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  // Default: pool.query returns empty rowCount
+  mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
+});
+
+// ── WhatsApp message ──────────────────────────────────────────────────────
+
+describe('handleWhatsAppMessage', () => {
+  const buildPayload = (from: string, msgId = 'wam123') => ({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              messages: [{ id: msgId, from, type: 'text', text: { body: 'Hello' } }],
+              metadata: { phone_number_id: 'ph1' },
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  it('records a reply for an existing lead', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'lead-1' }); // SELECT existing lead
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] }); // UPDATE outreach_logs
+
+    const result = await handleWhatsAppMessage(buildPayload('+12025551234'));
+
+    expect(result.action).toBe('reply_recorded');
+    expect(result.leadId).toBe('lead-1');
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE outreach_logs'),
+      expect.arrayContaining(['lead-1']),
+    );
+  });
+
+  it('creates a new lead when phone is unknown', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce(null) // no existing lead
+      .mockResolvedValueOnce({ id: 'lead-new' }); // INSERT lead
+
+    const result = await handleWhatsAppMessage(buildPayload('+19995551234'));
+
+    expect(result.action).toBe('lead_created');
+    expect(result.leadId).toBe('lead-new');
+  });
+
+  it('returns noop when payload has no messages', async () => {
+    const result = await handleWhatsAppMessage({ entry: [{ changes: [{ value: {} }] }] });
+    expect(result.action).toBe('noop');
+  });
+});
+
+// ── WhatsApp status ───────────────────────────────────────────────────────
+
+describe('handleWhatsAppStatus', () => {
+  const buildPayload = (status: string, wamId = 'wam456') => ({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              statuses: [{ id: wamId, status }],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  it.each([
+    ['sent', 'sent'],
+    ['delivered', 'delivered'],
+    ['read', 'opened'],
+    ['failed', 'failed'],
+  ])('maps WhatsApp status %s → log status %s', async (waStatus, logStatus) => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const result = await handleWhatsAppStatus(buildPayload(waStatus));
+
+    expect(result.action).toBe('status_updated');
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE outreach_logs'),
+      expect.arrayContaining([logStatus, `wam:wam456`]),
+    );
+  });
+
+  it('returns noop when no statuses in payload', async () => {
+    const result = await handleWhatsAppStatus({ entry: [{ changes: [{ value: {} }] }] });
+    expect(result.action).toBe('noop');
+  });
+});
+
+// ── Twilio message ────────────────────────────────────────────────────────
+
+describe('handleTwilioMessage', () => {
+  it('records reply for known phone number', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'lead-2' });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const result = await handleTwilioMessage({
+      From: '+12025559999',
+      Body: 'Yes I am interested',
+      SmsSid: 'SM123',
+    });
+
+    expect(result.action).toBe('reply_recorded');
+    expect(result.leadId).toBe('lead-2');
+  });
+
+  it('creates lead for unknown number', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'lead-sms-new' });
+
+    const result = await handleTwilioMessage({
+      From: '+19991112222',
+      Body: 'Hi',
+      SmsSid: 'SM999',
+    });
+
+    expect(result.action).toBe('lead_created');
+    expect(result.leadId).toBe('lead-sms-new');
+  });
+
+  it('returns noop when From is missing', async () => {
+    const result = await handleTwilioMessage({ Body: 'test' });
+    expect(result.action).toBe('noop');
+  });
+});
+
+// ── Twilio status ─────────────────────────────────────────────────────────
+
+describe('handleTwilioStatus', () => {
+  it.each([
+    ['delivered', 'delivered'],
+    ['failed', 'failed'],
+    ['undelivered', 'failed'],
+    ['sent', 'sent'],
+  ])('maps Twilio status %s → log status %s', async (twStatus, logStatus) => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    await handleTwilioStatus({ MessageSid: 'SM001', MessageStatus: twStatus });
+
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE outreach_logs'),
+      expect.arrayContaining([logStatus, 'tw:SM001']),
+    );
+  });
+
+  it('returns noop when MessageSid is missing', async () => {
+    const result = await handleTwilioStatus({ MessageStatus: 'delivered' });
+    expect(result.action).toBe('noop');
+  });
+});
+
+// ── SendGrid events ───────────────────────────────────────────────────────
+
+describe('handleSendGridEvents', () => {
+  it('updates log status for delivered event', async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const result = await handleSendGridEvents([
+      { event: 'delivered', sg_message_id: 'abc123.filter001' },
+    ]);
+
+    expect(result.action).toBe('events_processed');
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE outreach_logs'),
+      expect.arrayContaining(['delivered', 'sg:abc123']),
+    );
+  });
+
+  it('maps open → opened', async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    await handleSendGridEvents([{ event: 'open', sg_message_id: 'msg1' }]);
+
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.arrayContaining(['opened']),
+    );
+  });
+
+  it('marks lead opted_out on unsubscribe event', async () => {
+    // First query: UPDATE outreach_logs, second query: UPDATE leads
+    mockQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // UPDATE leads (unsubscribe path runs UPDATE leads first)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }); // UPDATE outreach_logs
+
+    await handleSendGridEvents([{ event: 'unsubscribe', sg_message_id: 'msg2' }]);
+
+    // At least one UPDATE call should hit the leads table
+    const leadUpdateCall = mockQuery.mock.calls.find((c) =>
+      (c[0] as string).includes("opted_out"),
+    );
+    expect(leadUpdateCall).toBeDefined();
+  });
+
+  it('maps bounce → failed', async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    await handleSendGridEvents([{ event: 'bounce', sg_message_id: 'msg3' }]);
+
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.arrayContaining(['failed']),
+    );
+  });
+
+  it('returns noop for empty array', async () => {
+    const result = await handleSendGridEvents([]);
+    expect(result.action).toBe('noop');
+  });
+
+  it('processes multiple events and counts updates', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const result = await handleSendGridEvents([
+      { event: 'delivered', sg_message_id: 'a1' },
+      { event: 'open', sg_message_id: 'a2' },
+    ]);
+
+    expect(result.details).toContain('2 events');
+    expect(result.details).toContain('updated 2');
+  });
+});
+
+// ── Google Ads lead form ──────────────────────────────────────────────────
+
+describe('handleGoogleAdsLeadForm', () => {
+  const buildPayload = (overrides: Record<string, unknown> = {}) => ({
+    lead_id: 'gl-001',
+    form_id: 'form-1',
+    user_column_data: [
+      { column_name: 'FULL_NAME', string_value: 'Jane Smith' },
+      { column_name: 'EMAIL', string_value: 'jane@example.com' },
+      { column_name: 'PHONE_NUMBER', string_value: '+12025551234' },
+      { column_name: 'COMPANY_NAME', string_value: 'Acme Corp' },
+    ],
+    ...overrides,
+  });
+
+  it('creates a new lead from Google Ads payload', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce(null) // no existing lead by email
+      .mockResolvedValueOnce({ id: 'lead-ga-1' }); // INSERT
+
+    const result = await handleGoogleAdsLeadForm(buildPayload());
+
+    expect(result.action).toBe('lead_created');
+    expect(result.leadId).toBe('lead-ga-1');
+  });
+
+  it('returns lead_updated when email already exists', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'existing-lead' });
+
+    const result = await handleGoogleAdsLeadForm(buildPayload());
+
+    expect(result.action).toBe('lead_updated');
+    expect(result.leadId).toBe('existing-lead');
+  });
+
+  it('handles payload with no user_column_data gracefully', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'lead-ga-2' });
+
+    const result = await handleGoogleAdsLeadForm({ lead_id: 'gl-002' });
+
+    expect(result.action).toBe('lead_created');
+  });
+});

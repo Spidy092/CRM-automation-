@@ -14,8 +14,12 @@ jest.mock('./pipeline.repository', () => ({
   findDefaultPipeline: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('../../shared/utils/db', () => ({
+  pool: { query: jest.fn() },
+}));
 
 import { AppError } from '../../shared/middleware/errorHandler';
+import { pool } from '../../shared/utils/db';
 import {
   findPipelines,
   findPipelineById,
@@ -34,7 +38,9 @@ import {
 import { writeAuditLog } from '../../shared/utils/audit';
 import {
   createPipeline,
+  createStage,
   deletePipelineById,
+  deleteStageById,
   getAllPipelines,
   getDefaultPipeline,
   getPipelineById,
@@ -190,5 +196,91 @@ describe('getDefaultPipeline', () => {
   it('delegates to the repository', async () => {
     (findDefaultPipeline as jest.Mock).mockResolvedValue(basePipeline);
     await expect(getDefaultPipeline()).resolves.toBe(basePipeline);
+  });
+});
+
+describe('createStage', () => {
+  it('throws 404 when pipeline missing', async () => {
+    (findPipelineById as jest.Mock).mockResolvedValue(null);
+    await expect(
+      createStage('pipe-x', { name: 'New', position: 1 }, actor),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(insertStage).not.toHaveBeenCalled();
+  });
+
+  it('inserts stage and audits on success', async () => {
+    (findPipelineById as jest.Mock).mockResolvedValue(basePipeline);
+    (insertStage as jest.Mock).mockResolvedValue({ ...baseStage, name: 'Contacted' });
+    const res = await createStage(
+      'pipe-1',
+      { name: 'Contacted', position: 2, is_terminal_won: true },
+      actor,
+    );
+    expect(res.name).toBe('Contacted');
+    expect(insertStage).toHaveBeenCalledWith('pipe-1', 'Contacted', 2, true, false);
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'pipeline_stage.created' }),
+    );
+  });
+
+  it('defaults terminal flags to false', async () => {
+    (findPipelineById as jest.Mock).mockResolvedValue(basePipeline);
+    (insertStage as jest.Mock).mockResolvedValue(baseStage);
+    await createStage('pipe-1', { name: 'New', position: 1 }, actor);
+    expect(insertStage).toHaveBeenCalledWith('pipe-1', 'New', 1, false, false);
+  });
+});
+
+describe('deleteStageById', () => {
+  it('throws 404 when stage missing', async () => {
+    (findStageById as jest.Mock).mockResolvedValue(null);
+    await expect(deleteStageById('stage-x', actor)).rejects.toMatchObject({ statusCode: 404 });
+    expect(deleteStage).not.toHaveBeenCalled();
+  });
+
+  it('deletes and audits on success', async () => {
+    (findStageById as jest.Mock).mockResolvedValue(baseStage);
+    await deleteStageById('stage-1', actor);
+    expect(deleteStage).toHaveBeenCalledWith('stage-1');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'pipeline_stage.deleted' }),
+    );
+  });
+});
+
+describe('moveLead sales-role ownership check', () => {
+  const salesActor = { id: 'sales-1', role: 'sales', ipAddress: '127.0.0.1' };
+
+  beforeEach(() => {
+    (findStageById as jest.Mock).mockResolvedValue(baseStage);
+    (pool.query as jest.Mock).mockReset();
+  });
+
+  it('throws 403 when sales actor does not own the lead', async () => {
+    (pool.query as jest.Mock).mockResolvedValue({ rows: [{ assigned_to: 'sales-2' }] });
+    await expect(moveLead('lead-1', 'stage-1', salesActor)).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    expect(moveLeadToStage).not.toHaveBeenCalled();
+  });
+
+  it('throws 404 when sales actor queries a missing lead', async () => {
+    (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    await expect(moveLead('lead-x', 'stage-1', salesActor)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
+  it('allows sales actor to move their own lead', async () => {
+    (pool.query as jest.Mock).mockResolvedValue({ rows: [{ assigned_to: 'sales-1' }] });
+    await moveLead('lead-1', 'stage-1', salesActor);
+    expect(moveLeadToStage).toHaveBeenCalledWith('lead-1', 'stage-1');
+    expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('admin can move any lead without ownership check', async () => {
+    await moveLead('lead-1', 'stage-1', actor);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(moveLeadToStage).toHaveBeenCalledWith('lead-1', 'stage-1');
   });
 });

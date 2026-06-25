@@ -28,6 +28,8 @@ export interface ApiResponse<T = unknown> {
     total?: number;
     cursor?: string;
     nextCursor?: string;
+    automation?: unknown;
+    [key: string]: unknown;
   };
 }
 

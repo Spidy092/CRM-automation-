@@ -19,6 +19,9 @@ const BCRYPT_COST_FACTOR = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_SECONDS = 15 * 60; // 15 minutes
 const RESET_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
+// Pre-computed hash used as a constant-time dummy when the email doesn't exist,
+// preventing timing-based user enumeration attacks.
+const DUMMY_HASH = '$2b$12$KIX9zr4Gq1J3L5N7P9R1BOeKZuGQhWqY6iJmXoVsT3UwDpEyFhAcC';
 
 function getPrivateKey(): string {
   const rawKey = process.env.JWT_PRIVATE_KEY;
@@ -38,25 +41,32 @@ function generateOpaqueRefreshToken(): string {
   return crypto.randomBytes(40).toString('hex');
 }
 
-function failedLoginKey(email: string): string {
-  return `auth:failed_login:${email.toLowerCase()}`;
+function failedLoginKey(userId: string): string {
+  return `auth:failed_login:${userId}`;
 }
 
 async function isAccountLocked(email: string): Promise<boolean> {
-  const attempts = await redis.get(failedLoginKey(email));
+  // Check by email as a pre-lookup gate; keyed by userId once we have it
+  const attempts = await redis.get(`auth:failed_login_email:${email.toLowerCase()}`);
   return attempts !== null && parseInt(attempts, 10) >= MAX_FAILED_ATTEMPTS;
 }
 
-async function recordFailedLogin(email: string): Promise<void> {
-  const key = failedLoginKey(email);
-  const count = await redis.incr(key);
-  if (count === 1) {
-    await redis.expire(key, LOCKOUT_DURATION_SECONDS);
+async function recordFailedLogin(userId: string | null, email: string): Promise<void> {
+  if (userId) {
+    // Key on userId to prevent targeted lockout via email enumeration
+    const key = failedLoginKey(userId);
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, LOCKOUT_DURATION_SECONDS);
   }
+  // Also keep a short-lived email-keyed counter as a gate for the pre-user-lookup check
+  const emailKey = `auth:failed_login_email:${email.toLowerCase()}`;
+  const count = await redis.incr(emailKey);
+  if (count === 1) await redis.expire(emailKey, LOCKOUT_DURATION_SECONDS);
 }
 
-async function clearFailedLogins(email: string): Promise<void> {
-  await redis.del(failedLoginKey(email));
+async function clearFailedLogins(userId: string, email: string): Promise<void> {
+  await redis.del(failedLoginKey(userId));
+  await redis.del(`auth:failed_login_email:${email.toLowerCase()}`);
 }
 
 export async function login(input: LoginInput): Promise<LoginResult> {
@@ -70,18 +80,18 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   }
 
   const user = await findUserByEmail(email);
-  if (!user || !user.is_active) {
-    await recordFailedLogin(email);
+
+  // Always run bcrypt regardless of whether the user exists to prevent timing-based
+  // user enumeration (bcrypt ~100ms vs no-user path ~1ms without this guard).
+  const hashToCompare = user?.password_hash ?? DUMMY_HASH;
+  const passwordMatches = await bcrypt.compare(password, hashToCompare);
+
+  if (!user || !user.is_active || !passwordMatches) {
+    await recordFailedLogin(user?.id ?? null, email);
     throw new AppError('Invalid email or password', 401);
   }
 
-  const passwordMatches = await bcrypt.compare(password, user.password_hash);
-  if (!passwordMatches) {
-    await recordFailedLogin(email);
-    throw new AppError('Invalid email or password', 401);
-  }
-
-  await clearFailedLogins(email);
+  await clearFailedLogins(user.id, email);
 
   const payload: JwtPayload = { id: user.id, email: user.email, role: user.role, name: user.name };
   const accessToken = signAccessToken(payload);
@@ -98,7 +108,9 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   };
 }
 
-export async function refresh(refreshToken: string): Promise<{ accessToken: string }> {
+export async function refresh(
+  refreshToken: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
   const tokenRecord = await findValidRefreshToken(refreshToken);
   if (!tokenRecord) {
     throw new AppError('Invalid or expired refresh token', 401);
@@ -109,10 +121,17 @@ export async function refresh(refreshToken: string): Promise<{ accessToken: stri
     throw new AppError('User account is not active', 401);
   }
 
+  // Rotate: revoke old token and issue a fresh one to limit replay window
+  await revokeRefreshToken(refreshToken);
+
   const payload: JwtPayload = { id: user.id, email: user.email, role: user.role, name: user.name };
   const accessToken = signAccessToken(payload);
+  const newRefreshToken = generateOpaqueRefreshToken();
+  const refreshTtlMs = ms(process.env.JWT_REFRESH_EXPIRES_IN ?? '7d');
+  const expiresAt = new Date(Date.now() + refreshTtlMs);
+  await storeRefreshToken(user.id, newRefreshToken, expiresAt);
 
-  return { accessToken };
+  return { accessToken, refreshToken: newRefreshToken };
 }
 
 export async function logout(refreshToken: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { enqueueLeadEvent } from '../../workers/queue';
 import {
   findPipelines,
   findPipelineById,
@@ -205,6 +206,17 @@ export async function moveLead(leadId: string, stageId: string, actor: Actor): P
     throw new AppError('Pipeline stage not found', 404);
   }
 
+  if (actor.role === 'sales') {
+    const { pool } = await import('../../shared/utils/db');
+    const leadResult = await pool.query<{ assigned_to: string | null }>(
+      'SELECT assigned_to FROM leads WHERE id = $1 AND deleted_at IS NULL',
+      [leadId],
+    );
+    const lead = leadResult.rows[0];
+    if (!lead) throw new AppError('Lead not found', 404);
+    if (lead.assigned_to !== actor.id) throw new AppError('Forbidden', 403);
+  }
+
   await moveLeadToStage(leadId, stageId);
 
   await writeAuditLog({
@@ -214,6 +226,12 @@ export async function moveLead(leadId: string, stageId: string, actor: Actor): P
     entityId: leadId,
     newValue: { pipeline_stage_id: stageId },
     ipAddress: actor.ipAddress ?? null,
+  });
+
+  void enqueueLeadEvent({
+    event: 'lead.stage_moved',
+    leadId,
+    payload: { fromStageId: null, toStageId: stageId, pipelineId: stage.pipeline_id },
   });
 }
 

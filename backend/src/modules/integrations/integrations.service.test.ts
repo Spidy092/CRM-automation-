@@ -16,6 +16,13 @@ jest.mock('./integrations.repository', () => ({
   pool: { query: jest.fn() },
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+
+// Mock all four connector modules so loadCredentials() doesn't hit the DB / env
+jest.mock('./whatsapp/whatsapp.connector', () => ({ loadCredentials: jest.fn() }));
+jest.mock('./twilio/twilio.connector', () => ({ loadCredentials: jest.fn() }));
+jest.mock('./sendgrid/sendgrid.connector', () => ({ loadCredentials: jest.fn() }));
+jest.mock('./smtp/smtp.connector', () => ({ loadCredentials: jest.fn() }));
+
 jest.mock('../../shared/utils/encryption', () => ({
   encryptJson: jest.fn((v: unknown) => `enc(${JSON.stringify(v)})`),
   decrypt: jest.fn((s: string) => {

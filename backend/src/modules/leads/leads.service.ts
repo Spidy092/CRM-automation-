@@ -5,6 +5,7 @@ import { clampLimit, decodeCursor, encodeCursor } from '../../shared/utils/pagin
 import { findActiveDefinitions } from '../custom-fields/customFields.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
+import { enqueueLeadEvent } from '../../workers/queue';
 import {
   findExistingForDedup,
   findLeadById,
@@ -13,6 +14,8 @@ import {
   softDeleteLead,
   updateLead,
   updateLeadStatus,
+  findActivityForLead,
+  type LeadActivityEntry,
 } from './leads.repository';
 import {
   LeadInput,
@@ -21,6 +24,7 @@ import {
   LeadResponse,
   toLeadResponse,
 } from './leads.types';
+import { cancelPendingOutreachJobs } from '../../workers/queue';
 
 interface Actor {
   id: string;
@@ -89,6 +93,8 @@ export async function createLead(input: LeadInput, actor: Actor): Promise<LeadRe
     newValue: toLeadResponse(created),
     ipAddress: actor.ipAddress ?? null,
   });
+  // Fire-and-forget: trigger scoring automation
+  void enqueueLeadEvent({ event: 'lead.created', leadId: created.id, payload: {} });
   return toLeadResponse(created);
 }
 
@@ -211,6 +217,9 @@ export async function setLeadPaused(
   }
 
   const updated = await updateLeadStatus(id, targetStatus);
+  if (paused) {
+    await cancelPendingOutreachJobs({ leadId: id });
+  }
   await writeAuditLog({
     userId: actor.id,
     action: paused ? 'lead.paused' : 'lead.resumed',
@@ -221,6 +230,17 @@ export async function setLeadPaused(
     ipAddress: actor.ipAddress ?? null,
   });
   return toLeadResponse(updated);
+}
+
+export async function getLeadActivity(
+  id: string,
+  actor: Actor,
+  limit = 50,
+): Promise<LeadActivityEntry[]> {
+  const lead = await findLeadById(id);
+  if (!lead) throw new AppError('Lead not found', 404);
+  assertAccess(lead.assigned_to, actor, false);
+  return findActivityForLead(id, Math.min(limit, 200));
 }
 
 export { clampLimit, decodeCursor };

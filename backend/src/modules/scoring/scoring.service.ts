@@ -140,6 +140,65 @@ interface LeadRow {
   phone: string | null;
   industry: string | null;
   country: string | null;
+  source: string | null;
+  replied_at: Date | null;
+  social_links: Record<string, string> | null;
+}
+
+function evaluateCondition(
+  lead: LeadRow,
+  factor: string,
+  condition: Record<string, unknown>,
+): boolean {
+  const leadRecord = lead as unknown as Record<string, unknown>;
+
+  // Numeric threshold: {"gte": N} — compare lead[factor] against N
+  if ('gte' in condition) {
+    const value = leadRecord[factor];
+    return value !== null && value !== undefined && Number(value) >= Number(condition.gte);
+  }
+
+  // Field existence: {"exists": "fieldName"} — check lead[fieldName] is truthy
+  if ('exists' in condition) {
+    const field = String(condition.exists);
+    const val = leadRecord[field];
+    return val !== null && val !== undefined && val !== '';
+  }
+
+  // Industry list match: {"industries": [...]}
+  if ('industries' in condition) {
+    const industries = condition.industries as string[];
+    return Array.isArray(industries) && industries.includes(String(lead.industry ?? ''));
+  }
+
+  // Country list match: {"countries": [...]}
+  if ('countries' in condition) {
+    const countries = condition.countries as string[];
+    return Array.isArray(countries) && countries.includes(String(lead.country ?? ''));
+  }
+
+  // Source list match: {"source": [...]}
+  if ('source' in condition) {
+    const sources = condition.source as string[];
+    return Array.isArray(sources) && sources.includes(String(lead.source ?? ''));
+  }
+
+  // Prior engagement: {"replied": true}
+  if ('replied' in condition && condition.replied === true) {
+    return lead.replied_at !== null;
+  }
+
+  // Generic value match: {"match": value | value[]}
+  if ('match' in condition) {
+    const matchTarget = condition.match;
+    const leadValue = String(leadRecord[factor] ?? '');
+    if (Array.isArray(matchTarget)) {
+      return (matchTarget as string[]).includes(leadValue);
+    }
+    return leadValue === String(matchTarget);
+  }
+
+  return false;
 }
 
 export async function calculateLeadScore(leadId: string): Promise<LeadScore> {
@@ -156,37 +215,7 @@ export async function calculateLeadScore(leadId: string): Promise<LeadScore> {
   const factors: Array<{ factor: string; score: number; matched: boolean }> = [];
 
   for (const rule of rules) {
-    let matched = false;
-
-    switch (rule.factor) {
-      case 'has_website':
-        matched = !!lead.website;
-        break;
-      case 'has_google_rating':
-        matched = lead.google_rating !== null && lead.google_rating >= 3;
-        break;
-      case 'high_review_count':
-        matched = lead.review_count !== null && lead.review_count >= 10;
-        break;
-      case 'has_email':
-        matched = !!lead.email;
-        break;
-      case 'has_phone':
-        matched = !!lead.phone;
-        break;
-      case 'industry_match': {
-        const industries = rule.condition.industries as string[] | undefined;
-        matched = industries ? industries.includes(String(lead.industry)) : false;
-        break;
-      }
-      case 'country_match': {
-        const countries = rule.condition.countries as string[] | undefined;
-        matched = countries ? countries.includes(String(lead.country)) : false;
-        break;
-      }
-      default:
-        matched = false;
-    }
+    const matched = evaluateCondition(lead, rule.factor, rule.condition);
 
     if (matched) {
       totalScore += rule.score_value;

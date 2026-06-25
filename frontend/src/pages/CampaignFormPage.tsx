@@ -5,6 +5,7 @@ import { usePipelines } from '@/api/pipelines';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 export function CampaignFormPage() {
@@ -17,6 +18,7 @@ export function CampaignFormPage() {
   const [targetIndustries, setTargetIndustries] = useState('');
   const [targetCountries, setTargetCountries] = useState('');
   const [pipelineId, setPipelineId] = useState('');
+  const [aiPersonalizationEnabled, setAiPersonalizationEnabled] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +34,7 @@ export function CampaignFormPage() {
           ? targetCountries.split(',').map((s) => s.trim()).filter(Boolean)
           : [],
         pipeline_id: pipelineId || undefined,
+        ai_personalization_enabled: aiPersonalizationEnabled,
       });
       navigate('/campaigns');
     } catch (error) {
@@ -112,6 +115,21 @@ export function CampaignFormPage() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="ai_personalization_enabled" className="text-base">AI Personalization</Label>
+                <div className="text-sm text-muted-foreground">
+                  Use OpenAI to personalize outreach messages for each lead based on their details.
+                </div>
+              </div>
+              <Switch
+                id="ai_personalization_enabled"
+                checked={aiPersonalizationEnabled}
+                onCheckedChange={setAiPersonalizationEnabled}
+                className="data-[state=checked]:bg-indigo-600"
+              />
             </div>
 
             <div className="flex justify-end space-x-4">

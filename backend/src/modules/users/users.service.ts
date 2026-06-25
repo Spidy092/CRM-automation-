@@ -1,7 +1,21 @@
+import bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { AuthenticatedUser } from '../../shared/types';
-import { UpdateProfileInput, User } from './users.types';
+import { UpdateProfileInput, CreateUserInput, User } from './users.types';
 import * as usersRepository from './users.repository';
+
+const BCRYPT_COST_FACTOR = 12;
+
+export async function createUser(input: CreateUserInput): Promise<User> {
+  const existing = await usersRepository.findUserByEmail(input.email);
+  if (existing) {
+    throw new AppError('A user with this email already exists', 409);
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST_FACTOR);
+  return usersRepository.insertUser(uuidv4(), input, passwordHash);
+}
 
 /**
  * Returns all active users.

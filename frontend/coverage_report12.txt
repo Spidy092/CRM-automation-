@@ -1,0 +1,48 @@
+
+ RUN  v3.2.6 /home/sr-user91/Videos/CRM/frontend
+      Coverage enabled with v8
+
+ ✓ src/pages/__tests__/ForgotPasswordPage.test.tsx (1 test) 366ms
+   ✓ ForgotPasswordPage > renders successfully  364ms
+ ✓ src/pages/__tests__/LoginPage.test.tsx (1 test) 454ms
+   ✓ LoginPage > renders successfully  452ms
+ ✓ src/pages/__tests__/CampaignsPage.test.tsx (1 test) 183ms
+ ✓ src/pages/__tests__/ResetPasswordPage.test.tsx (1 test) 467ms
+   ✓ ResetPasswordPage > renders successfully  455ms
+ ✓ src/components/__tests__/Layout.test.tsx (1 test) 235ms
+ ✓ src/pages/__tests__/SettingsPage.test.tsx (1 test) 178ms
+ ✓ src/pages/__tests__/LeadsPage.test.tsx (1 test) 143ms
+ ✓ src/pages/__tests__/ReportsPage.test.tsx (1 test) 139ms
+ ✓ src/pages/__tests__/LeadFormPage.test.tsx (1 test) 126ms
+ ✓ src/pages/__tests__/ImportLeadsPage.test.tsx (1 test) 192ms
+ ✓ src/pages/__tests__/AssignmentsPage.test.tsx (1 test) 100ms
+ ✓ src/pages/__tests__/CampaignFormPage.test.tsx (1 test) 2011ms
+   ✓ CampaignFormPage > renders successfully  2008ms
+ ✓ src/pages/__tests__/ScoringPage.test.tsx (1 test) 116ms
+ ✓ src/pages/__tests__/PipelinePage.test.tsx (1 test) 376ms
+   ✓ PipelinePage > renders successfully  373ms
+ ✓ src/pages/__tests__/UsersPage.test.tsx (1 test) 110ms
+ ✓ src/pages/__tests__/ScraperConfigPage.test.tsx (1 test) 101ms
+ ✓ src/api/__tests__/assignments.test.tsx (6 tests) 53ms
+ ✓ src/api/__tests__/scoring.test.tsx (9 tests) 58ms
+ ✓ src/api/__tests__/reports.test.tsx (6 tests) 70ms
+ ✓ src/api/__tests__/campaigns.test.tsx (10 tests) 73ms
+ ✓ src/api/__tests__/scraper.test.tsx (7 tests) 51ms
+ ✓ src/api/__tests__/auth.test.tsx (6 tests) 52ms
+ ✓ src/api/__tests__/pipelines.test.tsx (6 tests) 56ms
+ ✓ src/api/__tests__/leads.test.tsx (7 tests) 59ms
+ ✓ src/api/__tests__/users.test.tsx (2 tests) 38ms
+ ✓ src/__tests__/App.test.tsx (1 test) 659ms
+   ✓ App > renders successfully  656ms
+ ✓ src/store/__tests__/authStore.test.ts (7 tests) 12ms
+ ✓ src/store/__tests__/reportsStore.test.ts (7 tests) 8ms
+ ❯ src/pages/__tests__/DashboardPage.test.tsx (1 test | 1 failed) 6699ms
+   × DashboardPage > renders successfully 6697ms
+     → Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+ Test Files  1 failed | 28 passed (29)
+      Tests  1 failed | 90 passed (91)
+   Start at  11:37:42
+   Duration  163.99s (transform 15.99s, setup 35.96s, collect 145.27s, tests 13.19s, environment 233.86s, prepare 16.02s)
+

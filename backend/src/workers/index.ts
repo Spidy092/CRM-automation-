@@ -1,8 +1,15 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 import { logger } from '../shared/utils/logger';
 import { redis } from '../shared/utils/redis';
 import { startScoringWorker } from './scoring.worker';
 import { startAssignmentWorker } from './assignment.worker';
+import { startOutreachWorker } from './outreach.worker';
+import { startReportExportWorker } from './reportExport.worker';
+import { startScraperWorker } from './scraper.worker';
+import { startEventsWorker } from './events.worker';
 
 /**
  * CRM Worker Process
@@ -43,16 +50,21 @@ async function startWorkers(): Promise<void> {
 
   const scoring = startScoringWorker();
   const assignment = startAssignmentWorker();
+  const outreach = startOutreachWorker();
+  const reportExport = startReportExportWorker();
+  const scraper = startScraperWorker();
+  const events = startEventsWorker();
 
   logger.info('Worker process started — listening for jobs', {
-    queues: ['scoring', 'assignment'],
+    queues: ['scoring', 'assignment', 'outreach', 'reports', 'scraper', 'lead-events'],
   });
 
-  // Touch the worker handles so TypeScript doesn't complain about unused
-  // bindings and so the references are kept alive for the lifetime of the
-  // process.
   void scoring;
   void assignment;
+  void outreach;
+  void reportExport;
+  void scraper;
+  void events;
 }
 
 // Graceful shutdown

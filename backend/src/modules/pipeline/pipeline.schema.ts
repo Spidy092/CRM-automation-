@@ -7,11 +7,20 @@ export const createStageSchema = z.object({
   is_terminal_lost: z.boolean().optional().default(false),
 });
 
-export const createPipelineSchema = z.object({
-  name: z.string().min(1).max(255),
-  is_default: z.boolean().optional().default(false),
-  stages: z.array(createStageSchema).min(1),
-});
+export const createPipelineSchema = z
+  .object({
+    name: z.string().min(1).max(255),
+    is_default: z.boolean().optional().default(false),
+    stages: z.array(createStageSchema).min(1),
+  })
+  .refine((data) => data.stages.filter((s) => s.is_terminal_won).length <= 1, {
+    message: "A pipeline can have at most one 'Won' stage",
+    path: ['stages'],
+  })
+  .refine((data) => data.stages.filter((s) => s.is_terminal_lost).length <= 1, {
+    message: "A pipeline can have at most one 'Lost' stage",
+    path: ['stages'],
+  });
 
 export const updatePipelineSchema = z.object({
   name: z.string().min(1).max(255).optional(),

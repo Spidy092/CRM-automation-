@@ -99,7 +99,10 @@ export async function findAssignmentsByUser(userId: string): Promise<Assignment[
 }
 
 export async function updateLeadAssignment(leadId: string, userId: string): Promise<void> {
-  await pool.query('UPDATE leads SET assigned_to = $1 WHERE id = $2', [userId, leadId]);
+  await pool.query('UPDATE leads SET assigned_to = $1 WHERE id = $2 AND deleted_at IS NULL', [
+    userId,
+    leadId,
+  ]);
 }
 
 export async function getNextRoundRobinUser(): Promise<RoundRobinUser | null> {

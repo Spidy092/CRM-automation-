@@ -8,11 +8,15 @@ import {
   testIntegrationHandler,
   updateIntegrationHandler,
 } from './integrations.controller';
+import { oauthRoutes } from './oauth';
 
 const router = Router();
 
 // All routes require authentication.
 router.use(authenticate);
+
+// OAuth routes (admin-only, handled by oauthRoutes middleware)
+router.use('/oauth', oauthRoutes);
 
 // All authenticated roles may read the integration catalog (UI renders status).
 router.get('/', wrap(listIntegrationsHandler));

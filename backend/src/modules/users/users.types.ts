@@ -12,3 +12,11 @@ export interface User {
 export interface UpdateProfileInput {
   name: string;
 }
+
+export interface CreateUserInput {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  is_active: boolean;
+}

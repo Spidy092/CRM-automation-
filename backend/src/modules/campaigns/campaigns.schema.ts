@@ -7,6 +7,7 @@ export const createCampaignSchema = z.object({
   target_countries: z.array(z.string()).optional().default([]),
   sequence_id: z.string().uuid().optional(),
   pipeline_id: z.string().uuid().optional(),
+  ai_personalization_enabled: z.boolean().optional().default(false),
 });
 
 export const updateCampaignSchema = z.object({
@@ -16,6 +17,7 @@ export const updateCampaignSchema = z.object({
   target_countries: z.array(z.string()).optional(),
   sequence_id: z.string().uuid().optional(),
   pipeline_id: z.string().uuid().optional(),
+  ai_personalization_enabled: z.boolean().optional(),
 });
 
 export const addLeadsSchema = z.object({

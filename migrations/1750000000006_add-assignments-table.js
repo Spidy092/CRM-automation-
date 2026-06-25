@@ -15,7 +15,7 @@ exports.up = (pgm) => {
     id:               { type: 'uuid', primaryKey: true, default: pgm.func('gen_random_uuid()') },
     is_enabled:       { type: 'boolean', notNull: true, default: true },
     threshold_score:  { type: 'integer', notNull: true, default: 70, check: 'threshold_score >= 0 AND threshold_score <= 100' },
-    eligible_roles:   { type: 'text[]', notNull: true, default: "'{sales_rep}'" },
+    eligible_roles:   { type: 'text[]', notNull: true, default: '{"sales_rep"}' },
     updated_by:       { type: 'uuid', references: '"users"' },
     updated_at:       { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
   });

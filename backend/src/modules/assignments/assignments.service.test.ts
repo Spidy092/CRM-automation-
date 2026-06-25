@@ -8,6 +8,9 @@ jest.mock('./assignments.repository', () => ({
   updateLeadAssignment: jest.fn(),
   getNextRoundRobinUser: jest.fn(),
 }));
+jest.mock('../leads/leads.repository', () => ({
+  findLeadById: jest.fn(),
+}));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
 import { AppError } from '../../shared/middleware/errorHandler';
@@ -21,6 +24,7 @@ import {
   getNextRoundRobinUser,
 } from './assignments.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { findLeadById } from '../leads/leads.repository';
 import {
   assignManually,
   autoAssignLead,
@@ -50,8 +54,11 @@ const eligibleUser = {
 
 const actor = { id: 'admin-1', role: 'admin', ipAddress: '127.0.0.1' };
 
+const mockLead = { id: 'lead-1', deleted_at: null };
+
 beforeEach(() => {
   jest.clearAllMocks();
+  (findLeadById as jest.Mock).mockResolvedValue(mockLead);
 });
 
 describe('getConfig / updateConfig', () => {
