@@ -1,6 +1,7 @@
 import { query, queryOne } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { OutreachLogRow, SequenceRow, TaskRow, TimelineEntry } from './outreach.types';
+import { LeadAiProfileRow } from '../ai-intelligence/ai-intelligence.types';
 
 // ── Outreach Sequences ─────────────────────────────────────────────────────
 
@@ -312,4 +313,25 @@ export async function findTimelineByLead(leadId: string, limit: number): Promise
     LIMIT $2`,
     [leadId, limit],
   );
+}
+
+// ── AI Next Best Action ────────────────────────────────────────────────────
+
+export async function findNextBestActionByLeadId(
+  leadId: string,
+): Promise<{ action: string; reason: string; confidence: number } | null> {
+  const row = await queryOne<Pick<LeadAiProfileRow, 'next_best_action' | 'next_best_action_reason' | 'next_best_action_confidence'>>(
+    `SELECT next_best_action, next_best_action_reason, next_best_action_confidence
+     FROM lead_ai_profiles
+     WHERE lead_id = $1`,
+    [leadId],
+  );
+  if (!row || !row.next_best_action) {
+    return null;
+  }
+  return {
+    action: row.next_best_action,
+    reason: row.next_best_action_reason ?? '',
+    confidence: row.next_best_action_confidence ?? 0,
+  };
 }

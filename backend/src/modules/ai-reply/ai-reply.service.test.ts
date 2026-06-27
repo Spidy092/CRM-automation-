@@ -28,9 +28,17 @@ import {
   moveLeadToStageByName,
 } from './ai-reply.repository';
 import OpenAI from 'openai';
+import { logger } from '../../shared/utils/logger';
 import type { ClassifyReplyInput, ReplyClassification } from './ai-reply.types';
 
 jest.mock('openai');
+jest.mock('../../shared/utils/logger', () => ({
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
 jest.mock('../ai-settings/ai-settings.service');
 jest.mock('../leads/leads.repository');
 jest.mock('../ai-intelligence/ai-intelligence.repository');
@@ -40,6 +48,11 @@ jest.mock('../../workers/queue');
 jest.mock('./ai-reply.repository');
 
 const mockedOpenAI = OpenAI as jest.MockedClass<typeof OpenAI>;
+const mockedLogger = logger as unknown as {
+  info: jest.Mock;
+  warn: jest.Mock;
+  error: jest.Mock;
+};
 const mockedGetAiConfig = getAiConfig as jest.MockedFunction<typeof getAiConfig>;
 const mockedFindLeadById = findLeadById as jest.MockedFunction<typeof findLeadById>;
 const mockedFindAiProfileByLeadId = findAiProfileByLeadId as jest.MockedFunction<typeof findAiProfileByLeadId>;
@@ -234,6 +247,28 @@ describe('classifyInboundReply', () => {
     expect(result.intent_class).toBe('neutral');
     expect(result.next_best_action).toBe('request_review');
     expect(result.should_stop_sequence).toBe(false);
+  });
+
+  it('logs and returns fallback when OpenAI fails with a non-Error value', async () => {
+    const create = jest.fn().mockRejectedValue('OpenAI timeout');
+    mockedOpenAI.mockImplementation(
+      () =>
+        ({
+          chat: { completions: { create } },
+        }) as unknown as OpenAI,
+    );
+
+    const result = await classifyInboundReply({
+      leadId,
+      channel: 'email',
+      messageText: 'Just checking in.',
+    });
+
+    expect(result.intent_class).toBe('neutral');
+    expect(mockedLogger.error).toHaveBeenCalledWith(
+      'ai reply: OpenAI call failed',
+      expect.objectContaining({ leadId, error: 'OpenAI timeout' }),
+    );
   });
 
   it('returns fallback when AI config is missing', async () => {

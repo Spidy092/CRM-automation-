@@ -5,6 +5,7 @@ import { cancelPendingOutreachJobs, enqueueOutreachDispatch } from '../../worker
 import { findSequenceById } from '../outreach/outreach.repository';
 import { findByName as findIntegrationByName } from '../integrations/integrations.repository';
 import { findTemplateById } from '../templates/templates.repository';
+import { findCampaignBrief } from '../ai-campaign-brain/ai-campaign-brain.repository';
 import {
   findCampaigns,
   findCampaignById,
@@ -33,6 +34,13 @@ interface Actor {
   id: string;
   role: string;
   ipAddress?: string | null;
+}
+
+class ValidationError extends AppError {
+  constructor(message: string) {
+    super(message, 400);
+    Object.setPrototypeOf(this, ValidationError.prototype);
+  }
 }
 
 export async function getAllCampaigns(): Promise<Campaign[]> {
@@ -236,6 +244,17 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
 
   if (existing.status !== 'draft' && existing.status !== 'paused') {
     throw new AppError('Campaign can only be launched from draft or paused status', 400);
+  }
+
+  // AI brief approval is required before launch unless the campaign is explicitly
+  // configured as fully supervised with no confidence threshold (manual override).
+  const canLaunchWithoutBrief =
+    existing.autonomy_level === 'supervised' && existing.ai_min_confidence === 0;
+  if (!canLaunchWithoutBrief) {
+    const approvedBrief = await findCampaignBrief(existing.id);
+    if (!approvedBrief || approvedBrief.status !== 'approved') {
+      throw new ValidationError('AI brief approval required before launch');
+    }
   }
 
   const preview = await buildAutomationPreview(existing, false);

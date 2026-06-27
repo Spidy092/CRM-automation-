@@ -101,7 +101,10 @@ describe('Campaigns Routes', () => {
 
   describe('POST /campaigns/:id/launch', () => {
     it('returns 200 on launch', async () => {
-      (campaignsService.launchCampaignById as jest.Mock).mockResolvedValue({ id: 'campaign-1', status: 'running' });
+      (campaignsService.launchCampaignById as jest.Mock).mockResolvedValue({
+        campaign: { id: 'campaign-1', status: 'running' },
+        automation: { enqueued: 0, skipped: 0, mockMode: false },
+      });
 
       const res = await request(app).post('/campaigns/campaign-1/launch');
 

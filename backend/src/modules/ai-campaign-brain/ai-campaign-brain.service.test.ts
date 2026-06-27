@@ -369,4 +369,37 @@ describe('generateCampaignBrief', () => {
     );
     expect(mockedRepo.upsertCampaignBrief).not.toHaveBeenCalled();
   });
+
+  it('uses environment API key when config key is empty and undefined baseURL when baseUrl is missing', async () => {
+    const originalKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'env-api-key';
+    mockedGetAiConfig.mockResolvedValue({
+      ...aiConfig,
+      apiKey: '',
+      baseUrl: null,
+    });
+    mockValidOpenAiResponse();
+
+    await generateCampaignBrief(CAMPAIGN_ID, USER_ID);
+
+    expect(OpenAI).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'env-api-key', baseURL: undefined }),
+    );
+
+    process.env.OPENAI_API_KEY = originalKey;
+  });
+
+  it('logs and re-throws when OpenAI fails with a non-Error value', async () => {
+    openAiCreateMock.mockRejectedValue('network failure');
+
+    await expect(generateCampaignBrief(CAMPAIGN_ID, USER_ID)).rejects.toBe('network failure');
+
+    expect(mockedLogger.error).toHaveBeenCalledWith(
+      'ai campaign brain: OpenAI call failed',
+      expect.objectContaining({
+        campaignId: CAMPAIGN_ID,
+        error: 'network failure',
+      }),
+    );
+  });
 });

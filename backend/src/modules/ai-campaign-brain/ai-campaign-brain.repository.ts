@@ -66,6 +66,17 @@ export async function findBriefByCampaignId(campaignId: string): Promise<Campaig
   );
 }
 
+/** Returns the latest approved AI brief for a campaign, or null if none exists. */
+export async function findCampaignBrief(campaignId: string): Promise<CampaignBrief | null> {
+  return queryOne<CampaignBrief>(
+    `SELECT * FROM campaign_ai_briefs
+     WHERE campaign_id = $1 AND status = 'approved'
+     ORDER BY approved_at DESC NULLS LAST
+     LIMIT 1`,
+    [campaignId],
+  );
+}
+
 export async function approveBrief(campaignId: string, approvedBy: string): Promise<void> {
   await pool.query(
     `UPDATE campaign_ai_briefs SET status = 'approved', approved_by = $2, approved_at = NOW()

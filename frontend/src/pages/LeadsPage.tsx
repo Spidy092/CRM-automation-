@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useLeads, useDeleteLead, usePauseLead, useBulkPauseLeads } from '@/api/leads';
+import { useInfiniteLeads, useDeleteLead, usePauseLead, useBulkPauseLeads } from '@/api/leads';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -37,16 +37,17 @@ export function LeadsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const { data, isLoading, error } = useLeads({
-    search: search || undefined,
-    status: statusFilter || undefined,
-  });
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
+    useInfiniteLeads({
+      search: search || undefined,
+      status: statusFilter || undefined,
+    });
   const deleteLead = useDeleteLead();
   const pauseLead = usePauseLead();
   const bulkPause = useBulkPauseLeads();
   const { showToast } = useToast();
 
-  const leads = data?.items ?? [];
+  const leads = data?.pages.flatMap((p) => p.items) ?? [];
   const allSelected = leads.length > 0 && leads.every((l) => selected.has(l.id));
 
   function toggleAll() {
@@ -323,6 +324,18 @@ export function LeadsPage() {
                   ))}
                 </tbody>
               </table>
+
+              {hasNextPage && (
+                <div className="flex justify-center pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                  >
+                    {isFetchingNextPage ? 'Loading…' : 'Load more leads'}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

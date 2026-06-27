@@ -34,7 +34,7 @@ describe('verifyTwilioSignature', () => {
 
   it('returns true for valid signature', () => {
     const crypto = require('crypto');
-    const params = { Body: 'Hello', From: '+1234567890' };
+    const params: Record<string, string> = { Body: 'Hello', From: '+1234567890' };
     const sortedKeys = Object.keys(params).sort();
     let sigStr = url;
     for (const key of sortedKeys) sigStr += key + params[key];

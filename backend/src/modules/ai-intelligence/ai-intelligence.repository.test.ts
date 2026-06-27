@@ -3,7 +3,10 @@ import {
   findAiProfileByLeadId,
   upsertAiProfile,
   setEnrichmentStatus,
+  updateNextBestAction,
   insertDecisionLog,
+  listDecisionLogsByLead,
+  listDecisionLogs,
 } from './ai-intelligence.repository';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -21,6 +24,25 @@ function mockQueryResult(rows: unknown[]) {
     rowCount: rows.length,
   } as any);
 }
+
+const baseDecisionLog = {
+  id: 'd1',
+  lead_id: 'l1',
+  campaign_id: null,
+  decision_type: 'research' as const,
+  input_context: { foo: 'bar' },
+  chain_of_thought: 'thought',
+  decision: 'send_email',
+  confidence: 90,
+  tokens_used: 100,
+  latency_ms: 200,
+  model_used: 'gpt-4o',
+  autonomy_level: 'high',
+  human_approval_required: false,
+  human_approved_by: null,
+  human_approved_at: null,
+  created_at: '2026-06-25T00:00:00Z',
+};
 
 const baseProfile = {
   id: 'p1',
@@ -125,6 +147,114 @@ describe('ai-intelligence.repository', () => {
         );
       },
     );
+  });
+
+  describe('updateNextBestAction', () => {
+    it('updates next best action columns and returns profile', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([baseProfile]));
+      const result = await updateNextBestAction('l1', 'call', 'High intent', 92);
+      expect(result).toEqual(baseProfile);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE lead_ai_profiles'),
+        ['call', 'High intent', 92, 'l1'],
+      );
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('updated_at = NOW()'),
+        expect.anything(),
+      );
+    });
+
+    it('throws when lead AI profile does not exist', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+      await expect(updateNextBestAction('l1', 'call', 'High intent', 92)).rejects.toThrow(
+        'Lead AI profile not found for lead l1',
+      );
+    });
+  });
+
+  describe('listDecisionLogsByLead', () => {
+    it('returns rows and total for a lead', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([baseDecisionLog]))
+        .mockResolvedValueOnce(mockQueryResult([{ count: '1' }]));
+
+      const result = await listDecisionLogsByLead('l1', 10, 0);
+
+      expect(result).toEqual({ rows: [baseDecisionLog], total: 1 });
+      expect(mockPoolQuery).toHaveBeenCalledTimes(2);
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('SELECT * FROM ai_decision_log'),
+        ['l1', 10, 0],
+      );
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('COUNT(*)::text AS count FROM ai_decision_log WHERE lead_id = $1'),
+        ['l1'],
+      );
+    });
+
+    it('returns zero total when count row is missing', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([]))
+        .mockResolvedValueOnce(mockQueryResult([]));
+
+      const result = await listDecisionLogsByLead('l1', 5, 5);
+
+      expect(result).toEqual({ rows: [], total: 0 });
+    });
+  });
+
+  describe('listDecisionLogs', () => {
+    it('returns rows and total without decisionType filter', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([{ count: '3' }]))
+        .mockResolvedValueOnce(mockQueryResult([baseDecisionLog]));
+
+      const result = await listDecisionLogs({ limit: 10, offset: 0 });
+
+      expect(result).toEqual({ rows: [baseDecisionLog], total: 3 });
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('FROM ai_decision_log'),
+        [],
+      );
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('LIMIT $1 OFFSET $2'),
+        [10, 0],
+      );
+    });
+
+    it('filters by decisionType and uses correct param positions', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([{ count: '2' }]))
+        .mockResolvedValueOnce(mockQueryResult([{ ...baseDecisionLog, decision_type: 'next_action' }]));
+
+      const result = await listDecisionLogs({ decisionType: 'next_action', limit: 5, offset: 10 });
+
+      expect(result).toEqual({ rows: [{ ...baseDecisionLog, decision_type: 'next_action' }], total: 2 });
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('WHERE decision_type = $1'),
+        ['next_action'],
+      );
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('LIMIT $2 OFFSET $3'),
+        ['next_action', 5, 10],
+      );
+    });
+
+    it('returns zero total when count row is missing', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([]))
+        .mockResolvedValueOnce(mockQueryResult([]));
+
+      const result = await listDecisionLogs({ decisionType: 'campaign_brief', limit: 10, offset: 0 });
+
+      expect(result).toEqual({ rows: [], total: 0 });
+    });
   });
 
   describe('insertDecisionLog', () => {

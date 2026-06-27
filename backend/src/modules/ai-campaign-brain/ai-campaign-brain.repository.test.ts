@@ -2,6 +2,10 @@ import { pool, queryOne } from '../../shared/utils/db';
 import {
   upsertCampaignBrief,
   findBriefByCampaignId,
+  findCampaignBrief,
+  approveBrief,
+  rejectBrief,
+  getCampaignLeadStats,
 } from './ai-campaign-brain.repository';
 import type { CampaignBrief } from './ai-campaign-brain.types';
 
@@ -149,5 +153,162 @@ describe('findBriefByCampaignId', () => {
     const params = mockedQueryOne.mock.calls[0][1] as unknown[];
     expect(sql).toContain('WHERE campaign_id = $1');
     expect(params).toEqual(['campaign-1']);
+  });
+});
+
+describe('findCampaignBrief', () => {
+  it('returns the latest approved brief for a campaign', async () => {
+    const brief = makeBrief({ status: 'approved', approved_by: 'manager-1', approved_at: '2026-06-26T11:00:00.000Z' });
+    mockedQueryOne.mockResolvedValue(brief);
+
+    const result = await findCampaignBrief('campaign-1');
+
+    expect(result).toEqual(brief);
+    expect(mockedQueryOne).toHaveBeenCalledTimes(1);
+    const sql = mockedQueryOne.mock.calls[0][0] as string;
+    const params = mockedQueryOne.mock.calls[0][1] as unknown[];
+    expect(sql).toContain("status = 'approved'");
+    expect(sql).toContain('ORDER BY approved_at DESC');
+    expect(params).toEqual(['campaign-1']);
+  });
+
+  it('returns null when no approved brief exists', async () => {
+    mockedQueryOne.mockResolvedValue(null);
+
+    const result = await findCampaignBrief('campaign-1');
+
+    expect(result).toBeNull();
+  });
+});
+
+describe('approveBrief', () => {
+  it('updates brief status to approved with approved_by', async () => {
+    mockedPoolQuery.mockResolvedValueOnce(undefined);
+
+    await approveBrief('campaign-1', 'user-42');
+
+    expect(mockedPoolQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockedPoolQuery.mock.calls[0];
+    expect(sql).toContain("SET status = 'approved'");
+    expect(sql).toContain('approved_by = $2');
+    expect(sql).toContain('approved_at = NOW()');
+    expect(params).toEqual(['campaign-1', 'user-42']);
+  });
+});
+
+describe('rejectBrief', () => {
+  it('updates brief status to rejected', async () => {
+    mockedPoolQuery.mockResolvedValueOnce(undefined);
+
+    await rejectBrief('campaign-1');
+
+    expect(mockedPoolQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockedPoolQuery.mock.calls[0];
+    expect(sql).toContain("SET status = 'rejected'");
+    expect(params).toEqual(['campaign-1']);
+  });
+});
+
+describe('getCampaignLeadStats', () => {
+  it('returns null when campaign is not found', async () => {
+    mockedQueryOne.mockResolvedValueOnce(null);
+
+    const result = await getCampaignLeadStats('missing');
+
+    expect(result).toBeNull();
+    expect(mockedQueryOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns campaign stats and top pain points', async () => {
+    const campaign = {
+      id: 'campaign-1',
+      name: 'Summer SaaS Push',
+      target_industries: ['SaaS'],
+      tone: 'friendly',
+    };
+    mockedQueryOne
+      .mockResolvedValueOnce(campaign)
+      .mockResolvedValueOnce({ total_leads: '10', eligible_leads: '8', high_fit_leads: '3' });
+    mockedPoolQuery.mockResolvedValueOnce({
+      rows: [
+        { pain_points: ['price', 'support'] },
+        { pain_points: ['price', 'timing'] },
+        { pain_points: ['support'] },
+        { pain_points: [] },
+      ],
+    });
+
+    const result = await getCampaignLeadStats('campaign-1');
+
+    expect(result).toEqual({
+      campaign,
+      totalLeads: 10,
+      eligibleLeads: 8,
+      highFitLeads: 3,
+      topPainPoints: ['price', 'support', 'timing'],
+    });
+    expect(mockedQueryOne).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('FROM campaigns WHERE id = $1 AND deleted_at IS NULL'),
+      ['campaign-1'],
+    );
+    expect(mockedQueryOne).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('FROM campaign_leads cl'),
+      ['campaign-1'],
+    );
+    expect(mockedPoolQuery).toHaveBeenCalledWith(
+      expect.stringContaining('FROM lead_ai_profiles p'),
+      ['campaign-1'],
+    );
+  });
+
+  it('returns empty top pain points when no profiles have pain points', async () => {
+    const campaign = {
+      id: 'campaign-1',
+      name: 'Empty Push',
+      target_industries: ['Retail'],
+      tone: 'formal',
+    };
+    mockedQueryOne
+      .mockResolvedValueOnce(campaign)
+      .mockResolvedValueOnce({ total_leads: '5', eligible_leads: '5', high_fit_leads: '0' });
+    mockedPoolQuery.mockResolvedValueOnce({ rows: [{ pain_points: null }, { pain_points: [] }] });
+
+    const result = await getCampaignLeadStats('campaign-1');
+
+    expect(result).toEqual({
+      campaign,
+      totalLeads: 5,
+      eligibleLeads: 5,
+      highFitLeads: 0,
+      topPainPoints: [],
+    });
+  });
+
+  it('limits top pain points to five and sorts by frequency', async () => {
+    const campaign = {
+      id: 'campaign-1',
+      name: 'Big Push',
+      target_industries: ['SaaS'],
+      tone: 'friendly',
+    };
+    mockedQueryOne
+      .mockResolvedValueOnce(campaign)
+      .mockResolvedValueOnce({ total_leads: '20', eligible_leads: '18', high_fit_leads: '10' });
+    mockedPoolQuery.mockResolvedValueOnce({
+      rows: [
+        { pain_points: ['a', 'b', 'c', 'd', 'e', 'f'] },
+        { pain_points: ['a', 'b', 'c', 'd', 'e'] },
+        { pain_points: ['a', 'b', 'c', 'd'] },
+        { pain_points: ['a', 'b', 'c'] },
+        { pain_points: ['a', 'b'] },
+        { pain_points: ['a'] },
+      ],
+    });
+
+    const result = await getCampaignLeadStats('campaign-1');
+
+    expect(result?.topPainPoints).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 });

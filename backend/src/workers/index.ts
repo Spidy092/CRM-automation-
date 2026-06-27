@@ -14,6 +14,7 @@ import { startAiResearchWorker } from './aiResearch.worker';
 import { startAiReplyWorker } from './aiReply.worker';
 import { startAiCampaignBrainWorker } from './aiCampaignBrain.worker';
 import { startAiInboxWorker } from './aiInbox.worker';
+import { startAiDecisionWorker } from './aiDecision.worker';
 
 /**
  * CRM Worker Process
@@ -62,11 +63,21 @@ async function startWorkers(): Promise<void> {
   const aiReply = startAiReplyWorker();
   const aiCampaignBrain = startAiCampaignBrainWorker();
   const aiInbox = startAiInboxWorker();
+  const aiDecision = startAiDecisionWorker();
 
   logger.info('Worker process started — listening for jobs', {
     queues: [
-      'scoring', 'assignment', 'outreach', 'reports', 'scraper', 'lead-events',
-      'ai-research', 'ai-reply', 'ai-campaign', 'ai-inbox',
+      'scoring',
+      'assignment',
+      'outreach',
+      'reports',
+      'scraper',
+      'lead-events',
+      'ai-research',
+      'ai-reply',
+      'ai-campaign',
+      'ai-inbox',
+      'ai-decisions',
     ],
   });
 
@@ -80,6 +91,7 @@ async function startWorkers(): Promise<void> {
   void aiReply;
   void aiCampaignBrain;
   void aiInbox;
+  void aiDecision;
 }
 
 // Graceful shutdown

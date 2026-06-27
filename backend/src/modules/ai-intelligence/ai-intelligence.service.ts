@@ -11,12 +11,15 @@ import {
   insertDecisionLog,
   listDecisionLogsByLead,
   listDecisionLogs,
+  updateNextBestAction,
 } from './ai-intelligence.repository';
 import { incAiTokens } from '../../shared/utils/metrics';
+import { NotFoundError } from '../../shared/errors';
 import type { LeadAiProfileRow, AiDecisionLogRow, AiResearchOutput, NextBestAction, BuyingIntent, PreferredChannel } from './ai-intelligence.types';
 
 const PROFILE_CACHE_TTL = 60 * 60; // 1 hour — DB is authoritative
 const RESEARCH_MAX_TOKENS = 800;
+const NEXT_ACTION_MAX_TOKENS = 400;
 
 // ── Zod schema for OpenAI JSON output ────────────────────────────────────
 
@@ -37,6 +40,16 @@ const AiResearchSchema = z.object({
   next_best_action_reason: z.string().max(300),
   next_best_action_confidence: z.number().int().min(0).max(100),
   chain_of_thought: z.string().max(2000),
+});
+
+const NextBestActionSchema = z.object({
+  next_best_action: z.enum([
+    'send_whatsapp', 'send_email', 'send_sms', 'wait_and_followup',
+    'call', 'move_to_nurture', 'escalate_to_rep',
+    'request_human_approval', 'disqualify', 'request_review',
+  ]),
+  next_best_action_reason: z.string().max(300),
+  next_best_action_confidence: z.number().int().min(0).max(100),
 });
 
 // ── Cache helpers ─────────────────────────────────────────────────────────
@@ -86,6 +99,98 @@ export async function getDecisions(opts: {
 }): Promise<{ items: AiDecisionLogRow[]; total: number }> {
   const { rows, total } = await listDecisionLogs(opts);
   return { items: rows, total };
+}
+
+/**
+ * Determine the next best action for a lead.
+ *
+ * Uses the cached AI profile when available; otherwise loads the lead,
+ * consults recent decision history, and asks the AI for a structured
+ * recommendation. The result is persisted via updateNextBestAction.
+ */
+export async function computeNextBestAction(
+  leadId: string,
+  opts?: { force?: boolean; context?: Record<string, unknown> },
+): Promise<{ action: string; reason: string; confidence: number }> {
+  const start = Date.now();
+
+  try {
+    const existing = await getAiProfile(leadId);
+    if (!opts?.force && existing?.next_best_action) {
+      logger.info('ai next action: returning cached next best action', { leadId });
+      return {
+        action: existing.next_best_action,
+        reason: existing.next_best_action_reason ?? '',
+        confidence: existing.next_best_action_confidence ?? 0,
+      };
+    }
+
+    const lead = await findLeadById(leadId);
+    if (!lead) {
+      throw new NotFoundError(`Lead not found: ${leadId}`);
+    }
+
+    const aiConfig = await getAiConfig();
+    if (!aiConfig) {
+      throw new Error('AI not configured');
+    }
+
+    const { rows: recentDecisions } = await listDecisionLogsByLead(leadId, 10, 0);
+
+    const client = new OpenAI({
+      apiKey: aiConfig.apiKey || process.env.OPENAI_API_KEY,
+      baseURL: aiConfig.baseUrl || undefined,
+    });
+
+    const completion = await client.chat.completions.create({
+      model: aiConfig.model,
+      max_tokens: NEXT_ACTION_MAX_TOKENS,
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: buildNextActionSystemPrompt() },
+        { role: 'user', content: buildNextActionUserPrompt(lead, existing, recentDecisions, opts?.context) },
+      ],
+    });
+
+    const tokensUsed = completion.usage?.total_tokens ?? 0;
+    incAiTokens('next_action', tokensUsed);
+
+    const content = completion.choices[0]?.message?.content ?? '{}';
+    const parsed = NextBestActionSchema.parse(JSON.parse(content));
+
+    const profile = await updateNextBestAction(
+      leadId,
+      parsed.next_best_action,
+      parsed.next_best_action_reason,
+      parsed.next_best_action_confidence,
+    );
+
+    await invalidateProfileCache(leadId);
+
+    const latencyMs = Date.now() - start;
+    logger.info('ai next action: computed next best action', {
+      leadId,
+      next_best_action: parsed.next_best_action,
+      confidence: parsed.next_best_action_confidence,
+      tokens_used: tokensUsed,
+      latency_ms: latencyMs,
+    });
+
+    return {
+      action: profile.next_best_action ?? parsed.next_best_action,
+      reason: profile.next_best_action_reason ?? parsed.next_best_action_reason,
+      confidence: profile.next_best_action_confidence ?? parsed.next_best_action_confidence,
+    };
+  } catch (err) {
+    const latencyMs = Date.now() - start;
+    logger.error('ai next action: failed to compute next best action', {
+      leadId,
+      latency_ms: latencyMs,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 /**
@@ -269,5 +374,55 @@ function buildResearchUserPrompt(lead: Awaited<ReturnType<typeof findLeadById>> 
     `Lead score: ${lead!.lead_score}\n` +
     `Tags: ${(lead!.tags ?? []).join(', ') || 'none'}\n` +
     `Notes: ${lead!.notes ?? 'none'}`
+  );
+}
+
+function buildNextActionSystemPrompt(): string {
+  return (
+    'You are an AI sales assistant deciding the next best action for a lead. ' +
+    'Respond ONLY with a valid JSON object and no markdown or prose.\n\n' +
+    'Required JSON fields:\n' +
+    '- next_best_action: one of send_whatsapp, send_email, send_sms, wait_and_followup, call, ' +
+    'move_to_nurture, escalate_to_rep, request_human_approval, disqualify, request_review\n' +
+    '- next_best_action_reason: string (max 300 chars) explaining why this action fits\n' +
+    '- next_best_action_confidence: integer 0–100\n\n' +
+    'Consider the lead status, pipeline stage, recent decision history, existing AI profile, ' +
+    'and any extra context provided. Prefer low-friction outreach for reachable, interested leads; ' +
+    'escalate or request approval when risk or uncertainty is high.'
+  );
+}
+
+function buildNextActionUserPrompt(
+  lead: Awaited<ReturnType<typeof findLeadById>> & {},
+  profile: LeadAiProfileRow | null,
+  recentDecisions: AiDecisionLogRow[],
+  extraContext?: Record<string, unknown>,
+): string {
+  const decisionsText = recentDecisions.length
+    ? recentDecisions
+        .map(
+          (d) =>
+            `- ${d.created_at} [${d.decision_type}] ${d.decision}` +
+            `${d.confidence !== null ? ` (confidence ${d.confidence})` : ''}`,
+        )
+        .join('\n')
+    : 'No recent decisions.';
+
+  return (
+    `Lead: ${lead!.business_name}\n` +
+    `Status: ${lead!.status ?? 'unknown'}\n` +
+    `Pipeline stage: ${lead!.pipeline_stage_id ?? 'none'}\n` +
+    `Lead score: ${lead!.lead_score ?? 'unknown'}\n` +
+    `Industry: ${lead!.industry ?? 'unknown'}\n` +
+    `Location: ${lead!.location ?? 'unknown'}${lead!.country ? ', ' + lead!.country : ''}\n` +
+    `Source: ${lead!.source_platform ?? 'unknown'}\n\n` +
+    `Existing AI profile:\n` +
+    `- Buying intent: ${profile?.buying_intent ?? 'unknown'}\n` +
+    `- Reachability score: ${profile?.reachability_score ?? 'unknown'}\n` +
+    `- Preferred channel: ${profile?.preferred_channel ?? 'unknown'}\n` +
+    `- Current next best action: ${profile?.next_best_action ?? 'none'}\n` +
+    `- Reason: ${profile?.next_best_action_reason ?? 'none'}\n\n` +
+    `Recent decision history:\n${decisionsText}\n\n` +
+    `Extra context: ${extraContext ? JSON.stringify(extraContext) : 'none'}`
   );
 }

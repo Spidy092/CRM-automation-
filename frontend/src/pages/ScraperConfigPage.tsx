@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
+import { useToast } from '@/components/ui/Toast';
 import { Search, Globe, Video, Facebook, Plus, Play, Trash2, Eye, X, Loader2 } from 'lucide-react';
 import {
   useScraperConfigs,
@@ -64,25 +65,44 @@ function getConfigFields(sourceType: ScraperSourceType, config: Record<string, u
     case 'google_places':
       return (
         <>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Search Query *</label>
-            <input
-              type="text"
-              value={(config.query as string) ?? ''}
-              onChange={(e) => onChange('query', e.target.value)}
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Search Queries * <span className="text-slate-300">— one per line</span>
+            </label>
+            <textarea
+              value={
+                Array.isArray(config.query)
+                  ? (config.query as string[]).join('\n')
+                  : ((config.query as string) ?? '')
+              }
+              onChange={(e) => {
+                const lines = e.target.value.split('\n').map((l) => l.trimStart());
+                const terms = lines.filter((l) => l.trim().length > 0);
+                // Send an array when there are multiple terms, a string for one.
+                onChange('query', terms.length > 1 ? terms : (lines[0] ?? ''));
+              }}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="pizza near New York"
+              rows={3}
+              placeholder={'restaurants\ncafes\nbakeries'}
             />
+            <p className="mt-1 text-xs text-slate-400">
+              Each line runs as a separate search; results are merged and de-duplicated.
+            </p>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Location</label>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Location <span className="text-slate-300">— place name or lat,lng</span>
+            </label>
             <input
               type="text"
               value={(config.location as string) ?? ''}
               onChange={(e) => onChange('location', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="New York, NY"
+              placeholder="Yelahanka, Bangalore  (or 13.10,77.59)"
             />
+            <p className="mt-1 text-xs text-slate-400">
+              A place name is auto-converted to coordinates. Leave blank to search everywhere.
+            </p>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Radius (meters)</label>
@@ -258,6 +278,7 @@ function getConfigFields(sourceType: ScraperSourceType, config: Record<string, u
 export function ScraperConfigPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
+  const { showToast } = useToast();
 
   const { data: configs, isLoading, error } = useScraperConfigs();
   const createMutation = useCreateScraperConfig();
@@ -320,6 +341,31 @@ export function ScraperConfigPage() {
     } catch {
       // Error handled by mutation
     }
+  }
+
+  function handleRun(config: ScraperConfig) {
+    triggerMutation.mutate(config.id, {
+      onSuccess: (res) => {
+        if (res.status === 'failed') {
+          showToast(res.errorMessage || 'Scrape failed. Open the run logs for details.', 'error');
+        } else if (res.recordsFound === 0) {
+          showToast(
+            'Scrape finished, but no results matched. Try a broader query or location.',
+            'success',
+          );
+        } else {
+          showToast(
+            `Scrape complete: imported ${res.recordsImported} of ${res.recordsFound} found.`,
+            'success',
+          );
+        }
+        // Reveal the run history for this source so the user sees the new entry.
+        setShowLogs(config.id);
+      },
+      onError: () => {
+        showToast('Could not start the scrape. Please try again.', 'error');
+      },
+    });
   }
 
   function startEdit(config: ScraperConfig) {
@@ -532,7 +578,7 @@ export function ScraperConfigPage() {
                         Edit
                       </button>
                       <button
-                        onClick={() => triggerMutation.mutate(config.id)}
+                        onClick={() => handleRun(config)}
                         disabled={triggerMutation.isPending}
                         className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
@@ -577,23 +623,28 @@ export function ScraperConfigPage() {
                   ) : (
                     <div className="space-y-2 max-h-60 overflow-y-auto">
                       {(Array.isArray(logs) ? logs : []).map((log: Record<string, unknown>) => (
-                        <div key={log.id as string} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                          <div className="flex items-center gap-3">
-                            <span className={`h-2 w-2 rounded-full ${
-                              log.status === 'completed' ? 'bg-emerald-500' :
-                              log.status === 'failed' ? 'bg-red-500' :
-                              log.status === 'running' ? 'bg-amber-500 animate-pulse' :
-                              'bg-slate-400'
-                            }`} />
-                            <span className="text-slate-600">{new Date(log.created_at as string).toLocaleString()}</span>
+                        <div key={log.id as string} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <span className={`h-2 w-2 rounded-full ${
+                                log.status === 'completed' ? 'bg-emerald-500' :
+                                log.status === 'failed' ? 'bg-red-500' :
+                                log.status === 'running' ? 'bg-amber-500 animate-pulse' :
+                                'bg-slate-400'
+                              }`} />
+                              <span className="text-slate-600">{new Date(log.created_at as string).toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-slate-500">
+                              <span>Found: {log.records_found as number}</span>
+                              <span>Imported: {log.records_imported as number}</span>
+                              <span className={log.records_failed && (log.records_failed as number) > 0 ? 'text-red-500' : ''}>
+                                Failed: {log.records_failed as number}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-4 text-xs text-slate-500">
-                            <span>Found: {log.records_found as number}</span>
-                            <span>Imported: {log.records_imported as number}</span>
-                            <span className={log.records_failed && (log.records_failed as number) > 0 ? 'text-red-500' : ''}>
-                              Failed: {log.records_failed as number}
-                            </span>
-                          </div>
+                          {log.status === 'failed' && log.error_message ? (
+                            <p className="mt-1.5 pl-5 text-xs text-red-600">{log.error_message as string}</p>
+                          ) : null}
                         </div>
                       ))}
                     </div>

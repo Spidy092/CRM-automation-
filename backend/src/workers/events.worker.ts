@@ -9,13 +9,14 @@ import {
   enqueueOutreachDispatch,
   enqueueAiResearch,
   type LeadEventJob,
+  type OutreachDispatchJob,
 } from './queue';
 import { logger } from '../shared/utils/logger';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { findActiveCampaignsByPipeline, addLeadsToCampaign } from '../modules/campaigns/campaigns.repository';
-import { findSequenceById } from '../modules/outreach/outreach.repository';
+import { findSequenceById, findNextBestActionByLeadId } from '../modules/outreach/outreach.repository';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { pushToUser } from '../modules/notifications/notifications.emitter';
 
@@ -82,7 +83,7 @@ export function startEventsWorker(): Worker {
   return worker;
 }
 
-async function handleLeadEvent(data: LeadEventJob): Promise<void> {
+export async function handleLeadEvent(data: LeadEventJob): Promise<void> {
   const { event, leadId, payload } = data;
 
   switch (event) {
@@ -113,7 +114,7 @@ async function handleLeadEvent(data: LeadEventJob): Promise<void> {
   }
 }
 
-async function handleStageMoved(
+export async function handleStageMoved(
   leadId: string,
   payload: { fromStageId: string | null; toStageId: string; pipelineId?: string },
 ): Promise<void> {
@@ -132,6 +133,8 @@ async function handleStageMoved(
     logger.info('lead.stage_moved: no active campaigns for pipeline', { leadId, pipelineId });
     return;
   }
+
+  const nextBestAction = await findNextBestActionByLeadId(leadId);
 
   for (const campaign of campaigns) {
     if (!campaign.sequence_id) continue;
@@ -158,6 +161,25 @@ async function handleStageMoved(
     const firstStep = [...steps].sort((a, b) => a.stepNumber - b.stepNumber)[0];
 
     await addLeadsToCampaign(campaign.id, [leadId]);
+
+    const routed = await routeByNextBestAction({
+      leadId,
+      campaign,
+      firstStep,
+      nextBestAction,
+    });
+
+    if (routed) {
+      logger.info('lead auto-enrolled in campaign → outreach routed by next_best_action', {
+        leadId,
+        campaignId: campaign.id,
+        pipelineId,
+        toStageId,
+        firstStepNumber: firstStep.stepNumber,
+        action: nextBestAction?.action,
+      });
+      continue;
+    }
 
     await enqueueOutreachDispatch({
       leadId,
@@ -192,6 +214,82 @@ async function handleStageMoved(
       channel: firstStep.channel,
     });
   }
+}
+
+type SequenceStep = { stepNumber: number; channel: string; templateId: string; delayHours: number };
+
+async function routeByNextBestAction(options: {
+  leadId: string;
+  campaign: { id: string; sequence_id: string | null; name: string; ai_personalization_enabled?: boolean };
+  firstStep: SequenceStep;
+  nextBestAction: { action: string; reason: string; confidence: number } | null;
+}): Promise<boolean> {
+  const { leadId, campaign, firstStep, nextBestAction } = options;
+  if (!nextBestAction) {
+    return false;
+  }
+
+  const skipActions = new Set(['disqualify', 'wait_and_followup', 'request_human_approval']);
+  if (skipActions.has(nextBestAction.action)) {
+    logger.info('lead.stage_moved: skipping outreach per next_best_action', {
+      leadId,
+      campaignId: campaign.id,
+      action: nextBestAction.action,
+      reason: nextBestAction.reason,
+      confidence: nextBestAction.confidence,
+    });
+    return true;
+  }
+
+  const channelSwitchActions: Record<string, OutreachDispatchJob['channel']> = {
+    send_email: 'email',
+    send_sms: 'sms',
+    send_whatsapp: 'whatsapp',
+  };
+  if (channelSwitchActions[nextBestAction.action]) {
+    const channel = channelSwitchActions[nextBestAction.action];
+    await enqueueOutreachDispatch({
+      leadId,
+      campaignId: campaign.id,
+      sequenceId: campaign.sequence_id as string,
+      stepNumber: firstStep.stepNumber,
+      channel,
+      templateId: firstStep.templateId,
+      mockMode: false,
+      aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+    });
+    logger.info('lead.stage_moved: outreach channel switched per next_best_action', {
+      leadId,
+      campaignId: campaign.id,
+      action: nextBestAction.action,
+      channel,
+      reason: nextBestAction.reason,
+      confidence: nextBestAction.confidence,
+    });
+    return true;
+  }
+
+  const logSkipActions = new Set(['call', 'escalate_to_rep', 'move_to_nurture', 'request_review']);
+  if (logSkipActions.has(nextBestAction.action)) {
+    logger.info('lead.stage_moved: outreach skipped per next_best_action', {
+      leadId,
+      campaignId: campaign.id,
+      action: nextBestAction.action,
+      reason: nextBestAction.reason,
+      confidence: nextBestAction.confidence,
+    });
+
+    if (['escalate_to_rep', 'move_to_nurture'].includes(nextBestAction.action)) {
+      logger.info('lead.stage_moved: internal event not emitted (eventBus unavailable)', {
+        leadId,
+        campaignId: campaign.id,
+        action: nextBestAction.action,
+      });
+    }
+    return true;
+  }
+
+  return false;
 }
 
 async function handleStatusChanged(leadId: string, payload: { status: string }): Promise<void> {

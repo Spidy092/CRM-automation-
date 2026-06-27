@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>13/13</span>
+                <span class='fraction'>0/13</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>13/13</span>
+                <span class='fraction'>0/13</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -91,11 +91,11 @@
 <a name='L26'></a><a href='#L26'>26</a>
 <a name='L27'></a><a href='#L27'>27</a>
 <a name='L28'></a><a href='#L28'>28</a>
-<a name='L29'></a><a href='#L29'>29</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L29'></a><a href='#L29'>29</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -104,26 +104,26 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { Router } from 'express';
-import { publicLimiter } from '../../shared/middleware/rateLimiter';
-import { authenticate } from '../../shared/middleware/auth';
-import { wrap } from '../../shared/utils/asyncHandler';
-import {
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import { Router } from 'express';</span>
+<span class="cstat-no" title="statement not covered" >import { publicLimiter } from '../../shared/middleware/rateLimiter';</span>
+<span class="cstat-no" title="statement not covered" >import { authenticate } from '../../shared/middleware/auth';</span>
+<span class="cstat-no" title="statement not covered" >import { wrap } from '../../shared/utils/asyncHandler';</span>
+<span class="cstat-no" title="statement not covered" >import {</span>
   forgotPasswordHandler,
   getMeHandler,
   loginHandler,
@@ -132,21 +132,21 @@ import {
   resetPasswordHandler,
 } from './auth.controller';
 &nbsp;
-const router = Router();
+const router = <span class="cstat-no" title="statement not covered" >Router();</span>
 &nbsp;
 // All auth endpoints are public (pre-authentication) but rate-limited at the
 // stricter "public" tier (10 req/min) per TRD §4.1.
-router.post('/login', publicLimiter, wrap(loginHandler));
-router.post('/refresh', publicLimiter, wrap(refreshHandler));
-router.post('/logout', publicLimiter, wrap(logoutHandler));
-router.post('/forgot-password', publicLimiter, wrap(forgotPasswordHandler));
-router.post('/reset-password', publicLimiter, wrap(resetPasswordHandler));
+<span class="cstat-no" title="statement not covered" >router.post('/login', publicLimiter, wrap(loginHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/refresh', publicLimiter, wrap(refreshHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/logout', publicLimiter, wrap(logoutHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/forgot-password', publicLimiter, wrap(forgotPasswordHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/reset-password', publicLimiter, wrap(resetPasswordHandler));</span>
 &nbsp;
 // GET /me — Returns the currently authenticated user (from JWT payload).
 // Protected: requires a valid Bearer token.
-router.get('/me', authenticate, wrap(getMeHandler));
+<span class="cstat-no" title="statement not covered" >router.get('/me', authenticate, wrap(getMeHandler));</span>
 &nbsp;
-export { router as authRoutes };
+export { router as <span class="cstat-no" title="statement not covered" >authRoutes </span>};
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -154,7 +154,7 @@ export { router as authRoutes };
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-26T11:26:07.614Z
+                at 2026-06-27T09:10:36.826Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

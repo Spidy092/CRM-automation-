@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>19/19</span>
+                <span class='fraction'>0/19</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>19/19</span>
+                <span class='fraction'>0/19</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -99,12 +99,12 @@
 <a name='L34'></a><a href='#L34'>34</a>
 <a name='L35'></a><a href='#L35'>35</a>
 <a name='L36'></a><a href='#L36'>36</a>
-<a name='L37'></a><a href='#L37'>37</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L37'></a><a href='#L37'>37</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -117,30 +117,30 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { Router } from 'express';
-import { wrap } from '../../shared/utils/asyncHandler';
-import { authenticate } from '../../shared/middleware/auth';
-import { authorize } from '../../shared/middleware/rbac';
-import { authenticatedLimiter } from '../../shared/middleware/rateLimiter';
-import {
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import { Router } from 'express';</span>
+<span class="cstat-no" title="statement not covered" >import { wrap } from '../../shared/utils/asyncHandler';</span>
+<span class="cstat-no" title="statement not covered" >import { authenticate } from '../../shared/middleware/auth';</span>
+<span class="cstat-no" title="statement not covered" >import { authorize } from '../../shared/middleware/rbac';</span>
+<span class="cstat-no" title="statement not covered" >import { authenticatedLimiter } from '../../shared/middleware/rateLimiter';</span>
+<span class="cstat-no" title="statement not covered" >import {</span>
   listPipelinesHandler,
   getPipelineHandler,
   createPipelineHandler,
@@ -153,24 +153,24 @@ import {
   moveLeadHandler,
 } from './pipeline.controller';
 &nbsp;
-const router = Router();
+const router = <span class="cstat-no" title="statement not covered" >Router();</span>
 &nbsp;
-router.use(authenticate, authenticatedLimiter);
+<span class="cstat-no" title="statement not covered" >router.use(authenticate, authenticatedLimiter);</span>
 &nbsp;
-router.get('/', wrap(listPipelinesHandler));
-router.get('/:id', wrap(getPipelineHandler));
-router.post('/', authorize('admin', 'manager'), wrap(createPipelineHandler));
-router.put('/:id', authorize('admin', 'manager'), wrap(updatePipelineHandler));
-router.delete('/:id', authorize('admin'), wrap(deletePipelineHandler));
+<span class="cstat-no" title="statement not covered" >router.get('/', wrap(listPipelinesHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.get('/:id', wrap(getPipelineHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/', authorize('admin', 'manager'), wrap(createPipelineHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.put('/:id', authorize('admin', 'manager'), wrap(updatePipelineHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.delete('/:id', authorize('admin'), wrap(deletePipelineHandler));</span>
 &nbsp;
-router.get('/:pipelineId/stages', wrap(listStagesHandler));
-router.post('/:pipelineId/stages', authorize('admin', 'manager'), wrap(createStageHandler));
-router.put('/stages/:id', authorize('admin', 'manager'), wrap(updateStageHandler));
-router.delete('/stages/:id', authorize('admin', 'manager'), wrap(deleteStageHandler));
+<span class="cstat-no" title="statement not covered" >router.get('/:pipelineId/stages', wrap(listStagesHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/:pipelineId/stages', authorize('admin', 'manager'), wrap(createStageHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.put('/stages/:id', authorize('admin', 'manager'), wrap(updateStageHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.delete('/stages/:id', authorize('admin', 'manager'), wrap(deleteStageHandler));</span>
 &nbsp;
-router.post('/move-lead', authorize('admin', 'manager', 'sales'), wrap(moveLeadHandler));
+<span class="cstat-no" title="statement not covered" >router.post('/move-lead', authorize('admin', 'manager', 'sales'), wrap(moveLeadHandler));</span>
 &nbsp;
-export { router as pipelineRoutes };
+export { router as <span class="cstat-no" title="statement not covered" >pipelineRoutes </span>};
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -178,7 +178,7 @@ export { router as pipelineRoutes };
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-26T11:26:07.614Z
+                at 2026-06-27T09:10:36.826Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

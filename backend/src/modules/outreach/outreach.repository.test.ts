@@ -17,6 +17,7 @@ import {
   findTaskById,
   updateTask,
   findTimelineByLead,
+  findNextBestActionByLeadId,
 } from './outreach.repository';
 
 const mockQuery = query as jest.Mock;
@@ -189,5 +190,47 @@ describe('findTimelineByLead', () => {
     mockQuery.mockResolvedValue([{ id: 'e1', type: 'outreach_log' }]);
     const result = await findTimelineByLead('lead1', 50);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe('findNextBestActionByLeadId', () => {
+  it('returns next best action when profile exists', async () => {
+    mockQueryOne.mockResolvedValue({
+      next_best_action: 'send_email',
+      next_best_action_reason: 'High intent',
+      next_best_action_confidence: 85,
+    });
+    const result = await findNextBestActionByLeadId('lead1');
+    expect(result).toEqual({ action: 'send_email', reason: 'High intent', confidence: 85 });
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT next_best_action'),
+      ['lead1'],
+    );
+  });
+
+  it('returns null when profile has no next_best_action', async () => {
+    mockQueryOne.mockResolvedValue({
+      next_best_action: null,
+      next_best_action_reason: null,
+      next_best_action_confidence: null,
+    });
+    const result = await findNextBestActionByLeadId('lead1');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when no profile exists', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    const result = await findNextBestActionByLeadId('lead1');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when next_best_action is empty string', async () => {
+    mockQueryOne.mockResolvedValue({
+      next_best_action: '',
+      next_best_action_reason: 'reason',
+      next_best_action_confidence: 80,
+    });
+    const result = await findNextBestActionByLeadId('lead1');
+    expect(result).toBeNull();
   });
 });

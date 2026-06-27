@@ -265,4 +265,6 @@ export interface ScraperRunResult {
   recordsImported: number;
   recordsFailed: number;
   status: ScraperLogStatus;
+  /** Human-readable reason when status === 'failed'; null otherwise. */
+  errorMessage?: string | null;
 }

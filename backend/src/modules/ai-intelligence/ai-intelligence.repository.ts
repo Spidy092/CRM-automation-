@@ -75,6 +75,28 @@ export async function setEnrichmentStatus(
   );
 }
 
+export async function updateNextBestAction(
+  leadId: string,
+  action: string,
+  reason: string,
+  confidence: number,
+): Promise<LeadAiProfileRow> {
+  const res = await pool.query<LeadAiProfileRow>(
+    `UPDATE lead_ai_profiles
+     SET next_best_action = $1,
+         next_best_action_reason = $2,
+         next_best_action_confidence = $3,
+         updated_at = NOW()
+     WHERE lead_id = $4
+     RETURNING *`,
+    [action, reason, confidence, leadId],
+  );
+  if (!res.rows[0]) {
+    throw new Error(`Lead AI profile not found for lead ${leadId}`);
+  }
+  return res.rows[0];
+}
+
 // ── AI Decision Log ──────────────────────────────────────────────────────
 
 export async function listDecisionLogsByLead(

@@ -11,6 +11,7 @@
 import { pool, queryOne } from '../shared/utils/db';
 import { logger } from '../shared/utils/logger';
 import { cancelPendingOutreachJobs, enqueueAiClassifyReply } from '../workers/queue';
+import { publishAIDomainEvent } from '../shared/events/eventBus';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,24 @@ interface WebhookResult {
   details?: string;
 }
 
+
+async function publishLeadReplyReceived(
+  leadId: string,
+  channel: 'whatsapp' | 'sms' | 'email',
+  messageId: string,
+  rawBody: string,
+): Promise<void> {
+  await publishAIDomainEvent({
+    type: 'lead.reply.received',
+    payload: {
+      lead_id: leadId,
+      channel,
+      message_id: messageId,
+      message_text: rawBody.slice(0, 2000),
+      received_at: new Date().toISOString(),
+    },
+  });
+}
 
 async function stopAutomationForReply(leadId: string): Promise<void> {
   await cancelPendingOutreachJobs({ leadId });
@@ -68,6 +87,11 @@ export async function handleWhatsAppMessage(
   const from = msg.from as string; // sender phone number
   const msgType = msg.type as string;
   const phoneNumberId = metadata?.phone_number_id as string;
+  const wamId = (msg.id as string | undefined) ?? 'unknown';
+  const textBody =
+    (msg.text as Record<string, unknown> | undefined)?.body as string | undefined ??
+    (msg.interactive as Record<string, unknown> | undefined)?.button_reply?.toString() ??
+    '';
 
   logger.info('WhatsApp inbound message', {
     from,
@@ -83,26 +107,30 @@ export async function handleWhatsAppMessage(
 
   if (existing) {
     // Update outreach_log for the lead — mark messages from this number as "replied"
-    await pool.query(
-      `UPDATE outreach_logs SET status = 'replied', replied_at = NOW(), updated_at = NOW()
-       WHERE lead_id = $1 AND channel = 'whatsapp' AND status NOT IN ('replied', 'failed')`,
-      [existing.id],
-    );
+    try {
+      await pool.query(
+        `UPDATE outreach_logs SET status = 'replied', replied_at = NOW(), updated_at = NOW()
+         WHERE lead_id = $1 AND channel = 'whatsapp' AND status NOT IN ('replied', 'failed')`,
+        [existing.id],
+      );
+    } catch (error) {
+      logger.error('Failed to persist WhatsApp reply', {
+        leadId: existing.id,
+        from,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    await publishLeadReplyReceived(existing.id, 'whatsapp', `wam:${wamId}`, textBody);
     await stopAutomationForReply(existing.id);
 
-    // Extract message text for AI classification
-    const textBody =
-      (msg.text as Record<string, unknown> | undefined)?.body as string | undefined ??
-      (msg.interactive as Record<string, unknown> | undefined)?.button_reply?.toString() ??
-      '';
-
     if (textBody) {
-      const wamId = msg.id as string | undefined;
       void enqueueAiClassifyReply({
         leadId: existing.id,
         channel: 'whatsapp',
         messageText: textBody,
-        externalMessageId: wamId ? `wam:${wamId}` : undefined,
+        externalMessageId: wamId !== 'unknown' ? `wam:${wamId}` : undefined,
       }).catch((err: unknown) => {
         logger.warn('WhatsApp: failed to enqueue AI reply classification', {
           leadId: existing.id,
@@ -116,12 +144,25 @@ export async function handleWhatsAppMessage(
   }
 
   // New lead from inbound WhatsApp message
-  const created = await queryOne<{ id: string }>(
-    `INSERT INTO leads (business_name, contact_name, phone, source_platform, status)
-     VALUES ($1, $2, $3, 'whatsapp', 'active')
-     RETURNING id`,
-    [`WhatsApp Lead ${from.slice(-4)}`, `Contact ${from.slice(-4)}`, from],
-  );
+  let created: { id: string } | null;
+  try {
+    created = await queryOne<{ id: string }>(
+      `INSERT INTO leads (business_name, contact_name, phone, source_platform, status)
+       VALUES ($1, $2, $3, 'whatsapp', 'active')
+       RETURNING id`,
+      [`WhatsApp Lead ${from.slice(-4)}`, `Contact ${from.slice(-4)}`, from],
+    );
+  } catch (error) {
+    logger.error('Failed to create lead from WhatsApp message', {
+      from,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+
+  if (created) {
+    await publishLeadReplyReceived(created.id, 'whatsapp', `wam:${wamId}`, textBody);
+  }
 
   logger.info('WhatsApp lead created', { leadId: created?.id, from });
   return { action: 'lead_created', leadId: created?.id, details: `New lead from ${from}` };
@@ -209,10 +250,26 @@ export async function handleTwilioMessage(
   );
 
   if (existing) {
-    await pool.query(
-      `UPDATE outreach_logs SET status = 'replied', replied_at = NOW(), updated_at = NOW()
-       WHERE lead_id = $1 AND channel = 'sms' AND status NOT IN ('replied', 'failed')`,
-      [existing.id],
+    try {
+      await pool.query(
+        `UPDATE outreach_logs SET status = 'replied', replied_at = NOW(), updated_at = NOW()
+         WHERE lead_id = $1 AND channel = 'sms' AND status NOT IN ('replied', 'failed')`,
+        [existing.id],
+      );
+    } catch (error) {
+      logger.error('Failed to persist Twilio SMS reply', {
+        leadId: existing.id,
+        phone,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    await publishLeadReplyReceived(
+      existing.id,
+      'sms',
+      smsSid ? `tw:${smsSid}` : 'unknown',
+      body ?? '',
     );
     await stopAutomationForReply(existing.id);
 
@@ -233,12 +290,30 @@ export async function handleTwilioMessage(
     return { action: 'reply_recorded', leadId: existing.id, details: `SMS reply from ${phone}` };
   }
 
-  const created = await queryOne<{ id: string }>(
-    `INSERT INTO leads (business_name, contact_name, phone, source_platform, notes, status)
-     VALUES ($1, $2, $3, 'sms_inbound', $4, 'active')
-     RETURNING id`,
-    [`SMS Lead ${phone.slice(-4)}`, `Contact ${phone.slice(-4)}`, phone, body ?? ''],
-  );
+  let created: { id: string } | null;
+  try {
+    created = await queryOne<{ id: string }>(
+      `INSERT INTO leads (business_name, contact_name, phone, source_platform, notes, status)
+       VALUES ($1, $2, $3, 'sms_inbound', $4, 'active')
+       RETURNING id`,
+      [`SMS Lead ${phone.slice(-4)}`, `Contact ${phone.slice(-4)}`, phone, body ?? ''],
+    );
+  } catch (error) {
+    logger.error('Failed to create lead from Twilio SMS', {
+      phone,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+
+  if (created) {
+    await publishLeadReplyReceived(
+      created.id,
+      'sms',
+      smsSid ? `tw:${smsSid}` : 'unknown',
+      body ?? '',
+    );
+  }
 
   return { action: 'lead_created', leadId: created?.id, details: `New lead from SMS ${phone}` };
 }

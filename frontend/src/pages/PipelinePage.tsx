@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { usePipelines, useCreatePipeline, useDeletePipeline } from '@/api/pipelines';
+import { usePipelines, useCreatePipeline, useUpdatePipeline, useDeletePipeline } from '@/api/pipelines';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,9 +16,11 @@ interface StageInput {
 export function PipelinePage() {
   const { data: pipelines, isLoading } = usePipelines();
   const createPipeline = useCreatePipeline();
+  const updatePipeline = useUpdatePipeline();
   const deletePipeline = useDeletePipeline();
 
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [pipelineName, setPipelineName] = useState('');
   const [isDefault, setIsDefault] = useState(false);
   const [stages, setStages] = useState<StageInput[]>([
@@ -52,26 +54,45 @@ export function PipelinePage() {
     setStages(newStages);
   };
 
+  const resetForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+    setPipelineName('');
+    setIsDefault(false);
+    setStages([
+      { name: 'New Lead', position: 0, is_terminal_won: false, is_terminal_lost: false },
+      { name: 'Contacted', position: 1, is_terminal_won: false, is_terminal_lost: false },
+      { name: 'Qualified', position: 2, is_terminal_won: false, is_terminal_lost: false },
+      { name: 'Proposal', position: 3, is_terminal_won: false, is_terminal_lost: false },
+      { name: 'Won', position: 4, is_terminal_won: true, is_terminal_lost: false },
+    ]);
+  };
+
+  const handleEdit = (pipeline: { id: string; name: string; is_default: boolean }) => {
+    setEditingId(pipeline.id);
+    setPipelineName(pipeline.name);
+    setIsDefault(pipeline.is_default);
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createPipeline.mutateAsync({
-        name: pipelineName,
-        is_default: isDefault,
-        stages,
-      });
-      setShowForm(false);
-      setPipelineName('');
-      setIsDefault(false);
-      setStages([
-        { name: 'New Lead', position: 0, is_terminal_won: false, is_terminal_lost: false },
-        { name: 'Contacted', position: 1, is_terminal_won: false, is_terminal_lost: false },
-        { name: 'Qualified', position: 2, is_terminal_won: false, is_terminal_lost: false },
-        { name: 'Proposal', position: 3, is_terminal_won: false, is_terminal_lost: false },
-        { name: 'Won', position: 4, is_terminal_won: true, is_terminal_lost: false },
-      ]);
+      if (editingId) {
+        await updatePipeline.mutateAsync({
+          id: editingId,
+          input: { name: pipelineName, is_default: isDefault },
+        });
+      } else {
+        await createPipeline.mutateAsync({
+          name: pipelineName,
+          is_default: isDefault,
+          stages,
+        });
+      }
+      resetForm();
     } catch (error) {
-      console.error('Failed to create pipeline:', error);
+      console.error(`Failed to ${editingId ? 'update' : 'create'} pipeline:`, error);
     }
   };
 
@@ -89,7 +110,7 @@ export function PipelinePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Pipelines</h1>
-        <Button onClick={() => setShowForm(!showForm)}>
+        <Button onClick={() => (showForm ? resetForm() : setShowForm(true))}>
           <Plus className="mr-2 h-4 w-4" />
           Create Pipeline
         </Button>
@@ -98,9 +119,11 @@ export function PipelinePage() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>Create New Pipeline</CardTitle>
+            <CardTitle>{editingId ? 'Edit Pipeline' : 'Create New Pipeline'}</CardTitle>
             <CardDescription>
-              Define your sales pipeline stages
+              {editingId
+                ? 'Update the pipeline name and default status'
+                : 'Define your sales pipeline stages'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -128,6 +151,7 @@ export function PipelinePage() {
                 </div>
               </div>
 
+              {!editingId && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <Label>Stages</Label>
@@ -184,13 +208,23 @@ export function PipelinePage() {
                   ))}
                 </div>
               </div>
+              )}
 
               <div className="flex justify-end space-x-4">
-                <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                <Button type="button" variant="outline" onClick={resetForm}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createPipeline.isPending}>
-                  {createPipeline.isPending ? 'Creating...' : 'Create Pipeline'}
+                <Button
+                  type="submit"
+                  disabled={editingId ? updatePipeline.isPending : createPipeline.isPending}
+                >
+                  {editingId
+                    ? updatePipeline.isPending
+                      ? 'Saving...'
+                      : 'Save Changes'
+                    : createPipeline.isPending
+                      ? 'Creating...'
+                      : 'Create Pipeline'}
                 </Button>
               </div>
             </form>
@@ -216,7 +250,7 @@ export function PipelinePage() {
             </CardHeader>
             <CardContent>
               <div className="flex justify-end space-x-2">
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" onClick={() => handleEdit(pipeline)}>
                   Edit
                 </Button>
                 <Button

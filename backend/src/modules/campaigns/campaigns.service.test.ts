@@ -27,6 +27,9 @@ jest.mock('../templates/templates.repository', () => ({
 jest.mock('../integrations/integrations.repository', () => ({
   findByName: jest.fn(),
 }));
+jest.mock('../ai-campaign-brain/ai-campaign-brain.repository', () => ({
+  findCampaignBrief: jest.fn(),
+}));
 jest.mock('../../shared/utils/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
 import { AppError } from '../../shared/middleware/errorHandler';
@@ -50,6 +53,7 @@ import { enqueueOutreachDispatch, cancelPendingOutreachJobs } from '../../worker
 import { findTemplateById } from '../templates/templates.repository';
 import { findByName } from '../integrations/integrations.repository';
 import { findSequenceById } from '../outreach/outreach.repository';
+import { findCampaignBrief } from '../ai-campaign-brain/ai-campaign-brain.repository';
 import {
   addLeads,
   createCampaign,
@@ -74,6 +78,9 @@ const baseCampaign = {
   target_countries: ['US'],
   sequence_id: null,
   pipeline_id: null,
+  ai_personalization_enabled: false,
+  autonomy_level: 'supervised' as const,
+  ai_min_confidence: 0,
   created_by: 'admin-1',
   launched_at: null,
   created_at: '2026-06-19T00:00:00.000Z',
@@ -95,6 +102,7 @@ beforeEach(() => {
     is_enabled: true,
     last_test_status: 'ok',
   });
+  (findCampaignBrief as jest.Mock).mockResolvedValue(null);
 });
 
 describe('getCampaignById', () => {
@@ -403,5 +411,69 @@ describe('launchCampaignById — outreach enqueueing', () => {
     const res = await launchCampaignById('camp-1', actor);
     expect(res.campaign.status).toBe('active');
     expect(enqueueOutreachDispatch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('launchCampaignById — AI brief approval requirement', () => {
+  const guardedCampaign = {
+    ...baseCampaign,
+    autonomy_level: 'guarded' as const,
+    ai_min_confidence: 70,
+  };
+
+  const approvedBrief = {
+    id: 'brief-1',
+    campaign_id: 'camp-1',
+    status: 'approved',
+    approved_by: 'manager-1',
+    approved_at: '2026-06-19T00:00:00.000Z',
+  };
+
+  it('succeeds when an approved AI brief exists', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(guardedCampaign);
+    (findCampaignBrief as jest.Mock).mockResolvedValue(approvedBrief);
+    (launchCampaign as jest.Mock).mockResolvedValue({ ...guardedCampaign, status: 'active' });
+
+    const res = await launchCampaignById('camp-1', actor);
+
+    expect(res.campaign.status).toBe('active');
+    expect(findCampaignBrief).toHaveBeenCalledWith('camp-1');
+  });
+
+  it('succeeds under override when autonomy is supervised and ai_min_confidence is 0 without a brief', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
+
+    const res = await launchCampaignById('camp-1', actor);
+
+    expect(res.campaign.status).toBe('active');
+    expect(findCampaignBrief).not.toHaveBeenCalled();
+  });
+
+  it('fails when no approved brief exists and override does not apply', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(guardedCampaign);
+    (findCampaignBrief as jest.Mock).mockResolvedValue(null);
+
+    await expect(launchCampaignById('camp-1', actor)).rejects.toMatchObject({
+      statusCode: 400,
+      message: 'AI brief approval required before launch',
+    });
+    expect(launchCampaign).not.toHaveBeenCalled();
+  });
+
+  it('fails when a non-approved brief exists and override does not apply', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(guardedCampaign);
+    (findCampaignBrief as jest.Mock).mockResolvedValue({
+      ...approvedBrief,
+      status: 'draft',
+      approved_by: null,
+      approved_at: null,
+    });
+
+    await expect(launchCampaignById('camp-1', actor)).rejects.toMatchObject({
+      statusCode: 400,
+      message: 'AI brief approval required before launch',
+    });
+    expect(launchCampaign).not.toHaveBeenCalled();
   });
 });

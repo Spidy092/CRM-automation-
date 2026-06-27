@@ -18,8 +18,9 @@ import {
   handleSendGridEvents,
   handleGoogleAdsLeadForm,
 } from './webhook-handlers';
+import { publishAIDomainEvent } from '../shared/events/eventBus';
 
-// ── DB mock ───────────────────────────────────────────────────────────────
+// ── Mocks ──────────────────────────────────────────────────────────────────
 
 const mockQueryOne = jest.fn();
 const mockQuery = jest.fn();
@@ -36,6 +37,12 @@ jest.mock('../shared/utils/logger', () => ({
     error: jest.fn(),
   },
 }));
+
+jest.mock('../shared/events/eventBus', () => ({
+  publishAIDomainEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
+const mockedPublishAIDomainEvent = publishAIDomainEvent as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -73,6 +80,26 @@ describe('handleWhatsAppMessage', () => {
       expect.stringContaining('UPDATE outreach_logs'),
       expect.arrayContaining(['lead-1']),
     );
+    expect(mockedPublishAIDomainEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'lead.reply.received',
+        payload: expect.objectContaining({
+          lead_id: 'lead-1',
+          channel: 'whatsapp',
+          message_id: 'wam:wam123',
+          message_text: 'Hello',
+          received_at: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it('does not publish AI event when persistence fails', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'lead-1' });
+    mockQuery.mockRejectedValueOnce(new Error('DB down'));
+
+    await expect(handleWhatsAppMessage(buildPayload('+12025551234'))).rejects.toThrow('DB down');
+    expect(mockedPublishAIDomainEvent).not.toHaveBeenCalled();
   });
 
   it('creates a new lead when phone is unknown', async () => {
@@ -84,6 +111,17 @@ describe('handleWhatsAppMessage', () => {
 
     expect(result.action).toBe('lead_created');
     expect(result.leadId).toBe('lead-new');
+    expect(mockedPublishAIDomainEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'lead.reply.received',
+        payload: expect.objectContaining({
+          lead_id: 'lead-new',
+          channel: 'whatsapp',
+          message_id: 'wam:wam123',
+          message_text: 'Hello',
+        }),
+      }),
+    );
   });
 
   it('returns noop when payload has no messages', async () => {
@@ -147,6 +185,18 @@ describe('handleTwilioMessage', () => {
 
     expect(result.action).toBe('reply_recorded');
     expect(result.leadId).toBe('lead-2');
+    expect(mockedPublishAIDomainEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'lead.reply.received',
+        payload: expect.objectContaining({
+          lead_id: 'lead-2',
+          channel: 'sms',
+          message_id: 'tw:SM123',
+          message_text: 'Yes I am interested',
+          received_at: expect.any(String),
+        }),
+      }),
+    );
   });
 
   it('creates lead for unknown number', async () => {

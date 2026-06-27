@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>14/14</span>
+                <span class='fraction'>0/14</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>14/14</span>
+                <span class='fraction'>0/14</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -92,64 +92,64 @@
 <a name='L27'></a><a href='#L27'>27</a>
 <a name='L28'></a><a href='#L28'>28</a>
 <a name='L29'></a><a href='#L29'>29</a>
-<a name='L30'></a><a href='#L30'>30</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L30'></a><a href='#L30'>30</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { Router } from 'express';
-import { wrap } from '../../shared/utils/asyncHandler';
-import { authenticate } from '../../shared/middleware/auth';
-import { authorize } from '../../shared/middleware/rbac';
-import {
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js"><span class="cstat-no" title="statement not covered" >import { Router } from 'express';</span>
+<span class="cstat-no" title="statement not covered" >import { wrap } from '../../shared/utils/asyncHandler';</span>
+<span class="cstat-no" title="statement not covered" >import { authenticate } from '../../shared/middleware/auth';</span>
+<span class="cstat-no" title="statement not covered" >import { authorize } from '../../shared/middleware/rbac';</span>
+<span class="cstat-no" title="statement not covered" >import {</span>
   getIntegrationHandler,
   listIntegrationsHandler,
   testIntegrationHandler,
   updateIntegrationHandler,
 } from './integrations.controller';
-import { oauthRoutes } from './oauth';
+<span class="cstat-no" title="statement not covered" >import { oauthRoutes } from './oauth';</span>
 &nbsp;
-const router = Router();
+const router = <span class="cstat-no" title="statement not covered" >Router();</span>
 &nbsp;
 // All routes require authentication.
-router.use(authenticate);
+<span class="cstat-no" title="statement not covered" >router.use(authenticate);</span>
 &nbsp;
 // OAuth routes (admin-only, handled by oauthRoutes middleware)
-router.use('/oauth', oauthRoutes);
+<span class="cstat-no" title="statement not covered" >router.use('/oauth', oauthRoutes);</span>
 &nbsp;
 // All authenticated roles may read the integration catalog (UI renders status).
-router.get('/', wrap(listIntegrationsHandler));
-router.get('/:id', wrap(getIntegrationHandler));
+<span class="cstat-no" title="statement not covered" >router.get('/', wrap(listIntegrationsHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.get('/:id', wrap(getIntegrationHandler));</span>
 &nbsp;
 // Only admins may modify credentials or trigger tests.
-router.put('/:id', authorize('admin'), wrap(updateIntegrationHandler));
-router.post('/:id/test', authorize('admin'), wrap(testIntegrationHandler));
+<span class="cstat-no" title="statement not covered" >router.put('/:id', authorize('admin'), wrap(updateIntegrationHandler));</span>
+<span class="cstat-no" title="statement not covered" >router.post('/:id/test', authorize('admin'), wrap(testIntegrationHandler));</span>
 &nbsp;
-export { router as integrationsRoutes };
+export { router as <span class="cstat-no" title="statement not covered" >integrationsRoutes </span>};
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -157,7 +157,7 @@ export { router as integrationsRoutes };
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-26T11:26:07.614Z
+                at 2026-06-27T09:10:36.826Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

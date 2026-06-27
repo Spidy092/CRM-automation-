@@ -230,6 +230,7 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
       recordsImported: result.recordsImported,
       recordsFailed: result.recordsFailed,
       status,
+      errorMessage: null,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -251,6 +252,9 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
       recordsImported: 0,
       recordsFailed: 0,
       status: 'failed',
+      // Surface the reason to the caller (HTTP layer) so the UI can show it,
+      // instead of a silent "success with 0 records".
+      errorMessage: message,
     };
   }
 }
@@ -277,6 +281,76 @@ async function executeScraper(config: ScraperConfigRow): Promise<{
 
 // ── Google Places Scraper ──────────────────────────────────────────────────
 
+/**
+ * Normalizes the `query` config field into a list of non-empty search terms.
+ * Accepts a single string or an array of strings so one source can fan out
+ * across several terms (e.g. ["restaurants", "cafes"]) in a single run.
+ */
+function normalizeQueries(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw : [raw];
+  return list.map((q) => (typeof q === 'string' ? q.trim() : '')).filter((q) => q.length > 0);
+}
+
+/** Matches an already-coordinate location like "13.10,77.59" (optional spaces). */
+const LAT_LNG_RE = /^-?\d{1,3}(\.\d+)?\s*,\s*-?\d{1,3}(\.\d+)?$/;
+
+/**
+ * Resolves a free-text location (e.g. "Yelahanka, Bangalore") into the
+ * "lat,lng" pair the Google Places Text Search API requires for location bias.
+ * - If the input is already "lat,lng", it is normalized and returned as-is.
+ * - Otherwise the Google Geocoding API (same apiKey) converts the place name.
+ * - If the place can't be found, returns undefined so the caller runs without a
+ *   location bias rather than failing the whole scrape.
+ * Throws only for hard auth/quota errors so the operator gets actionable feedback.
+ */
+async function geocodeLocation(location: string, apiKey: string): Promise<string | undefined> {
+  const trimmed = location.trim();
+  if (!trimmed) return undefined;
+  if (LAT_LNG_RE.test(trimmed)) return trimmed.replace(/\s+/g, '');
+
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+    trimmed,
+  )}&key=${apiKey}`;
+
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    logger.warn('scraper google_places: geocoding HTTP error, running without location bias', {
+      status: resp.status,
+      location: trimmed,
+    });
+    return undefined;
+  }
+
+  const data = (await resp.json()) as Record<string, unknown>;
+  const status = String(data.status ?? '');
+
+  if (status === 'REQUEST_DENIED') {
+    throw new AppError(
+      'Google Geocoding API rejected the key (REQUEST_DENIED). Enable the Geocoding API for this key in Google Cloud Console, or enter the location as coordinates "lat,lng".',
+      400,
+    );
+  }
+  if (status === 'OVER_QUERY_LIMIT') {
+    throw new AppError('Google Geocoding quota exceeded (OVER_QUERY_LIMIT).', 429);
+  }
+
+  const results = (data.results as Array<Record<string, unknown>>) ?? [];
+  if (status !== 'OK' || results.length === 0) {
+    logger.warn('scraper google_places: location not found, running without location bias', {
+      location: trimmed,
+      status,
+    });
+    return undefined;
+  }
+
+  const geometry = results[0].geometry as Record<string, unknown> | undefined;
+  const loc = geometry?.location as Record<string, number> | undefined;
+  if (loc && typeof loc.lat === 'number' && typeof loc.lng === 'number') {
+    return `${loc.lat},${loc.lng}`;
+  }
+  return undefined;
+}
+
 async function scrapeGooglePlaces(_config: Record<string, unknown>): Promise<{
   recordsFound: number;
   recordsImported: number;
@@ -288,67 +362,99 @@ async function scrapeGooglePlaces(_config: Record<string, unknown>): Promise<{
   // apiKeyRef must be the NAME of an env var (e.g. "GOOGLE_PLACES_API_KEY"), not the raw key.
   const apiKey = assertEnvVarConfigured(_config.apiKeyRef, 'apiKeyRef');
 
-  const query = String(_config.query ?? '');
-  const location = typeof _config.location === 'string' ? _config.location : '';
+  // Support one or many search terms. `query` may be a single string or an
+  // array of strings; we run a Text Search per term and merge the results.
+  const queries = normalizeQueries(_config.query);
+  if (queries.length === 0) {
+    throw new AppError('At least one search query is required for a Google Places scrape.', 400);
+  }
+
+  const rawLocation = typeof _config.location === 'string' ? _config.location : '';
   const radius = Number(_config.radius) || 5000;
   const maxResults = Number(_config.maxResults) || 20;
 
-  // Build the initial Text Search request params
-  const baseParams = new URLSearchParams({ query, key: apiKey });
-  if (location) baseParams.append('location', location);
-  if (radius) baseParams.append('radius', String(radius));
+  // Resolve a free-text location (e.g. "Yelahanka, Bangalore") into the
+  // "lat,lng" pair the Text Search API requires. Coordinates pass through as-is.
+  // When the location can't be resolved we run without a location bias (and
+  // without radius, which the API rejects when there is no location).
+  const resolvedLocation = rawLocation ? await geocodeLocation(rawLocation, apiKey) : undefined;
 
-  let rawResults: unknown[] = [];
-  let nextPageToken: string | null = null;
+  // Collect results across all queries, de-duplicating by place_id so the same
+  // business found by two terms is only imported once.
+  const seenPlaceIds = new Set<string>();
+  const rawResults: unknown[] = [];
 
-  do {
-    // Fix: page 2+ must ONLY send pagetoken + key.
-    // Mixing the original search params with pagetoken triggers INVALID_REQUEST.
-    const url = nextPageToken
-      ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${encodeURIComponent(nextPageToken)}&key=${apiKey}`
-      : `https://maps.googleapis.com/maps/api/place/textsearch/json?${baseParams.toString()}`;
+  for (const query of queries) {
+    if (rawResults.length >= maxResults) break;
 
-    // Fix: check HTTP-level errors before parsing the response body
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new AppError(
-        `Google Places Text Search HTTP error: ${response.status} ${response.statusText}`,
-        502,
-      );
+    const baseParams = new URLSearchParams({ query, key: apiKey });
+    if (resolvedLocation) {
+      baseParams.append('location', resolvedLocation);
+      if (radius) baseParams.append('radius', String(radius));
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
-    const apiStatus = String(data.status ?? '');
+    let nextPageToken: string | null = null;
 
-    if (apiStatus === 'REQUEST_DENIED') {
-      throw new AppError(
-        'Google Places API key rejected (REQUEST_DENIED). Verify the key is correct and the Places API is enabled in Google Cloud Console.',
-        400,
-      );
-    }
-    if (apiStatus === 'INVALID_REQUEST') {
-      throw new AppError(
-        'Google Places rejected the request (INVALID_REQUEST). Check the query and location params.',
-        400,
-      );
-    }
-    if (apiStatus === 'OVER_QUERY_LIMIT') {
-      throw new AppError(
-        'Google Places daily quota exceeded (OVER_QUERY_LIMIT). Try again tomorrow or increase your quota.',
-        429,
-      );
-    }
-    if (apiStatus === 'ZERO_RESULTS') break; // no matches — not an error
+    do {
+      // Page 2+ must ONLY send pagetoken + key. Mixing the original search
+      // params with pagetoken triggers INVALID_REQUEST.
+      const url = nextPageToken
+        ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${encodeURIComponent(nextPageToken)}&key=${apiKey}`
+        : `https://maps.googleapis.com/maps/api/place/textsearch/json?${baseParams.toString()}`;
 
-    const places = (data.results as unknown[]) ?? [];
-    rawResults = rawResults.concat(places);
-    nextPageToken = typeof data.next_page_token === 'string' ? data.next_page_token : null;
+      // Check HTTP-level errors before parsing the response body
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new AppError(
+          `Google Places Text Search HTTP error: ${response.status} ${response.statusText}`,
+          502,
+        );
+      }
 
-    // Google requires ~2 s before next_page_token becomes usable
-    if (nextPageToken) {
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-  } while (nextPageToken && rawResults.length < maxResults);
+      const data = (await response.json()) as Record<string, unknown>;
+      const apiStatus = String(data.status ?? '');
+
+      if (apiStatus === 'REQUEST_DENIED') {
+        throw new AppError(
+          'Google Places API key rejected (REQUEST_DENIED). Verify the key is correct and the Places API is enabled in Google Cloud Console.',
+          400,
+        );
+      }
+      if (apiStatus === 'INVALID_REQUEST') {
+        throw new AppError(
+          'Google Places rejected the request (INVALID_REQUEST). Check the query and location params.',
+          400,
+        );
+      }
+      if (apiStatus === 'OVER_QUERY_LIMIT') {
+        throw new AppError(
+          'Google Places daily quota exceeded (OVER_QUERY_LIMIT). Try again tomorrow or increase your quota.',
+          429,
+        );
+      }
+      if (apiStatus === 'ZERO_RESULTS') break; // no matches for this term — not an error
+
+      const places = (data.results as unknown[]) ?? [];
+      for (const place of places) {
+        const placeId =
+          place && typeof place === 'object'
+            ? String((place as Record<string, unknown>).place_id ?? '')
+            : '';
+        // Skip duplicates across queries/pages; keep entries without an id too.
+        if (placeId && seenPlaceIds.has(placeId)) continue;
+        if (placeId) seenPlaceIds.add(placeId);
+        rawResults.push(place);
+        if (rawResults.length >= maxResults) break;
+      }
+
+      nextPageToken = typeof data.next_page_token === 'string' ? data.next_page_token : null;
+
+      // Google requires ~2 s before next_page_token becomes usable
+      if (nextPageToken && rawResults.length < maxResults) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } while (nextPageToken && rawResults.length < maxResults);
+  }
 
   // Fix: Text Search does NOT return formatted_phone_number or website in its results.
   // Call Place Details per result to fetch real contact data before importing.

@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse, PaginatedResponse } from './client';
 import type { Lead, LeadInput, ImportSummary } from '@/types';
@@ -11,6 +16,46 @@ interface LeadFilters {
   search?: string;
   limit?: number;
   cursor?: string;
+}
+
+interface LeadsPageResult {
+  items: Lead[];
+  meta: { limit: number; hasMore: boolean; nextCursor?: string };
+}
+
+function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.status) params.append('status', filters.status);
+  if (filters.classification) params.append('classification', filters.classification);
+  if (filters.source_platform) params.append('source_platform', filters.source_platform);
+  if (filters.assigned_to) params.append('assigned_to', filters.assigned_to);
+  if (filters.search) params.append('search', filters.search);
+  if (filters.limit) params.append('limit', filters.limit.toString());
+  if (cursor) params.append('cursor', cursor);
+  return params;
+}
+
+/**
+ * Cursor-paginated leads with "load more" support. Use on the leads list so the
+ * full set is reachable (the dashboard total counts every lead, while a single
+ * page only returns `limit` rows). Flatten `data.pages` for the combined list.
+ */
+export function useInfiniteLeads(filters: Omit<LeadFilters, 'cursor'> = {}) {
+  return useInfiniteQuery({
+    queryKey: ['leads', 'infinite', filters],
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) => {
+      const params = buildLeadParams(filters, pageParam);
+      const response = await apiClient.get<ApiResponse<Lead[]>>('/leads', { params });
+      const meta = response.data.meta as LeadsPageResult['meta'] | undefined;
+      return {
+        items: response.data.data,
+        meta: meta ?? { limit: 25, hasMore: false },
+      } as LeadsPageResult;
+    },
+    getNextPageParam: (lastPage) =>
+      lastPage.meta.hasMore ? lastPage.meta.nextCursor : undefined,
+  });
 }
 
 export function useLeads(filters: LeadFilters = {}) {

@@ -101,7 +101,12 @@ export function useTriggerScrape() {
       return response.data.data;
     },
     onSuccess: () => {
+      // Refresh logs, the source list (last_run_at), and leads/dashboard
+      // since a successful run imports new leads.
       queryClient.invalidateQueries({ queryKey: ['scraper', 'logs'] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'configs'] });
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
   });
 }
