@@ -1,5 +1,6 @@
 import { pool } from '../../shared/utils/db';
 import {
+  findAvailableReports,
   findDashboardMetrics,
   findLeadGenerationReport,
   findOutreachReport,
@@ -295,6 +296,76 @@ describe('reports.repository', () => {
       expect(result).toHaveLength(2);
       const queryCall = mockPoolQuery.mock.calls[0];
       expect(queryCall[0]).not.toContain('u.id = $1');
+    });
+  });
+
+  describe('findAvailableReports', () => {
+    it('returns active report schedules mapped to ReportStub with total', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            id: 'rpt-1',
+            name: 'Weekly Lead Summary',
+            report_type: 'lead_generation',
+            target_roles: ['admin', 'manager'],
+            created_at: '2026-06-20T10:00:00.000Z',
+            total_count: '42',
+          },
+          {
+            id: 'rpt-2',
+            name: 'Monthly Outreach Report',
+            report_type: 'outreach',
+            target_roles: ['admin'],
+            created_at: '2026-06-15T08:30:00.000Z',
+            total_count: '42',
+          },
+        ]),
+      );
+
+      const result = await findAvailableReports({ limit: 10, offset: 0 });
+
+      expect(result.items).toHaveLength(2);
+      expect(result.total).toBe(42);
+      expect(result.items[0]).toEqual({
+        id: 'rpt-1',
+        name: 'Weekly Lead Summary',
+        description: 'Weekly Lead Summary (lead_generation)',
+        type: 'lead_generation',
+        createdAt: '2026-06-20T10:00:00.000Z',
+      });
+      expect(result.items[1]).toEqual({
+        id: 'rpt-2',
+        name: 'Monthly Outreach Report',
+        description: 'Monthly Outreach Report (outreach)',
+        type: 'outreach',
+        createdAt: '2026-06-15T08:30:00.000Z',
+      });
+
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[0]).toContain('FROM report_schedules');
+      expect(queryCall[0]).toContain('is_active = TRUE');
+      expect(queryCall[0]).toContain('COUNT(*) OVER() AS total_count');
+      expect(queryCall[0]).toContain('LIMIT $1 OFFSET $2');
+      expect(queryCall[1]).toEqual([10, 0]);
+    });
+
+    it('passes limit and offset from filters', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+
+      const result = await findAvailableReports({ limit: 5, offset: 10 });
+
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[1]).toEqual([5, 10]);
+    });
+
+    it('handles empty results', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+
+      const result = await findAvailableReports({ limit: 25, offset: 0 });
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
     });
   });
 

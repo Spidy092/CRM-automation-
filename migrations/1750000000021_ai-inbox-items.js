@@ -73,7 +73,7 @@ exports.up = function (pgm) {
     status: {
       type: 'ai_inbox_item_status',
       notNull: true,
-      default: "'pending'",
+      default: pgm.func("'pending'"),
     },
     snoozed_until: {
       type: 'timestamptz',

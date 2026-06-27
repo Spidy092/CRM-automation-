@@ -23,49 +23,51 @@ import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { researchLead } from '../modules/ai-intelligence/ai-intelligence.service';
 
+export async function handleAiResearchJob(job: Job<AiResearchLeadJob>) {
+  const start = Date.now();
+  const { leadId, force = false } = job.data;
+  const baseMeta = { jobId: job.id, jobName: job.name, leadId };
+
+  logger.info('ai research job started', baseMeta);
+
+  try {
+    const profile = await researchLead(leadId, force);
+
+    const durationSec = (Date.now() - start) / 1000;
+    observeJobDuration({ name: job.name, queue: AI_RESEARCH_QUEUE }, durationSec);
+    observeAiResearchDuration(durationSec);
+    incJobsProcessed({ name: job.name, queue: AI_RESEARCH_QUEUE, status: 'success' });
+    incAiResearch('success');
+
+    logger.info('ai research job completed', {
+      ...baseMeta,
+      durationSec,
+      enrichment_status: profile.enrichment_status,
+      buying_intent: profile.buying_intent,
+      next_best_action: profile.next_best_action,
+    });
+
+    return {
+      leadId,
+      enrichment_status: profile.enrichment_status,
+      buying_intent: profile.buying_intent,
+      next_best_action: profile.next_best_action,
+    };
+  } catch (err) {
+    incJobsFailed({ name: job.name, queue: AI_RESEARCH_QUEUE });
+    incAiResearch('failed');
+    logger.error('ai research job failed', {
+      ...baseMeta,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
 export function startAiResearchWorker(): Worker {
   const worker = new Worker(
     AI_RESEARCH_QUEUE,
-    async (job: Job<AiResearchLeadJob>) => {
-      const start = Date.now();
-      const { leadId, force = false } = job.data;
-      const baseMeta = { jobId: job.id, jobName: job.name, leadId };
-
-      logger.info('ai research job started', baseMeta);
-
-      try {
-        const profile = await researchLead(leadId, force);
-
-        const durationSec = (Date.now() - start) / 1000;
-        observeJobDuration({ name: job.name, queue: AI_RESEARCH_QUEUE }, durationSec);
-        observeAiResearchDuration(durationSec);
-        incJobsProcessed({ name: job.name, queue: AI_RESEARCH_QUEUE, status: 'success' });
-        incAiResearch('success');
-
-        logger.info('ai research job completed', {
-          ...baseMeta,
-          durationSec,
-          enrichment_status: profile.enrichment_status,
-          buying_intent: profile.buying_intent,
-          next_best_action: profile.next_best_action,
-        });
-
-        return {
-          leadId,
-          enrichment_status: profile.enrichment_status,
-          buying_intent: profile.buying_intent,
-          next_best_action: profile.next_best_action,
-        };
-      } catch (err) {
-        incJobsFailed({ name: job.name, queue: AI_RESEARCH_QUEUE });
-        incAiResearch('failed');
-        logger.error('ai research job failed', {
-          ...baseMeta,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-    },
+    handleAiResearchJob,
     {
       connection: getBullConnection() as unknown as ConnectionOptions,
       concurrency: 5,

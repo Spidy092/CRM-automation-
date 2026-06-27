@@ -20,6 +20,7 @@ import {
   GitBranch,
   User,
   Activity,
+  Sparkles,
 } from 'lucide-react';
 
 const statusTones: Record<LeadStatus, StatusTone> = {
@@ -136,6 +137,12 @@ export function LeadDetailPage() {
               ) : (
                 <><Play className="mr-2 h-4 w-4" />Resume</>
               )}
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/leads/${lead.id}/ai`}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                AI Profile
+              </Link>
             </Button>
             <Button variant="outline" size="sm" asChild>
               <Link to={`/leads/${lead.id}/edit`}>

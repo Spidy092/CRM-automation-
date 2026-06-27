@@ -1,9 +1,9 @@
 # Phase 2 — AI Sales Operator / AI Growth Agent
 **Prepared By:** Chethan Gowda
 **Version:** 2.0 (Phase 2)
-**Status:** Planning — sprint design finalized 2026-06-25
+**Status:** In Progress — Sprint 5 scaffolding complete; Sprint 6 implementation and documentation in progress as of 2026-06-27
 **Timeline:** 8 weeks (4 × 2-week sprints, Sprint 5–8)
-**Follows:** Phase 1 (~80–85% complete as of 2026-06-24)
+**Follows:** Phase 1 (~85–90% complete as of 2026-06-26)
 
 ---
 
@@ -23,6 +23,42 @@ The system stops being a tool humans operate and becomes an agent humans supervi
 - thinks in events: every lead event (scraped, replied, clicked, bounced, stage-changed) triggers an AI reasoning step
 
 Humans approve strategy, handle sensitive moments, and review AI-generated outputs before sending when the confidence threshold is below the configured minimum.
+
+## Current Completion Status
+
+**Overall Phase 2 Completion:** ~53% as of 2026-06-27
+
+### Modules
+
+| Module | Status | Completion | Notes |
+|---|---|---|---|
+| ai-intelligence | Partial | ~75% (9/12 files) | Controller, schema, and types tests missing |
+| ai-reply | Missing | ~25% (3/12 files) | Controller, routes, schema, and all tests missing; service/repository/types exist |
+| ai-campaign-brain | Partial | ~58% (7/12 files) | Controller, repository, schema, service, and types tests missing; routes test exists |
+| ai-inbox | Complete | 100% | Full module + tests |
+| ai-settings | Partial | ~58% (7/12 files) | Controller, repository, routes, schema, and types tests missing; service test exists |
+
+### AI Workers
+
+| Worker | Status | Notes |
+|---|---|---|
+| aiResearch | Complete | Worker + test exist |
+| aiReply | Complete | Worker + test exist |
+| aiCampaignBrain | Complete | Worker + test exist |
+| aiInbox | Complete | Worker + test exist |
+| aiDecision | Missing | Worker + test not yet created |
+
+### Event Bus
+
+- `ai.events.ts` — Complete
+- `eventBus.ts` — Complete
+
+### Documentation
+
+- [x] `PHASE2_AUDIT.md`
+- [ ] `docs/API.md` (next step)
+- [ ] `AI_WORKERS_RUNBOOK.md` (Phase 6)
+- [ ] `AI_DECISION_RUNBOOK.md` (Phase 6)
 
 ---
 
@@ -586,13 +622,13 @@ These extend the existing Absolute Rules and apply to all Phase 2 AI modules.
 
 ---
 
-## Phase 2 Progress Tracker (to be updated each sprint start)
+## Phase 2 Progress Tracker (updated 2026-06-26)
 
 | Sprint | Weeks | Theme | Status | Notes |
 |---|---|---|---|---|
-| Sprint 5 | Week 9–10 | AI Foundation + Memory | 🔴 Not started | |
-| Sprint 6 | Week 11–12 | AI Reply + Campaign Brain | 🔴 Not started | |
-| Sprint 7 | Week 13–14 | AI Copilot Inbox + Autonomy | 🔴 Not started | |
+| Sprint 5 | Week 9–10 | AI Foundation + Memory | 🟡 ~30% scaffolded | Migrations 017–022 done. 4 AI modules scaffolded (ai-intelligence, ai-reply, ai-campaign-brain, ai-inbox). 4 AI workers + events.worker.ts created. `src/shared/events/` NOT yet created (eventBus.ts missing). No frontend Phase 2 pages. No aiDecision.worker.ts. |
+| Sprint 6 | Week 11–12 | AI Reply + Campaign Brain | 🔴 Not started | ai-reply and ai-campaign-brain modules have repo+service+types but no controller/routes/schema, no tests |
+| Sprint 7 | Week 13–14 | AI Copilot Inbox + Autonomy | 🔴 Not started | ai-inbox has full module structure (6 files) but zero tests. No autonomy engine logic. |
 | Sprint 8 | Week 15–16 | Polish + Coverage + Prod | 🔴 Not started | |
 
 ---

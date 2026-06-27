@@ -7,6 +7,7 @@ import {
   PipelineConversionRow,
   SalesRepPerformanceRow,
   ReportListFilters,
+  ReportStub,
 } from './reports.types';
 
 type WhereClause = { clause: string; params: unknown[] };
@@ -353,3 +354,33 @@ export async function findSalesRepReport(
 }
 
 // insertExportJob removed — service layer uses enqueueReportExport() from the BullMQ queue directly.
+
+export async function findAvailableReports(
+  filters: ReportListFilters,
+): Promise<{ items: ReportStub[]; total: number }> {
+  const sql = `
+    SELECT id, name, report_type, target_roles, created_at, COUNT(*) OVER() AS total_count
+    FROM report_schedules
+    WHERE is_active = TRUE
+    ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
+  `;
+  const result = await pool.query<{
+    id: string;
+    name: string;
+    report_type: string;
+    target_roles: string[];
+    created_at: string;
+    total_count: string;
+  }>(sql, [filters.limit, filters.offset]);
+
+  const items = result.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: `${row.name} (${row.report_type})`,
+    type: row.report_type,
+    createdAt: row.created_at,
+  }));
+  const total = result.rows.length > 0 ? parseInt(result.rows[0].total_count, 10) : 0;
+  return { items, total };
+}

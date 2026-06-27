@@ -15,6 +15,7 @@ import { checkDbConnection } from './shared/utils/db';
 import { checkRedisConnection } from './shared/utils/redis';
 import { errorHandler, notFoundHandler } from './shared/middleware/errorHandler';
 import { httpMetricsMiddleware } from './shared/middleware/httpMetrics';
+import { authenticate } from './shared/middleware/auth';
 import { Sentry } from './shared/utils/sentry';
 import { authenticatedLimiter } from './shared/middleware/rateLimiter';
 import { authRoutes } from './modules/auth/auth.routes';
@@ -34,6 +35,9 @@ import { webhooksRoutes } from './webhooks/webhooks.routes';
 import { aiSettingsRoutes } from './modules/ai-settings/ai-settings.routes';
 import { notificationsRoutes } from './modules/notifications/notifications.routes';
 import aiInboxRoutes from './modules/ai-inbox/ai-inbox.routes';
+import aiIntelligenceRoutes from './modules/ai-intelligence/ai-intelligence.routes';
+import aiCampaignBrainRoutes from './modules/ai-campaign-brain/ai-campaign-brain.routes';
+import aiReplyRoutes from './modules/ai-reply/ai-reply.routes';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
 
 const app: Application = express();
@@ -116,6 +120,9 @@ app.use('/api/v1/ai-settings', aiSettingsRoutes);
 app.use('/api/v1/scraper', scraperRoutes);
 app.use('/api/v1/events', notificationsRoutes);
 app.use('/api/v1/ai-inbox', authenticatedLimiter, aiInboxRoutes);
+app.use('/api/v1/ai-intelligence', authenticatedLimiter, aiIntelligenceRoutes);
+app.use('/api/v1/ai-campaign-brain', authenticatedLimiter, aiCampaignBrainRoutes);
+app.use('/api/v1/ai-reply', authenticate, aiReplyRoutes);
 
 // ── Public Webhooks (no auth, signature verification in handlers) ───────────
 app.use('/webhooks', webhooksRoutes);

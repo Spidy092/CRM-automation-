@@ -16,3 +16,18 @@ export function sendError(res: Response, message: string, statusCode = 500): voi
   const body: ApiResponse = { success: false, error: message };
   res.status(statusCode).json(body);
 }
+
+/**
+ * Build a success envelope body without sending it. Useful when a controller
+ * needs to compose the response object directly (e.g. via `res.json(body)`)
+ * instead of using `sendSuccess`, or when the same envelope shape must be
+ * produced for non-Express responses (e.g. worker return values).
+ */
+export function successResponse<T>(
+  data: T,
+  meta?: ApiResponse<T>['meta'],
+): ApiResponse<T> {
+  const body: ApiResponse<T> = { success: true, data };
+  if (meta) body.meta = meta;
+  return body;
+}

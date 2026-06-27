@@ -212,21 +212,22 @@ export async function findTasks(filters: {
   let i = 1;
 
   if (filters.status) {
-    conditions.push(`status = ${i++}`);
+    conditions.push(`status = $${i++}`);
     params.push(filters.status);
   }
   if (filters.assignedTo) {
-    conditions.push(`assigned_to = ${i++}`);
+    conditions.push(`assigned_to = $${i++}`);
     params.push(filters.assignedTo);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(filters.limit);
   return query<TaskRow>(
-    `SELECT ${TASK_COLS} FROM tasks ${where} ORDER BY due_at ASC NULLS LAST, created_at DESC LIMIT ${i}`,
+    `SELECT ${TASK_COLS} FROM tasks ${where} ORDER BY due_at ASC NULLS LAST, created_at DESC LIMIT $${i}`,
     params,
   );
 }
+
 
 export async function updateTask(
   id: string,

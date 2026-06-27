@@ -18,12 +18,16 @@ import {
   MessageSquare,
   SlidersHorizontal,
   Zap,
+  Inbox,
+  Brain,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/ui/NotificationBell';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard, group: 'Workspace' },
+  { name: 'AI Inbox', href: '/ai-inbox', icon: Inbox, group: 'AI Operator' },
+  { name: 'AI Decisions', href: '/admin/ai-decisions', icon: Brain, group: 'AI Operator' },
   { name: 'Leads', href: '/leads', icon: Users, group: 'Workspace' },
   { name: 'Pipelines', href: '/pipelines', icon: GitBranch, group: 'Workspace' },
   { name: 'Automation', href: '/automation/rules', icon: Zap, group: 'Automation' },

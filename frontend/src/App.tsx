@@ -30,6 +30,10 @@ import { LeadDetailPage } from '@/pages/LeadDetailPage';
 import { TemplatesPage } from '@/pages/TemplatesPage';
 import { TemplateFormPage } from '@/pages/TemplateFormPage';
 import { CustomFieldsPage } from '@/pages/CustomFieldsPage';
+import { AIInboxPage } from '@/pages/AIInboxPage';
+import { LeadAIProfilePage } from '@/pages/LeadAIProfilePage';
+import { CampaignBriefPage } from '@/pages/CampaignBriefPage';
+import { AIDecisionLogPage } from '@/pages/AIDecisionLogPage';
 import { ToastProvider } from '@/components/ui/Toast';
 
 const queryClient = new QueryClient({
@@ -125,13 +129,17 @@ function App() {
                 }
               >
                 <Route index element={<DashboardPage />} />
+                <Route path="ai-inbox" element={<AIInboxPage />} />
                 <Route path="leads" element={<LeadsPage />} />
                 <Route path="leads/new" element={<LeadFormPage />} />
                 <Route path="leads/import" element={<ImportLeadsPage />} />
                 <Route path="leads/:id" element={<LeadDetailPage />} />
+                <Route path="leads/:id/ai" element={<LeadAIProfilePage />} />
                 <Route path="leads/:id/edit" element={<LeadFormPage />} />
                 <Route path="campaigns" element={<CampaignsPage />} />
                 <Route path="campaigns/new" element={<CampaignFormPage />} />
+                <Route path="campaigns/:id/brief" element={<CampaignBriefPage />} />
+                <Route path="admin/ai-decisions" element={<AIDecisionLogPage />} />
                 <Route path="pipelines" element={<PipelinePage />} />
                 <Route path="reports" element={<ReportsPage />} />
                 <Route path="scraper" element={<ScraperConfigPage />} />

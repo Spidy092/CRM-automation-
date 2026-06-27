@@ -8,6 +8,9 @@ import { enqueueAiCreateInboxItem } from '../../workers/queue';
 import {
   upsertCampaignBrief,
   getCampaignLeadStats,
+  findBriefByCampaignId,
+  approveBrief,
+  rejectBrief,
 } from './ai-campaign-brain.repository';
 import type { CampaignBrief, AiCampaignBriefOutput } from './ai-campaign-brain.types';
 
@@ -37,6 +40,32 @@ const BriefSchema = z.object({
 });
 
 // ── Public API ────────────────────────────────────────────────────────────
+
+/** Read the AI brief for a campaign (null if none generated yet). */
+export async function getCampaignBrief(campaignId: string): Promise<CampaignBrief | null> {
+  return findBriefByCampaignId(campaignId);
+}
+
+/** Approve a campaign brief. Returns the updated brief; throws if none exists. */
+export async function approveCampaignBrief(
+  campaignId: string,
+  approvedBy: string,
+): Promise<CampaignBrief> {
+  const existing = await findBriefByCampaignId(campaignId);
+  if (!existing) throw new Error(`Campaign brief not found: ${campaignId}`);
+  await approveBrief(campaignId, approvedBy);
+  logger.info('ai campaign brain: brief approved', { campaignId, approvedBy });
+  return (await findBriefByCampaignId(campaignId)) as CampaignBrief;
+}
+
+/** Reject a campaign brief. Returns the updated brief; throws if none exists. */
+export async function rejectCampaignBrief(campaignId: string): Promise<CampaignBrief> {
+  const existing = await findBriefByCampaignId(campaignId);
+  if (!existing) throw new Error(`Campaign brief not found: ${campaignId}`);
+  await rejectBrief(campaignId);
+  logger.info('ai campaign brain: brief rejected', { campaignId });
+  return (await findBriefByCampaignId(campaignId)) as CampaignBrief;
+}
 
 /**
  * Generate an AI campaign brief for the given campaign.

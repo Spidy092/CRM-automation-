@@ -19,6 +19,7 @@
 import IORedis, { type Redis } from 'ioredis';
 import { Queue, type ConnectionOptions } from 'bullmq';
 import { logger } from '../shared/utils/logger';
+import { type AIDomainEvent } from '../shared/events/ai.events';
 
 export const SCORING_CALCULATE_LEAD = 'scoring:calculate-lead';
 export const SCORING_RECALCULATE_ALL = 'scoring:recalculate-all';
@@ -61,6 +62,13 @@ export const AI_CAMPAIGN_QUEUE = 'ai-campaign';
 // AI Inbox (Phase 2 — Sprint 6)
 export const AI_CREATE_INBOX_ITEM = 'ai:create-inbox-item';
 export const AI_INBOX_QUEUE = 'ai-inbox';
+
+// AI Sales Operator events (Phase 2)
+export const AI_EVENTS_QUEUE = 'ai-events' as const;
+
+// AI Next-Best-Action decisions (Phase 2 — Sprint 6)
+export const AI_DECISION_LEAD = 'ai:next-action';
+export const AI_DECISION_QUEUE = 'ai-decisions';
 
 /**
  * BullMQ requires `maxRetriesPerRequest: null` on the connection that backs
@@ -178,6 +186,16 @@ export const aiInboxQueue = new Queue(AI_INBOX_QUEUE, {
   },
 });
 
+export const aiDecisionQueue = new Queue(AI_DECISION_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 3_000 },
+    removeOnComplete: { count: 500, age: 24 * 60 * 60 },
+    removeOnFail: { count: 200, age: 7 * 24 * 60 * 60 },
+  },
+});
+
 export const outreachQueue = new Queue(OUTREACH_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
@@ -290,6 +308,12 @@ export interface AiGenerateCampaignBriefJob {
   campaignId: string;
   triggeredBy: string;
 }
+
+export type AiEventJob = {
+  event: AIDomainEvent['type'];
+  payload: AIDomainEvent['payload'];
+  enqueuedAt: string;
+};
 
 export type LeadEventType =
   | 'lead.created'

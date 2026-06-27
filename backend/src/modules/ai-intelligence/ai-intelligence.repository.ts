@@ -77,6 +77,55 @@ export async function setEnrichmentStatus(
 
 // ── AI Decision Log ──────────────────────────────────────────────────────
 
+export async function listDecisionLogsByLead(
+  leadId: string,
+  limit: number,
+  offset: number,
+): Promise<{ rows: AiDecisionLogRow[]; total: number }> {
+  const [rowsRes, countRes] = await Promise.all([
+    pool.query<AiDecisionLogRow>(
+      `SELECT * FROM ai_decision_log
+       WHERE lead_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [leadId, limit, offset],
+    ),
+    pool.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM ai_decision_log WHERE lead_id = $1',
+      [leadId],
+    ),
+  ]);
+  return { rows: rowsRes.rows, total: parseInt(countRes.rows[0]?.count ?? '0', 10) };
+}
+
+export async function listDecisionLogs(opts: {
+  decisionType?: string;
+  limit: number;
+  offset: number;
+}): Promise<{ rows: AiDecisionLogRow[]; total: number }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (opts.decisionType) {
+    params.push(opts.decisionType);
+    conditions.push(`decision_type = $${params.length}`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const countRes = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM ai_decision_log ${where}`,
+    params,
+  );
+
+  const rowsRes = await pool.query<AiDecisionLogRow>(
+    `SELECT * FROM ai_decision_log ${where}
+     ORDER BY created_at DESC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, opts.limit, opts.offset],
+  );
+
+  return { rows: rowsRes.rows, total: parseInt(countRes.rows[0]?.count ?? '0', 10) };
+}
+
 export async function insertDecisionLog(input: InsertDecisionLogInput): Promise<AiDecisionLogRow> {
   const res = await pool.query<AiDecisionLogRow>(
     `INSERT INTO ai_decision_log (

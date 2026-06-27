@@ -23,7 +23,7 @@
 - **Branches:** `main` (production), `staging`, `develop` — all protected, no direct pushes
 - **Important folders:**
   - `src/modules/auth/` — JWT RS256, RBAC, sessions
-  - `src/modules/leads/` — Lead CRUD, scoring, custom fields (JSONB)
+  - `src/modules/leads/` — Lead CRUD, CSV import, custom fields (JSONB)
   - `src/modules/campaigns/` — Campaign management, targeting rules
   - `src/modules/outreach/` — Message dispatch, sequence engine
   - `src/modules/pipeline/` — Stage management, transitions
@@ -32,6 +32,12 @@
   - `src/modules/integrations/` — WhatsApp, Twilio, SendGrid, Google Ads, Facebook
   - `src/modules/reports/` — Analytics, dashboards, exports
   - `src/modules/scraper/` — Google Business, Facebook, YouTube crawlers
+  - `src/modules/ai-intelligence/` — Lead research, memory, AI profiles (Phase 2)
+  - `src/modules/ai-reply/` — Inbound reply classification (Phase 2)
+  - `src/modules/ai-campaign-brain/` — Campaign pre-launch briefs (Phase 2)
+  - `src/modules/ai-inbox/` — Copilot inbox for reps (Phase 2)
+  - `src/modules/ai-settings/` — OpenAI config management
+  - `src/modules/notifications/` — SSE real-time notification emitter
   - `src/workers/` — BullMQ job processors
   - `src/webhooks/` — Inbound webhook handlers
   - `src/shared/` — Utilities, middleware, validators
@@ -48,50 +54,71 @@
 ## Current Sprint Context
 
 > **Update this block at the start of every sprint.**
-> **Last verified:** 2026-06-24 (full codebase audit — all 14 backend modules implemented, 63 backend test files, 31 frontend test files).
+> **Last verified:** 2026-06-26 (full codebase audit — 19 backend module directories, 75 backend test files, 37 frontend test files, 24 frontend pages).
 
 | Sprint | Weeks | Theme | Status | Notes |
 |---|---|---|---|---|
 | Sprint 1 | Week 1–2 | Foundation — Auth, Lead CRUD, CSV Import, Staging Deploy | 🟢 100% | auth, users, leads, custom-fields modules fully implemented + tested. 16 migrations shipped. |
 | Sprint 2 | Week 3–4 | Core CRM — Pipeline, Scoring Engine, Round Robin, Campaigns | 🟢 100% | pipeline, scoring, assignments, campaigns modules fully implemented + tested. All 4 modules clear 70% coverage gate on every metric. |
-| Sprint 3 | Week 5–6 | Automation — Outreach Engine, All Integrations, Webhooks | 🟢 ~85% | outreach, templates, integrations, webhooks modules fully implemented with tests. 5 BullMQ workers (scoring, assignment, outreach, reportExport, scraper). 8 integration connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook). Webhook handlers + verifiers for WhatsApp/Twilio/SendGrid. Remaining: OAuth flow not started (`integrations/oauth/` empty). |
-| Sprint 4 | Week 7–8 | Intelligence — AI Personalization, Scrapers, Dashboards, UAT | 🟡 ~75% | reports, scraper modules fully implemented with tests. AI settings module done. `outreach.prompt.ts` handles OpenAI personalization. 16 migrations include scraper tables + AI settings. Remaining: DLQ routing not implemented, Prometheus counters partial, Sentry wired but not verified. |
+| Sprint 3 | Week 5–6 | Automation — Outreach Engine, All Integrations, Webhooks | 🟢 100% | outreach, templates, integrations, webhooks modules fully implemented with tests. 5 BullMQ workers (scoring, assignment, outreach, reportExport, scraper). 9 integration connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook). OAuth flow fully implemented (Google Ads + Facebook). Webhook handlers + verifiers for WhatsApp/Twilio/SendGrid. |
+| Sprint 4 | Week 7–8 | Intelligence — AI Personalization, Scrapers, Dashboards, UAT | 🟢 ~90% | reports, scraper modules fully implemented with tests. AI settings module done. `outreach.prompt.ts` handles OpenAI personalization. DLQ routing implemented (`lib/dlq.ts`). Prometheus counters on all 5 workers. Sentry wired (`initSentry()` in `index.ts`). `docker-compose.prod.yml` + `.env.prod.example` created. Remaining: Sentry not verified with real DSN, backend test coverage below 70% target. |
 
 ### Overall Progress
 
 | Area | % done |
 |---|---|
-| Backend modules | ~95% (14 of 14 modules have code; all implemented with controller/service/repository/routes/schema/types) |
-| Backend tests | ~85% (63 test files covering all 14 modules + workers + webhooks + shared utils; overall stmts 53.9%, branches 39.3%, funcs 54.3%, lines 54.9%) |
-| Frontend pages | ~95% (22 pages, all wired in App.tsx routing; covers all major modules) |
-| Frontend tests | ~60% (31 test files covering 18 pages + 9 API clients + 2 stores + 1 component; overall stmts 56.2%, branches 67.8%) |
-| DevOps / CI-CD | ~40% (ci.yml with lint/test/build jobs; docker-compose.yml with postgres/redis/minio/api/worker/bull-board; Dockerfile + Dockerfile.dev; nginx config; prod compose not verified) |
-| **Overall Phase 1** | **~80–85%** |
+| Backend modules | ~95% (19 module directories: 14 Phase 1 fully implemented + 4 Phase 2 AI modules partially scaffolded + notifications module; all Phase 1 modules have controller/service/repository/routes/schema/types) |
+| Backend tests | ~85% (75 test files covering all 14 Phase 1 modules + workers + webhooks + shared utils; overall stmts 53.9%, branches 39.3%, funcs 54.3%, lines 54.9%) |
+| Frontend pages | ~95% (24 pages, all wired in App.tsx routing; covers all major modules) |
+| Frontend tests | ~60% (37 test files covering 24 pages + 10 API clients + 2 stores + 1 component; overall stmts 64.2%, branches 68.7%) |
+| DevOps / CI-CD | ~45% (docker-compose.yml with postgres/redis/minio/api/worker/bull-board; docker-compose.prod.yml with health checks; Dockerfile + Dockerfile.dev; nginx config; .env.prod.example; NO ci.yml — GitHub Actions not yet created) |
+| **Overall Phase 1** | **~85–90%** |
 
-### What's Done (verified 2026-06-24)
+### What's Done (verified 2026-06-26)
 
-**Backend (14 modules, 63 test files, 16 migrations):**
-- `auth/` — JWT RS256, RBAC, sessions, password reset (8 files, 3 tests)
-- `users/` — User CRUD (7 files)
-- `leads/` — Lead CRUD, CSV/Excel import, custom fields (10 files, 3 tests)
-- `custom-fields/` — Custom field definitions, JSONB validation (7 files, 1 test)
-- `pipeline/` — Stage management, transitions, pipeline CRUD (11 files, 5+ tests)
-- `scoring/` — Scoring rules, auto-classification Hot/Warm/Cold (11 files, 5+ tests)
-- `assignments/` — Round Robin engine, override logic (11 files, 5+ tests)
-- `campaigns/` — Campaign CRUD, targeting rules (11 files, 5+ tests)
-- `outreach/` — Sequence engine, task dispatch, AI personalization prompt (13 files, 6 tests)
-- `templates/` — Template CRUD, approval workflow (11 files, 5 tests)
-- `integrations/` — 8 connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook), OAuth base, webhook signature verification (27+ files, 7 tests)
-- `reports/` — Dashboard metrics, 4 report types, CSV export via BullMQ (11 files, 4 tests)
-- `scraper/` — Cheerio-based scraper, config CRUD, run logs (11 files, 4 tests)
-- `ai-settings/` — OpenAI config management (6 files)
+**Backend (19 module directories, 75 test files, 23 migrations):**
 
-**Workers (5 processors, 3 test files):**
+Phase 1 modules (fully implemented with controller/service/repository/routes/schema/types):
+- `auth/` — JWT RS256, RBAC, sessions, password reset (6 files, 3 tests)
+- `users/` — User CRUD (7 files, 2 tests)
+- `leads/` — Lead CRUD, CSV/Excel import, custom fields (7 files, 3 tests)
+- `custom-fields/` — Custom field definitions, JSONB validation (6 files, 2 tests)
+- `pipeline/` — Stage management, transitions, pipeline CRUD (6 files, 5 tests)
+- `scoring/` — Scoring rules, auto-classification Hot/Warm/Cold (6 files, 5 tests)
+- `assignments/` — Round Robin engine, override logic (6 files, 5 tests)
+- `campaigns/` — Campaign CRUD, targeting rules (6 files, 5 tests)
+- `outreach/` — Sequence engine, task dispatch, AI personalization prompt (7 files, 6 tests)
+- `templates/` — Template CRUD, approval workflow (6 files, 5 tests)
+- `integrations/` — 9 connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook), OAuth (Google Ads + Facebook), webhook signature verification (23 files, 9 tests)
+- `reports/` — Dashboard metrics, 4 report types, CSV export via BullMQ (7 files, 4 tests)
+- `scraper/` — Cheerio-based scraper, config CRUD, run logs (7 files, 4 tests)
+- `ai-settings/` — OpenAI config management (6 files, 1 test)
+
+Phase 2 modules (partially scaffolded):
+- `ai-intelligence/` — Lead research, memory, AI profiles, decision log (3 source files, 2 tests — repo+service only, no HTTP layer)
+- `ai-reply/` — Inbound reply classification, draft generation (3 source files, 0 tests — repo+service only)
+- `ai-campaign-brain/` — Campaign pre-launch strategy brief (3 source files, 0 tests — repo+service only)
+- `ai-inbox/` — Copilot inbox for reps (6 source files, 0 tests — full module structure but untested)
+
+Additional module:
+- `notifications/` — SSE real-time notification emitter (3 files, 2 tests — custom architecture, no service/repo)
+
+**Workers (10 processor files, 3 test files):**
+Phase 1:
 - `scoring.worker.ts` — `scoring:calculate-lead`, `scoring:recalculate-all`
 - `assignment.worker.ts` — `assignment:round-robin`
-- `outreach.worker.ts` — Outreach message dispatch
-- `reportExport.worker.ts` — Async CSV export
+- `outreach.worker.ts` — Outreach message dispatch (430 lines, has E2E test)
+- `reportExport.worker.ts` — Async CSV export (has test)
 - `scraper.worker.ts` — Background scraper runs
+
+Phase 2 (scaffolded):
+- `aiResearch.worker.ts` — Lead research on scrape/import (95 lines, 0 tests)
+- `aiReply.worker.ts` — Inbound reply classification (67 lines, 0 tests)
+- `aiCampaignBrain.worker.ts` — Campaign brief generation (67 lines, 0 tests)
+- `aiInbox.worker.ts` — Inbox item creation (94 lines, 0 tests)
+- `events.worker.ts` — Event bus worker (205 lines, 0 tests)
+
+Infrastructure: `index.ts` (worker orchestration), `queue.ts` (queue definitions, 428 lines)
 
 **Webhooks (6 files, 3 tests):**
 - WhatsApp message/status handlers
@@ -99,20 +126,28 @@
 - SendGrid event webhook handlers
 - HMAC/Twilio signature verification
 
-**Shared infrastructure (15 utils, 7 middleware, 5 tests):**
-- Auth middleware, RBAC middleware, error handler, rate limiter, file upload, HTTP metrics
-- DB pool, Redis, logger (Winston), Sentry, audit logging, encryption, pagination, phone utils, metrics, response helpers
+**Shared infrastructure (18 source files, 6 test files):**
+- Middleware (6 files, 2 tests): auth, RBAC, errorHandler, httpMetrics, rateLimiter, upload
+- Utils (11 files, 4 tests): asyncHandler, audit, db, encryption, logger, metrics, pagination, phone, redis, response, sentry
+- Types (1 file): shared type definitions
+- Validators directory exists but is empty
 
-**Frontend (22 pages, 15 API clients, 2 stores, 13 UI components, 31 tests):**
-- All pages routed in App.tsx with ProtectedRoute wrapper
+**Database (23 migrations, ~1900 lines):**
+- Migrations 0000–0016: Phase 1 schema, seeds, fixes
+- Migrations 0017–0022: Phase 2 tables (lead_ai_profiles, ai_decision_log, lead_conversation_summaries, campaign_ai_briefs, ai_inbox_items, campaign autonomy columns)
+
+**Frontend (24 pages, 15 API clients, 2 stores, 17 components, 37 tests):**
+- All 24 pages routed in App.tsx with ProtectedRoute wrapper
+- 26 routes (3 public + 23 protected, with parametric reuse)
 - TanStack Query for server state, Zustand for client state
-- shadcn/ui component library (button, card, input, textarea, label, switch, skeleton, etc.)
+- shadcn/ui component library (14 UI components + 2 top-level)
 - Layout with sidebar navigation, toast notifications, loading/empty states
+- Frontend coverage: 64.2% stmts, 68.7% branches (latest run)
 
 ### Remaining Gaps (to reach 100% Phase 1)
 
 1. **Coverage gap** — Backend overall 53.9% stmts (target 70%); auth module likely needs 90%+. Sprint 2 modules individually pass but overall is dragged down by newer modules.
-2. **Frontend tests** — 34 test files exist (3 new added: `IntegrationsPage`, `LeadDetailPage`, `TemplateFormPage`). Overall coverage is 56.2% stmts.
+2. **Frontend tests** — 37 test files exist (24 page + 10 API + 2 store + 1 component). Overall coverage is 64.2% stmts.
 3. ~~**OAuth flow**~~ — ✅ **Done 2026-06-24** — `integrations/oauth/` fully implemented with Google Ads + Facebook OAuth 2.0 flows, state parameter CSRF protection, token exchange, and refresh.
 4. ~~**DLQ routing**~~ — ✅ **Already implemented** — `lib/dlq.ts` provides `moveToDLQ()` and `registerDLQHandler()`. All 5 workers use it.
 5. ~~**Prometheus metrics**~~ — ✅ **Done 2026-06-24** — All 5 workers now emit `crm_jobs_processed_total`, `crm_jobs_failed_total`, `crm_job_duration_seconds`.

@@ -3,7 +3,11 @@ import OpenAI from 'openai';
 import { logger } from '../../shared/utils/logger';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { findLeadById } from '../leads/leads.repository';
-import { findAiProfileByLeadId, insertDecisionLog } from '../ai-intelligence/ai-intelligence.repository';
+import {
+  findAiProfileByLeadId,
+  insertDecisionLog,
+  listDecisionLogs,
+} from '../ai-intelligence/ai-intelligence.repository';
 import { incAiTokens, incAiReplyClassified } from '../../shared/utils/metrics';
 import { invalidateProfileCache } from '../ai-intelligence/ai-intelligence.service';
 import { cancelPendingOutreachJobs, enqueueAiCreateInboxItem } from '../../workers/queue';
@@ -15,6 +19,7 @@ import {
   getLeadCampaignContext,
   moveLeadToStageByName,
 } from './ai-reply.repository';
+import { enqueueAiClassifyReply } from '../../workers/queue';
 import type { ClassifyReplyInput, ReplyClassification, AiReplyOutput } from './ai-reply.types';
 
 const REPLY_MAX_TOKENS = 300;
@@ -62,6 +67,46 @@ function intentToSentiment(intentClass: string): 'positive' | 'neutral' | 'negat
  *   5. Log decision to ai_decision_log
  *   6. Route: opt_out → stop; autopilot+confident → auto-send; else → inbox item
  */
+export async function classifyInboundReply(input: ClassifyReplyInput): Promise<ReplyClassification> {
+  return classifyReply(input);
+}
+
+export async function getReplyHistory(opts: {
+  leadId?: string;
+  campaignId?: string;
+  classification?: string;
+  limit: number;
+  offset: number;
+}): Promise<{ items: unknown[]; total: number }> {
+  const { rows, total } = await listDecisionLogs({
+    decisionType: 'reply_classify',
+    limit: opts.limit,
+    offset: opts.offset,
+  });
+
+  let items = rows;
+  if (opts.leadId) {
+    items = items.filter((item) => item.lead_id === opts.leadId);
+  }
+  if (opts.campaignId) {
+    items = items.filter((item) => item.campaign_id === opts.campaignId);
+  }
+  if (opts.classification) {
+    items = items.filter((item) => item.decision === opts.classification);
+  }
+
+  return { items, total };
+}
+
+export async function triggerClassification(payload: ClassifyReplyInput): Promise<void> {
+  await enqueueAiClassifyReply({
+    leadId: payload.leadId,
+    channel: payload.channel,
+    messageText: payload.messageText,
+    externalMessageId: payload.externalMessageId,
+  });
+}
+
 export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyClassification> {
   const start = Date.now();
   const { leadId, channel, messageText } = input;
@@ -284,7 +329,7 @@ async function persistMemoryUpdates(
   leadId: string,
   raw: AiReplyOutput,
   messageText: string,
-  campaignId: string | null,
+  _campaignId: string | null,
 ): Promise<void> {
   const summaryText = `Intent: ${raw.intent_class}. ${raw.chain_of_thought.slice(0, 400)}`;
   const sentiment = intentToSentiment(raw.intent_class);

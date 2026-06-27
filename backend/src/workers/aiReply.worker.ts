@@ -6,37 +6,44 @@ import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { classifyReply } from '../modules/ai-reply/ai-reply.service';
 
+export async function handleAiReplyJob(job: Job<AiClassifyReplyJob>): Promise<{
+  leadId: string;
+  intent_class: string;
+  confidence: number;
+  requires_human_review: boolean;
+}> {
+  const start = Date.now();
+  const { leadId, channel, messageText, externalMessageId } = job.data;
+  const baseMeta = { jobId: job.id, jobName: job.name, leadId, channel };
+
+  logger.info('ai reply job started', baseMeta);
+
+  const result = await classifyReply({ leadId, channel, messageText, externalMessageId });
+
+  const durationSec = (Date.now() - start) / 1000;
+  observeJobDuration({ name: AI_CLASSIFY_REPLY, queue: AI_REPLY_QUEUE }, durationSec);
+  incJobsProcessed({ name: AI_CLASSIFY_REPLY, queue: AI_REPLY_QUEUE, status: 'success' });
+
+  logger.info('ai reply job completed', {
+    ...baseMeta,
+    durationSec,
+    intent: result.intent_class,
+    confidence: result.confidence,
+    requiresHumanReview: result.requires_human_review,
+  });
+
+  return {
+    leadId,
+    intent_class: result.intent_class,
+    confidence: result.confidence,
+    requires_human_review: result.requires_human_review,
+  };
+}
+
 export function startAiReplyWorker(): Worker {
   const worker = new Worker(
     AI_REPLY_QUEUE,
-    async (job: Job<AiClassifyReplyJob>) => {
-      const start = Date.now();
-      const { leadId, channel, messageText, externalMessageId } = job.data;
-      const baseMeta = { jobId: job.id, jobName: job.name, leadId, channel };
-
-      logger.info('ai reply job started', baseMeta);
-
-      const result = await classifyReply({ leadId, channel, messageText, externalMessageId });
-
-      const durationSec = (Date.now() - start) / 1000;
-      observeJobDuration({ name: AI_CLASSIFY_REPLY, queue: AI_REPLY_QUEUE }, durationSec);
-      incJobsProcessed({ name: AI_CLASSIFY_REPLY, queue: AI_REPLY_QUEUE, status: 'success' });
-
-      logger.info('ai reply job completed', {
-        ...baseMeta,
-        durationSec,
-        intent: result.intent_class,
-        confidence: result.confidence,
-        requiresHumanReview: result.requires_human_review,
-      });
-
-      return {
-        leadId,
-        intent_class: result.intent_class,
-        confidence: result.confidence,
-        requires_human_review: result.requires_human_review,
-      };
-    },
+    handleAiReplyJob,
     {
       connection: getBullConnection() as unknown as ConnectionOptions,
       concurrency: 10,

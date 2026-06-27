@@ -8,6 +8,7 @@ import {
   enqueueExportJob,
 } from './reports.service';
 import * as repository from './reports.repository';
+import * as pagination from '../../shared/utils/pagination';
 import { enqueueReportExport } from '../../workers/queue';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { AppError } from '../../shared/middleware/errorHandler';
@@ -37,28 +38,94 @@ describe('reports.service', () => {
   });
 
   describe('listReports', () => {
-    it('returns paginated stub reports', async () => {
+    let clampSpy: jest.SpyInstance;
+    beforeEach(() => {
+      clampSpy = jest.spyOn(pagination, 'clampLimit');
+    });
+    afterEach(() => {
+      clampSpy.mockRestore();
+    });
+
+    it('returns paginated reports from repository', async () => {
+      mockedRepo.findAvailableReports.mockResolvedValue({
+        items: [
+          { id: 'rpt-1', name: 'Report One', description: 'Report One (leads)', type: 'leads', createdAt: '2026-06-20T10:00:00.000Z' },
+          { id: 'rpt-2', name: 'Report Two', description: 'Report Two (outreach)', type: 'outreach', createdAt: '2026-06-19T10:00:00.000Z' },
+        ],
+        total: 4,
+      });
+
       const result = await listReports({ limit: 2, offset: 0 });
       expect(result.items).toHaveLength(2);
       expect(result.meta.total).toBe(4);
       expect(result.meta.limit).toBe(2);
       expect(result.meta.offset).toBe(0);
+      expect(mockedRepo.findAvailableReports).toHaveBeenCalledTimes(1);
+      expect(result.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'rpt-1', name: 'Report One' }),
+          expect.objectContaining({ id: 'rpt-2', name: 'Report Two' }),
+        ]),
+      );
+      expect(mockedRepo.findAvailableReports).toHaveBeenCalledWith({ limit: 2, offset: 0 });
     });
 
     it('returns second page', async () => {
+      mockedRepo.findAvailableReports.mockResolvedValue({
+        items: [
+          { id: 'rpt-3', name: 'Report Three', description: 'Report Three (pipeline)', type: 'pipeline', createdAt: '2026-06-18T10:00:00.000Z' },
+          { id: 'rpt-4', name: 'Report Four', description: 'Report Four (reps)', type: 'reps', createdAt: '2026-06-17T10:00:00.000Z' },
+        ],
+        total: 4,
+      });
+
       const result = await listReports({ limit: 2, offset: 2 });
       expect(result.items).toHaveLength(2);
       expect(result.meta.offset).toBe(2);
     });
 
     it('clamps limit to max 100', async () => {
+      mockedRepo.findAvailableReports.mockResolvedValue({ items: [], total: 0 });
+
       const result = await listReports({ limit: 500, offset: 0 });
       expect(result.meta.limit).toBe(100);
+      expect(mockedRepo.findAvailableReports).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+      expect(clampSpy).toHaveBeenCalledWith(500);
+      expect(clampSpy).toHaveBeenCalledTimes(1);
     });
 
     it('handles undefined limit', async () => {
+      mockedRepo.findAvailableReports.mockResolvedValue({ items: [], total: 0 });
+
       const result = await listReports({ limit: undefined as any, offset: 0 });
       expect(result.meta.limit).toBe(25);
+      expect(mockedRepo.findAvailableReports).toHaveBeenCalledWith({ limit: 25, offset: 0 });
+      expect(clampSpy).toHaveBeenCalledWith(undefined);
+    });
+
+    it('returns meta.total from DB total, not from items.length', async () => {
+      mockedRepo.findAvailableReports.mockResolvedValue({
+        items: [
+          { id: 'rpt-1', name: 'A', description: 'A (leads)', type: 'leads', createdAt: '2026-06-20T10:00:00.000Z' },
+        ],
+        total: 47,
+      });
+
+      const result = await listReports({ limit: 5, offset: 0 });
+      expect(result.items).toHaveLength(1);
+      expect(result.meta.total).toBe(47);
+      expect(result.meta.total).not.toBe(result.items.length);
+    });
+
+    it('propagates filters (limit/offset) to repository without mutation', async () => {
+      mockedRepo.findAvailableReports.mockResolvedValue({ items: [], total: 0 });
+
+      await listReports({ limit: 7, offset: 3 });
+      expect(mockedRepo.findAvailableReports).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 7, offset: 3 }),
+      );
+      expect(mockedRepo.findAvailableReports).toHaveBeenCalledTimes(1);
+      expect(clampSpy).toHaveBeenCalledWith(7);
     });
   });
 

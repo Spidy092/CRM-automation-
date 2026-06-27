@@ -9,9 +9,11 @@ import {
   upsertAiProfile,
   setEnrichmentStatus,
   insertDecisionLog,
+  listDecisionLogsByLead,
+  listDecisionLogs,
 } from './ai-intelligence.repository';
 import { incAiTokens } from '../../shared/utils/metrics';
-import type { LeadAiProfileRow, AiResearchOutput, NextBestAction, BuyingIntent, PreferredChannel } from './ai-intelligence.types';
+import type { LeadAiProfileRow, AiDecisionLogRow, AiResearchOutput, NextBestAction, BuyingIntent, PreferredChannel } from './ai-intelligence.types';
 
 const PROFILE_CACHE_TTL = 60 * 60; // 1 hour — DB is authoritative
 const RESEARCH_MAX_TOKENS = 800;
@@ -64,6 +66,26 @@ export async function getAiProfile(leadId: string): Promise<LeadAiProfileRow | n
     await redis.setex(profileCacheKey(leadId), PROFILE_CACHE_TTL, JSON.stringify(profile)).catch(() => null);
   }
   return profile;
+}
+
+/** List the AI decision-log entries for a single lead (most recent first). */
+export async function getLeadDecisions(
+  leadId: string,
+  limit: number,
+  offset: number,
+): Promise<{ items: AiDecisionLogRow[]; total: number }> {
+  const { rows, total } = await listDecisionLogsByLead(leadId, limit, offset);
+  return { items: rows, total };
+}
+
+/** List AI decision-log entries across all leads (admin audit trail). */
+export async function getDecisions(opts: {
+  decisionType?: string;
+  limit: number;
+  offset: number;
+}): Promise<{ items: AiDecisionLogRow[]; total: number }> {
+  const { rows, total } = await listDecisionLogs(opts);
+  return { items: rows, total };
 }
 
 /**

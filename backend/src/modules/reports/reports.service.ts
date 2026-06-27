@@ -3,6 +3,7 @@ import { writeAuditLog } from '../../shared/utils/audit';
 import { clampLimit } from '../../shared/utils/pagination';
 import { enqueueReportExport } from '../../workers/queue';
 import {
+  findAvailableReports,
   findDashboardMetrics,
   findLeadGenerationReport,
   findOutreachReport,
@@ -23,37 +24,6 @@ import {
   ReportStub,
 } from './reports.types';
 
-const STUB_REPORTS: ReportStub[] = [
-  {
-    id: 'report-1',
-    name: 'Lead Generation Report',
-    description: 'Overview of leads generated over time.',
-    type: 'leads',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'report-2',
-    name: 'Outreach Performance Report',
-    description: 'Outreach metrics by channel.',
-    type: 'outreach',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'report-3',
-    name: 'Pipeline Conversion Report',
-    description: 'Conversion rates across pipeline stages.',
-    type: 'pipeline',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'report-4',
-    name: 'Sales Rep Performance Report',
-    description: 'Performance metrics per sales representative.',
-    type: 'reps',
-    createdAt: new Date().toISOString(),
-  },
-];
-
 function applyRoleScope(filters: ReportListFilters, actor: ReportActor): ReportListFilters {
   if (actor.role === 'sales') {
     return filters;
@@ -61,16 +31,16 @@ function applyRoleScope(filters: ReportListFilters, actor: ReportActor): ReportL
   return filters;
 }
 
-export function listReports(
+export async function listReports(
   filters: ReportListFilters,
 ): Promise<PaginatedResult<ReportStub>> {
   const limit = clampLimit(filters.limit);
   const offset = filters.offset ?? 0;
-  const items = STUB_REPORTS.slice(offset, offset + limit);
-  return Promise.resolve({
+  const { items, total } = await findAvailableReports({ ...filters, limit, offset });
+  return {
     items,
-    meta: { limit, offset, total: STUB_REPORTS.length },
-  });
+    meta: { limit, offset, total },
+  };
 }
 
 export async function getDashboardMetrics(actor: ReportActor): Promise<DashboardMetrics> {
