@@ -105,7 +105,9 @@ All tokens come from existing CSS variables in `src/index.css`. No new tokens in
 
 ### 4.5 Validation
 
-- Inline Zod schema: `email: z.string().email("Enter a valid email")`, `password: z.string().min(1, "Password is required")`.
+- Inline validation in plain JS (no `zod` dependency — verified absent from `frontend/package.json`).
+- Email: must match regex `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` → message: "Enter a valid email".
+- Password: must be non-empty → message: "Password is required".
 - Field-level errors:
   - Shown under each input on **blur** (after first blur), not on every keystroke.
   - Clear on next valid keystroke.
@@ -187,7 +189,7 @@ export function LoginPage() {
   const illustrationRef = useRef<HTMLDivElement>(null);
 
   // Parallax handler — useRef + rAF throttle, translate illustration
-  // Validation — Zod schema, on blur
+  // Validation — plain JS, on blur (no zod dep)
   // Submit — same as current, plus setShake on error
 
   return (
@@ -270,7 +272,7 @@ Before merge:
 | Login page looks disconnected from rest of app (app uses indigo accents elsewhere) | Acknowledged user choice. Document in PR description. Other pages remain untouched. |
 | `prefers-reduced-motion` not respected | Explicit media queries gate all motion. Test included. |
 | Parallax handler leaks (no cleanup) | `useEffect` cleanup removes `mousemove` listener. rAF cancelled on unmount. |
-| Zod schema fails to import (already in project?) | Verify `zod` is in `package.json` before implementation. If absent, use plain JS validation. |
+| ~~Zod dependency~~ | ~~Resolved~~ `zod` is NOT in `frontend/package.json`. Spec updated to use plain JS validation. No new npm dependencies. |
 | Tailwind v4 class name compatibility | Verify `lg:grid-cols-[60%_40%]` and arbitrary value syntax works with project's Tailwind v4 setup. |
 | Existing test mock doesn't include `LoginPage`-specific routes | Test already mocks `apiClient` generically; should work. |
 
