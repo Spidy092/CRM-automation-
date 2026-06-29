@@ -127,3 +127,50 @@
 ::-webkit-scrollbar-thumb {
   @apply bg-slate-200 rounded-full hover:bg-slate-300 transition-colors;
 }
+
+/* === Login page motion (added 2026-06-29, redesign spec) === */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px); }
+  40%      { transform: translateX(4px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(2px); }
+}
+
+.animate-rise {
+  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-shake {
+  animation: shake 0.24s ease-in-out 1;
+}
+
+/* Stagger delays for entrance cascade */
+.delay-0   { animation-delay: 0ms; }
+.delay-80  { animation-delay: 80ms; }
+.delay-160 { animation-delay: 160ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-240 { animation-delay: 240ms; }
+.delay-280 { animation-delay: 280ms; }
+.delay-320 { animation-delay: 320ms; }
+.delay-360 { animation-delay: 360ms; }
+.delay-400 { animation-delay: 400ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-shake {
+    animation: none !important;
+  }
+}
