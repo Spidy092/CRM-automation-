@@ -122,7 +122,7 @@ export function LoginPage() {
     };
   }, []);
 
-  const submitDisabled = !email || !password || login.isPending;
+  const submitDisabled = login.isPending;
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-[60%_40%]">
