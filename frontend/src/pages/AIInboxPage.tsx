@@ -117,6 +117,39 @@ export function AIInboxPage() {
                   </div>
                   <p className="text-sm font-semibold text-slate-900">{item.title}</p>
                   {item.summary && <p className="text-sm text-slate-600">{item.summary}</p>}
+                  {item.action_result && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">Action result</p>
+                      {/* Structured result display — shows status, key fields, avoids leaking internal structures */}
+                      {typeof item.action_result === 'object' && item.action_result !== null ? (
+                        <div className="mt-1 space-y-1 text-sm text-emerald-800">
+                          {(item.action_result as Record<string, unknown>).status !== undefined && (
+                            <p>
+                              <span className="font-medium">Status:</span>{' '}
+                              {String((item.action_result as Record<string, unknown>).status)}
+                            </p>
+                          )}
+                          {(item.action_result as Record<string, unknown>).message !== undefined && (
+                            <p>
+                              <span className="font-medium">Result:</span>{' '}
+                              {String((item.action_result as Record<string, unknown>).message)}
+                            </p>
+                          )}
+                          {(item.action_result as Record<string, unknown>).status === undefined &&
+                            (item.action_result as Record<string, unknown>).message === undefined && (
+                              <p className="text-xs italic text-emerald-600">Action completed</p>
+                            )}
+                        </div>
+                      ) : (
+                        <p className="mt-1 break-words text-sm text-emerald-800">
+                          {String(item.action_result)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {item.agent_action_id && (
+                    <StatusBadge tone="gray">Agent action linked</StatusBadge>
+                  )}
                   {item.ai_draft_response && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">AI draft</p>
