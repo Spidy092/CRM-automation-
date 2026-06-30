@@ -158,3 +158,49 @@ export function observeAgentActionDuration(labels: {
     durationSec,
   );
 }
+
+// ── Agent Planner Metrics ─────────────────────────────────────────────────
+
+export const agentPlansCreatedTotal = new Counter({
+  name: 'crm_agent_plans_created_total',
+  help: 'Number of agent plans created',
+  labelNames: ['source', 'autonomy_level'] as const,
+});
+
+export const agentPlansSucceededTotal = new Counter({
+  name: 'crm_agent_plans_succeeded_total',
+  help: 'Number of agent plans that succeeded',
+  labelNames: ['autonomy_level'] as const,
+});
+
+export const agentPlansFailedTotal = new Counter({
+  name: 'crm_agent_plans_failed_total',
+  help: 'Number of agent plans that failed',
+  labelNames: ['autonomy_level', 'reason'] as const,
+});
+
+export const agentStepsExecutedTotal = new Counter({
+  name: 'crm_agent_steps_executed_total',
+  help: 'Number of agent steps executed',
+  labelNames: ['action', 'risk_tier', 'outcome'] as const,
+});
+
+export const agentPlanErrorsTotal = new Counter({
+  name: 'crm_agent_plan_errors_total',
+  help: 'Number of agent plan errors by code',
+  labelNames: ['code'] as const,
+});
+
+export const agentPlanDurationSeconds = new Histogram({
+  name: 'crm_agent_plan_duration_seconds',
+  help: 'Wall-clock duration of agent plans',
+  labelNames: ['autonomy_level'] as const,
+  buckets: [0.5, 1, 5, 10, 30, 60, 120, 300],
+});
+
+export const agentStepDurationSeconds = new Histogram({
+  name: 'crm_agent_step_duration_seconds',
+  help: 'Wall-clock duration of agent plan steps',
+  labelNames: ['risk_tier'] as const,
+  buckets: [0.1, 0.5, 1, 5, 10, 30],
+});
