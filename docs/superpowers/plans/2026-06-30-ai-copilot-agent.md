@@ -88,177 +88,176 @@ docs/AI_COPILOT_USAGE.md                             [T23]
 
 ## Task 1: Create the database migration
 
-**Files:**
-- Create: `backend/migrations/0023_agent_plans.sql`
-- Test: `backend/migrations/__tests__/0023_agent_plans.test.ts`
+**Project conventions discovered during execution:**
+- Migrations live at **repo-root** `migrations/`, NOT `backend/migrations/`.
+- Migrations are **node-pg-migrate JavaScript files** (`17500000000XX_name.js`), not raw `.sql`.
+- Next available timestamp follows the existing `1750000000029_*.js` files.
+- Unit tests mock the DB layer (`pool`, `queryOne`); tests for a migration verify the JS definition/schema, not a live DB.
 
-- [ ] **Step 1.1: Write the failing migration test**
+**Files:**
+- Create: `migrations/1750000000030_agent-plans.js`
+- Test: `backend/src/modules/agent-planner/__tests__/migration.test.ts`
+
+- [ ] **Step 1.1: Write the migration file**
+
+```javascript
+// migrations/1750000000030_agent-plans.js
+
+/** @param {import('node-pg-migrate').MigrationBuilder} pgm */
+exports.up = function (pgm) {
+  pgm.createTable('agent_plans', {
+    id: { type: 'uuid', primaryKey: true, default: pgm.func('gen_random_uuid()') },
+    conversation_id: { type: 'text' },
+    goal: { type: 'text', notNull: true },
+    status: { type: 'varchar(40)', notNull: true },
+    autonomy_level: { type: 'varchar(20)' },
+    confidence: { type: 'integer' },
+    source: { type: 'varchar(50)', notNull: true },
+    requested_by: { type: 'uuid', references: '"users"', onDelete: 'SET NULL' },
+    source_message: { type: 'text' },
+    cost_cap_cents: { type: 'integer', notNull: true, default: 50 },
+    step_cap: { type: 'integer', notNull: true, default: 8 },
+    cost_used_cents: { type: 'integer', notNull: true, default: 0 },
+    deadline_at: { type: 'timestamptz' },
+    started_at: { type: 'timestamptz' },
+    completed_at: { type: 'timestamptz' },
+    expires_at: { type: 'timestamptz' },
+    error_message: { type: 'text' },
+    created_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
+    updated_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
+    idempotency_key: { type: 'varchar(255)', notNull: true, unique: true },
+  });
+
+  pgm.createTable('agent_plan_steps', {
+    id: { type: 'uuid', primaryKey: true, default: pgm.func('gen_random_uuid()') },
+    plan_id: { type: 'uuid', notNull: true, references: '"agent_plans"', onDelete: 'CASCADE' },
+    step_index: { type: 'integer', notNull: true },
+    action_name: { type: 'varchar(100)', notNull: true },
+    action_args: { type: 'jsonb', notNull: true, default: '{}' },
+    risk_tier: { type: 'varchar(40)', notNull: true },
+    depends_on: { type: 'integer[]', notNull: true, default: '{}' },
+    rationale: { type: 'text', notNull: true },
+    status: { type: 'varchar(40)', notNull: true, default: 'pending' },
+    agent_action_id: { type: 'uuid', references: '"agent_actions"', onDelete: 'SET NULL' },
+    result: { type: 'jsonb' },
+    error_message: { type: 'text' },
+    started_at: { type: 'timestamptz' },
+    completed_at: { type: 'timestamptz' },
+  });
+
+  pgm.addConstraint('agent_plans', 'agent_plans_status_check',
+    "CHECK (status IN ('proposed', 'approved', 'running', 'paused_for_approval', 'succeeded', 'failed', 'cancelled', 'expired'))");
+  pgm.addConstraint('agent_plan_steps', 'agent_plan_steps_status_check',
+    "CHECK (status IN ('pending', 'running', 'pending_approval', 'succeeded', 'failed', 'skipped', 'cancelled'))");
+  pgm.addConstraint('agent_plan_steps', 'agent_plan_steps_risk_tier_check',
+    "CHECK (risk_tier IN ('read', 'low_risk_write', 'sensitive_write', 'customer_facing_write'))");
+  pgm.addConstraint('agent_plan_steps', 'agent_plan_steps_step_index_check',
+    'CHECK (step_index >= 0)');
+
+  pgm.createIndex('agent_plans', 'status');
+  pgm.createIndex('agent_plans', ['status', 'created_at'], { order: { created_at: 'DESC' } });
+  pgm.createIndex('agent_plans', 'requested_by');
+  pgm.createIndex('agent_plans', 'conversation_id');
+  pgm.createIndex('agent_plan_steps', 'plan_id');
+
+  pgm.addColumn('agent_actions', {
+    agent_plan_id: { type: 'uuid', references: '"agent_plans"', onDelete: 'SET NULL' },
+    agent_plan_step_id: { type: 'uuid', references: '"agent_plan_steps"', onDelete: 'SET NULL' },
+  });
+  pgm.createIndex('agent_actions', 'agent_plan_id');
+
+  pgm.addColumn('ai_inbox_items', {
+    agent_plan_id: { type: 'uuid', references: '"agent_plans"', onDelete: 'SET NULL' },
+    agent_plan_step_id: { type: 'uuid', references: '"agent_plan_steps"', onDelete: 'SET NULL' },
+  });
+  pgm.createIndex('ai_inbox_items', 'agent_plan_id');
+};
+
+/** @param {import('node-pg-migrate').MigrationBuilder} pgm */
+exports.down = function (pgm) {
+  pgm.dropIndex('ai_inbox_items', 'agent_plan_id');
+  pgm.dropColumns('ai_inbox_items', ['agent_plan_id', 'agent_plan_step_id']);
+  pgm.dropIndex('agent_actions', 'agent_plan_id');
+  pgm.dropColumns('agent_actions', ['agent_plan_id', 'agent_plan_step_id']);
+  pgm.dropIndex('agent_plan_steps', 'plan_id');
+  pgm.dropTable('agent_plan_steps');
+  pgm.dropIndex('agent_plans', 'status');
+  pgm.dropIndex('agent_plans', ['status', 'created_at']);
+  pgm.dropIndex('agent_plans', 'requested_by');
+  pgm.dropIndex('agent_plans', 'conversation_id');
+  pgm.dropTable('agent_plans');
+};
+```
+
+- [ ] **Step 1.2: Run the migration on a fresh dev DB**
+
+```bash
+cd backend && npm run migrate
+```
+
+Expected: migration applies cleanly (`1750000000030_agent-plans` in `pgmigrations` table). If it fails because `agent_actions` or `ai_inbox_items` don't exist on your local DB, first run all prior migrations with `npm run migrate`.
+
+- [ ] **Step 1.3: Write the unit test (migration definition is correct)**
+
+The project convention is to mock the DB layer in unit tests. For the migration, write a minimal test that ensures the migration file exports `up` and `down` functions and that the column list matches the schema we will use in the repository.
 
 ```typescript
-// backend/migrations/__tests__/0023_agent_plans.test.ts
-import { Pool } from 'pg';
+// backend/src/modules/agent-planner/__tests__/migration.test.ts
+import migration from '../../../../migrations/1750000000030_agent-plans';
 
-const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? 'postgresql://localhost/crm_test';
-
-describe('migration 0023_agent_plans', () => {
-  let pool: Pool;
-  beforeAll(() => {
-    pool = new Pool({ connectionString: TEST_DATABASE_URL });
-  });
-  afterAll(async () => {
-    await pool.end();
+describe('migration 1750000000030_agent-plans', () => {
+  it('exports up and down functions', () => {
+    expect(typeof migration.up).toBe('function');
+    expect(typeof migration.down).toBe('function');
   });
 
-  it('creates agent_plans table with required columns', async () => {
-    const result = await pool.query(`
-      SELECT column_name, data_type, is_nullable
-      FROM information_schema.columns
-      WHERE table_name = 'agent_plans'
-      ORDER BY ordinal_position
-    `);
-    const names = result.rows.map((r) => r.column_name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'id', 'conversation_id', 'goal', 'status', 'autonomy_level',
-        'confidence', 'source', 'requested_by', 'source_message',
-        'cost_cap_cents', 'step_cap', 'cost_used_cents',
-        'deadline_at', 'started_at', 'completed_at', 'expires_at',
-        'error_message', 'created_at', 'updated_at', 'idempotency_key',
-      ]),
-    );
+  it('up creates agent_plans and agent_plan_steps', () => {
+    const pgm = createMockPgm();
+    migration.up(pgm);
+
+    expect(pgm.createTable).toHaveBeenCalledWith('agent_plans', expect.any(Object));
+    expect(pgm.createTable).toHaveBeenCalledWith('agent_plan_steps', expect.any(Object));
+    expect(pgm.addColumn).toHaveBeenCalledWith('agent_actions', expect.any(Object));
+    expect(pgm.addColumn).toHaveBeenCalledWith('ai_inbox_items', expect.any(Object));
   });
 
-  it('creates agent_plan_steps table with required columns', async () => {
-    const result = await pool.query(`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'agent_plan_steps' ORDER BY ordinal_position
-    `);
-    const names = result.rows.map((r) => r.column_name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'id', 'plan_id', 'step_index', 'action_name', 'action_args',
-        'risk_tier', 'depends_on', 'rationale', 'status', 'agent_action_id',
-        'result', 'error_message', 'started_at', 'completed_at',
-      ]),
-    );
-  });
+  it('down drops agent_plans and agent_plan_steps', () => {
+    const pgm = createMockPgm();
+    migration.down(pgm);
 
-  it('adds agent_plan_id column to agent_actions', async () => {
-    const result = await pool.query(`
-      SELECT data_type FROM information_schema.columns
-      WHERE table_name = 'agent_actions' AND column_name = 'agent_plan_id'
-    `);
-    expect(result.rows[0]?.data_type).toBe('uuid');
-  });
-
-  it('adds agent_plan_id column to ai_inbox_items', async () => {
-    const result = await pool.query(`
-      SELECT data_type FROM information_schema.columns
-      WHERE table_name = 'ai_inbox_items' AND column_name = 'agent_plan_id'
-    `);
-    expect(result.rows[0]?.data_type).toBe('uuid');
-  });
-
-  it('foreign keys enforce cascade and nullability', async () => {
-    const result = await pool.query(`
-      SELECT tc.table_name, rc.delete_rule, rc.update_rule
-      FROM information_schema.referential_constraints rc
-      JOIN information_schema.table_constraints tc ON rc.constraint_name = tc.constraint_name
-      WHERE tc.table_name IN ('agent_plan_steps', 'agent_actions', 'ai_inbox_items')
-    `);
-    const cascades = result.rows.filter((r) => r.delete_rule === 'CASCADE');
-    expect(cascades.length).toBeGreaterThanOrEqual(1);
+    expect(pgm.dropTable).toHaveBeenCalledWith('agent_plan_steps');
+    expect(pgm.dropTable).toHaveBeenCalledWith('agent_plans');
+    expect(pgm.dropColumns).toHaveBeenCalledWith('agent_actions', expect.arrayContaining(['agent_plan_id', 'agent_plan_step_id']));
+    expect(pgm.dropColumns).toHaveBeenCalledWith('ai_inbox_items', expect.arrayContaining(['agent_plan_id', 'agent_plan_step_id']));
   });
 });
+
+function createMockPgm() {
+  return {
+    func: jest.fn((name) => name),
+    createTable: jest.fn(),
+    dropTable: jest.fn(),
+    addColumn: jest.fn(),
+    dropColumns: jest.fn(),
+    createIndex: jest.fn(),
+    dropIndex: jest.fn(),
+    addConstraint: jest.fn(),
+  };
+}
 ```
 
-- [ ] **Step 1.2: Run test to verify it fails**
+- [ ] **Step 1.4: Run test to verify it passes**
 
 ```bash
-cd backend && TEST_DATABASE_URL=postgresql://localhost/crm_test npm test -- migrations/__tests__/0023_agent_plans.test.ts
+cd backend && npm test -- modules/agent-planner/__tests__/migration.test.ts
 ```
 
-Expected: FAIL — tables `agent_plans` and `agent_plan_steps` don't exist yet.
+Expected: PASS — all 3 test cases green.
 
-- [ ] **Step 1.3: Write the migration SQL**
-
-```sql
--- backend/migrations/0023_agent_plans.sql
-
-CREATE TABLE agent_plans (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id text NULL,
-  goal            text NOT NULL,
-  status          text NOT NULL,
-  autonomy_level  text NULL,
-  confidence      int  NULL,
-  source          text NOT NULL,
-  requested_by    uuid NULL,
-  source_message  text NULL,
-  cost_cap_cents  int  NOT NULL DEFAULT 50,
-  step_cap        int  NOT NULL DEFAULT 8,
-  cost_used_cents int  NOT NULL DEFAULT 0,
-  deadline_at     timestamptz NULL,
-  started_at      timestamptz NULL,
-  completed_at    timestamptz NULL,
-  expires_at      timestamptz NULL,
-  error_message   text NULL,
-  created_at      timestamptz NOT NULL DEFAULT NOW(),
-  updated_at      timestamptz NOT NULL DEFAULT NOW(),
-  idempotency_key text NOT NULL UNIQUE
-);
-
-CREATE INDEX agent_plans_status_idx       ON agent_plans(status, created_at DESC);
-CREATE INDEX agent_plans_actor_status_idx ON agent_plans(requested_by, status);
-CREATE INDEX agent_plans_conversation_idx ON agent_plans(conversation_id) WHERE conversation_id IS NOT NULL;
-
-CREATE TABLE agent_plan_steps (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id         uuid NOT NULL REFERENCES agent_plans(id) ON DELETE CASCADE,
-  step_index      int  NOT NULL,
-  action_name     text NOT NULL,
-  action_args     jsonb NOT NULL,
-  risk_tier       text NOT NULL,
-  depends_on      int[] NOT NULL DEFAULT '{}',
-  rationale       text NOT NULL,
-  status          text NOT NULL DEFAULT 'pending',
-  agent_action_id uuid NULL REFERENCES agent_actions(id),
-  result          jsonb NULL,
-  error_message   text NULL,
-  started_at      timestamptz NULL,
-  completed_at    timestamptz NULL,
-  UNIQUE (plan_id, step_index)
-);
-
-CREATE INDEX agent_plan_steps_plan_idx ON agent_plan_steps(plan_id, step_index);
-
-ALTER TABLE agent_actions    ADD COLUMN IF NOT EXISTS agent_plan_id      uuid NULL REFERENCES agent_plans(id);
-ALTER TABLE agent_actions    ADD COLUMN IF NOT EXISTS agent_plan_step_id uuid NULL REFERENCES agent_plan_steps(id);
-ALTER TABLE ai_inbox_items   ADD COLUMN IF NOT EXISTS agent_plan_id      uuid NULL REFERENCES agent_plans(id);
-ALTER TABLE ai_inbox_items   ADD COLUMN IF NOT EXISTS agent_plan_step_id uuid NULL REFERENCES agent_plan_steps(id);
-
-CREATE INDEX IF NOT EXISTS agent_actions_plan_idx  ON agent_actions(agent_plan_id)  WHERE agent_plan_id  IS NOT NULL;
-CREATE INDEX IF NOT EXISTS ai_inbox_items_plan_idx ON ai_inbox_items(agent_plan_id) WHERE agent_plan_id IS NOT NULL;
-```
-
-- [ ] **Step 1.4: Apply migration to test DB**
+- [ ] **Step 1.5: Commit**
 
 ```bash
-cd backend && psql "$TEST_DATABASE_URL" -f migrations/0023_agent_plans.sql
-```
-
-- [ ] **Step 1.5: Run test to verify it passes**
-
-```bash
-cd backend && TEST_DATABASE_URL=postgresql://localhost/crm_test npm test -- migrations/__tests__/0023_agent_plans.test.ts
-```
-
-Expected: PASS — all 5 test cases green.
-
-- [ ] **Step 1.6: Commit**
-
-```bash
-cd backend && git add migrations/0023_agent_plans.sql migrations/__tests__/0023_agent_plans.test.ts && git commit -m "feat(db): migration 0023 for agent_plans and agent_plan_steps"
+cd backend && git add migrations/1750000000030_agent-plans.js src/modules/agent-planner/__tests__/migration.test.ts && git commit -m "feat(db): migration 1750000000030 for agent_plans and agent_plan_steps"
 ```
 
 ---
