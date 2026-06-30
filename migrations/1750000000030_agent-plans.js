@@ -60,19 +60,23 @@ exports.up = function (pgm) {
     agent_plan_step_id: { type: 'uuid', references: '"agent_plan_steps"', onDelete: 'SET NULL' },
   });
   pgm.createIndex('agent_actions', 'agent_plan_id');
+  pgm.createIndex('agent_actions', 'agent_plan_step_id');
 
   pgm.addColumn('ai_inbox_items', {
     agent_plan_id: { type: 'uuid', references: '"agent_plans"', onDelete: 'SET NULL' },
     agent_plan_step_id: { type: 'uuid', references: '"agent_plan_steps"', onDelete: 'SET NULL' },
   });
   pgm.createIndex('ai_inbox_items', 'agent_plan_id');
+  pgm.createIndex('ai_inbox_items', 'agent_plan_step_id');
 };
 
 /** @param {import('node-pg-migrate').MigrationBuilder} pgm */
 exports.down = function (pgm) {
   pgm.dropIndex('ai_inbox_items', 'agent_plan_id');
+  pgm.dropIndex('ai_inbox_items', 'agent_plan_step_id');
   pgm.dropColumns('ai_inbox_items', ['agent_plan_id', 'agent_plan_step_id']);
   pgm.dropIndex('agent_actions', 'agent_plan_id');
+  pgm.dropIndex('agent_actions', 'agent_plan_step_id');
   pgm.dropColumns('agent_actions', ['agent_plan_id', 'agent_plan_step_id']);
   pgm.dropIndex('agent_plan_steps', 'plan_id');
   pgm.dropTable('agent_plan_steps');
