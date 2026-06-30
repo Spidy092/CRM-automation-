@@ -5,7 +5,6 @@ import {
   appendBuyingSignalToProfile,
   updateProfileNextAction,
   getLeadCampaignContext,
-  moveLeadToStageByName,
 } from './ai-reply.repository';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -151,43 +150,5 @@ describe('getLeadCampaignContext', () => {
       autonomyLevel: 'guarded',
       aiMinConfidence: 70,
     });
-  });
-});
-
-describe('moveLeadToStageByName', () => {
-  it('moves lead to stage when stage is found', async () => {
-    mockedQueryOne.mockResolvedValue({ id: 'stage-1' });
-    mockedPoolQuery.mockResolvedValue({ rowCount: 1 });
-
-    await moveLeadToStageByName(leadId, 'Qualified');
-
-    expect(mockedQueryOne).toHaveBeenCalledWith(
-      expect.stringContaining('SELECT id FROM pipeline_stages'),
-      ['Qualified'],
-    );
-    const sql = mockedPoolQuery.mock.calls[0][0] as string;
-    const params = mockedPoolQuery.mock.calls[0][1] as unknown[];
-    expect(sql).toContain('UPDATE leads SET pipeline_stage_id = $1');
-    expect(params).toEqual(['stage-1', leadId]);
-  });
-
-  it('does nothing when stage is not found', async () => {
-    mockedQueryOne.mockResolvedValue(null);
-
-    await moveLeadToStageByName(leadId, 'NonExistent');
-
-    expect(mockedPoolQuery).not.toHaveBeenCalled();
-  });
-
-  it('matches stage name case-insensitively', async () => {
-    mockedQueryOne.mockResolvedValue({ id: 'stage-2' });
-    mockedPoolQuery.mockResolvedValue({ rowCount: 1 });
-
-    await moveLeadToStageByName(leadId, 'qualified');
-
-    const params = mockedQueryOne.mock.calls[0][1] as unknown[];
-    expect(params[0]).toBe('qualified');
-    const sql = mockedQueryOne.mock.calls[0][0] as string;
-    expect(sql).toContain('LOWER(name) = LOWER($1)');
   });
 });

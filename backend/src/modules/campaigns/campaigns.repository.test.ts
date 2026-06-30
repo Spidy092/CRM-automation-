@@ -82,7 +82,7 @@ describe('campaigns.repository', () => {
       expect(result).toEqual(row);
       expect(mockPoolQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO campaigns'),
-        ['Spring', 'friendly', ['saas'], ['US'], 'seq-1', 'pipe-1', false, 'admin-1'],
+        ['Spring', 'friendly', ['saas'], ['US'], 'seq-1', 'pipe-1', false, 'guarded', 'admin-1'],
       );
     });
 
@@ -100,6 +100,7 @@ describe('campaigns.repository', () => {
         null,
         null,
         false,
+        'guarded',
         'admin-1',
       ]);
     });

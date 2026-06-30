@@ -1,50 +1,91 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useCreateCampaign } from '@/api/campaigns';
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useCreateCampaign, useUpdateCampaign, useCampaign } from '@/api/campaigns';
 import { usePipelines } from '@/api/pipelines';
+import { useSequences } from '@/api/outreach';
+import type { Sequence } from '@/api/outreach';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 
 export function CampaignFormPage() {
+  const { id } = useParams<{ id: string }>();
+  const isEditMode = Boolean(id);
+  
   const navigate = useNavigate();
   const createCampaign = useCreateCampaign();
+  const updateCampaign = useUpdateCampaign();
   const { data: pipelines } = usePipelines();
+  
+  const { data: sequenceData } = useSequences();
+  const sequences = (sequenceData as { items?: Sequence[] } | undefined)?.items ?? [];
+
+  const { data: existingCampaign, isLoading: isCampaignLoading } = useCampaign(id ?? '');
+
+  const { showToast } = useToast();
 
   const [name, setName] = useState('');
   const [tone, setTone] = useState<'formal' | 'professional' | 'conversational'>('professional');
   const [targetIndustries, setTargetIndustries] = useState('');
   const [targetCountries, setTargetCountries] = useState('');
   const [pipelineId, setPipelineId] = useState('');
+  const [sequenceId, setSequenceId] = useState('');
   const [aiPersonalizationEnabled, setAiPersonalizationEnabled] = useState(false);
+
+  useEffect(() => {
+    if (isEditMode && existingCampaign) {
+      setName(existingCampaign.name);
+      setTone(existingCampaign.tone);
+      setTargetIndustries(existingCampaign.target_industries.join(', '));
+      setTargetCountries(existingCampaign.target_countries.join(', '));
+      setPipelineId(existingCampaign.pipeline_id || '');
+      setSequenceId(existingCampaign.sequence_id || '');
+      setAiPersonalizationEnabled(existingCampaign.ai_personalization_enabled);
+    }
+  }, [isEditMode, existingCampaign]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const payload = {
+      name,
+      tone,
+      target_industries: targetIndustries
+        ? targetIndustries.split(',').map((s) => s.trim()).filter(Boolean)
+        : [],
+      target_countries: targetCountries
+        ? targetCountries.split(',').map((s) => s.trim()).filter(Boolean)
+        : [],
+      pipeline_id: pipelineId || undefined,
+      sequence_id: sequenceId || undefined,
+      ai_personalization_enabled: aiPersonalizationEnabled,
+    };
+
     try {
-      await createCampaign.mutateAsync({
-        name,
-        tone,
-        target_industries: targetIndustries
-          ? targetIndustries.split(',').map((s) => s.trim()).filter(Boolean)
-          : [],
-        target_countries: targetCountries
-          ? targetCountries.split(',').map((s) => s.trim()).filter(Boolean)
-          : [],
-        pipeline_id: pipelineId || undefined,
-        ai_personalization_enabled: aiPersonalizationEnabled,
-      });
+      if (isEditMode && id) {
+        await updateCampaign.mutateAsync({ id, input: payload });
+        showToast('Campaign updated.', 'success');
+      } else {
+        await createCampaign.mutateAsync(payload);
+        showToast('Campaign created.', 'success');
+      }
       navigate('/campaigns');
     } catch (error) {
-      console.error('Failed to create campaign:', error);
+      showToast(getApiErrorMessage(error, `Failed to ${isEditMode ? 'update' : 'create'} campaign.`), 'error');
     }
   };
 
+  if (isEditMode && isCampaignLoading) {
+    return <div className="p-8 text-center">Loading campaign details...</div>;
+  }
+
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900">Create Campaign</h1>
+      <h1 className="text-3xl font-bold text-gray-900">{isEditMode ? 'Edit Campaign' : 'Create Campaign'}</h1>
 
       <Card>
         <CardHeader>
@@ -117,6 +158,23 @@ export function CampaignFormPage() {
               </select>
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="sequence">Outreach Sequence (Optional)</Label>
+              <select
+                id="sequence"
+                value={sequenceId}
+                onChange={(e) => setSequenceId(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <option value="">Select a sequence</option>
+                {sequences?.map((seq) => (
+                  <option key={seq.id} value={seq.id}>
+                    {seq.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex flex-row items-center justify-between rounded-lg border p-4">
               <div className="space-y-0.5">
                 <Label htmlFor="ai_personalization_enabled" className="text-base">AI Personalization</Label>
@@ -136,8 +194,10 @@ export function CampaignFormPage() {
               <Button type="button" variant="outline" onClick={() => navigate('/campaigns')}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={createCampaign.isPending}>
-                {createCampaign.isPending ? 'Creating...' : 'Create Campaign'}
+              <Button type="submit" disabled={isEditMode ? updateCampaign.isPending : createCampaign.isPending}>
+                {isEditMode
+                  ? (updateCampaign.isPending ? 'Updating...' : 'Update Campaign')
+                  : (createCampaign.isPending ? 'Creating...' : 'Create Campaign')}
               </Button>
             </div>
           </form>

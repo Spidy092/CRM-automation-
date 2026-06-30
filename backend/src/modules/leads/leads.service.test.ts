@@ -1,5 +1,6 @@
 import { LeadRow } from './leads.types';
 
+jest.mock('../../workers/queue');
 jest.mock('./leads.repository', () => ({
   findLeads: jest.fn(),
   findLeadById: jest.fn(),

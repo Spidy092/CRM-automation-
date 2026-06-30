@@ -1,3 +1,4 @@
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { Request, Response, NextFunction } from 'express';
 import {
   createUserHandler,
@@ -24,14 +25,14 @@ function mockReq(opts: {
   return {
     params: opts.params || {},
     body: opts.body || {},
-    user: opts.user === undefined ? { id: 'admin-1', role: 'admin' } : opts.user,
+    user: 'user' in opts ? opts.user : { id: 'admin-1', role: 'admin' as const },
   } as unknown as Request;
 }
 
 function mockRes(): Partial<Response> {
   const res: Partial<Response> = {};
-  res.status = jest.fn().mockReturnValue(res);
-  res.json = jest.fn().mockReturnValue(res);
+  res.status = jest.fn<any>().mockReturnValue(res);
+  res.json = jest.fn<any>().mockReturnValue(res);
   return res;
 }
 
@@ -41,13 +42,13 @@ const sampleUser = {
   id: 'user-1',
   name: 'Alice',
   email: 'alice@crm.com',
-  role: 'sales',
+  role: 'sales' as const,
   is_active: true,
   created_at: new Date('2025-01-01T00:00:00Z'),
 };
 
 describe('users.controller', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => { jest.clearAllMocks(); });
 
   describe('createUserHandler', () => {
     const validBody = {

@@ -6,6 +6,7 @@ import { sendError } from '../utils/response';
 
 export class AppError extends Error {
   statusCode: number;
+  readonly isAppError = true;
 
   constructor(message: string, statusCode = 400) {
     super(message);
@@ -26,9 +27,11 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return;
   }
 
-  if (err instanceof AppError) {
-    if (err.statusCode >= 500) Sentry.captureException(err);
-    sendError(res, err.message, err.statusCode);
+  // Also check isAppError to survive ts-node-dev module reloads
+  if (err instanceof AppError || (err && typeof err === 'object' && 'isAppError' in err)) {
+    const appErr = err as AppError;
+    if (appErr.statusCode >= 500) Sentry.captureException(appErr);
+    sendError(res, appErr.message, appErr.statusCode);
     return;
   }
 

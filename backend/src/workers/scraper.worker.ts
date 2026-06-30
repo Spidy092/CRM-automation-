@@ -20,7 +20,11 @@ export function startScraperWorker(): Worker {
     SCRAPER_QUEUE,
     async (job: Job) => {
       const start = Date.now();
-      const baseMeta = { jobId: job.id, jobName: job.name, data: job.data as Record<string, unknown> };
+      const baseMeta = {
+        jobId: job.id,
+        jobName: job.name,
+        data: job.data as Record<string, unknown>,
+      };
       logger.info('scraper job started', baseMeta);
 
       try {

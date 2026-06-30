@@ -8,13 +8,14 @@ import * as usersRepository from './users.repository';
 const BCRYPT_COST_FACTOR = 12;
 
 export async function createUser(input: CreateUserInput): Promise<User> {
-  const existing = await usersRepository.findUserByEmail(input.email);
+  const email = input.email.toLowerCase();
+  const existing = await usersRepository.findUserByEmail(email);
   if (existing) {
     throw new AppError('A user with this email already exists', 409);
   }
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST_FACTOR);
-  return usersRepository.insertUser(uuidv4(), input, passwordHash);
+  return usersRepository.insertUser(uuidv4(), { ...input, email }, passwordHash);
 }
 
 /**

@@ -38,6 +38,8 @@ import aiInboxRoutes from './modules/ai-inbox/ai-inbox.routes';
 import aiIntelligenceRoutes from './modules/ai-intelligence/ai-intelligence.routes';
 import aiCampaignBrainRoutes from './modules/ai-campaign-brain/ai-campaign-brain.routes';
 import aiReplyRoutes from './modules/ai-reply/ai-reply.routes';
+import agentRoutes from './modules/agent/agent.routes';
+import chatRoutes from './modules/chat/chat.routes';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
 
 const app: Application = express();
@@ -95,12 +97,15 @@ app.get('/health', (_req, res) => {
 
 // ── Prometheus Metrics (no auth — scraped by Prometheus server) ──────────────
 app.get('/metrics', (_req, res) => {
-  void register.metrics().then((metrics) => {
-    res.set('Content-Type', register.contentType);
-    res.end(metrics);
-  }).catch(() => {
-    res.status(500).json({ error: 'Failed to collect metrics' });
-  });
+  void register
+    .metrics()
+    .then((metrics) => {
+      res.set('Content-Type', register.contentType);
+      res.end(metrics);
+    })
+    .catch(() => {
+      res.status(500).json({ error: 'Failed to collect metrics' });
+    });
 });
 
 // ── API Routes (v1) ───────────────────────────────────────────────────────────
@@ -123,6 +128,8 @@ app.use('/api/v1/ai-inbox', authenticatedLimiter, aiInboxRoutes);
 app.use('/api/v1/ai-intelligence', authenticatedLimiter, aiIntelligenceRoutes);
 app.use('/api/v1/ai-campaign-brain', authenticatedLimiter, aiCampaignBrainRoutes);
 app.use('/api/v1/ai-reply', authenticate, aiReplyRoutes);
+app.use('/api/v1/agent', authenticatedLimiter, agentRoutes);
+app.use('/api/v1/chat', authenticatedLimiter, chatRoutes);
 
 // ── Public Webhooks (no auth, signature verification in handlers) ───────────
 app.use('/webhooks', webhooksRoutes);

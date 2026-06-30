@@ -1,3 +1,4 @@
+jest.mock('../../workers/queue');
 jest.mock('./pipeline.repository', () => ({
   findPipelines: jest.fn(),
   findPipelineById: jest.fn(),

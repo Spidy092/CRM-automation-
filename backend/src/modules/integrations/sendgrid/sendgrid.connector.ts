@@ -28,7 +28,7 @@ export const sendgridCredentialsSchema = z
   .object({
     apiKey: z
       .string()
-      .regex(/^SG\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}$/, 'apiKey must look like SG.xxxxx'),
+      .regex(/^SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}$/, 'apiKey must look like SG.xxxxx'),
     fromEmail: z.string().email('fromEmail must be a valid email'),
     fromName: z.string().max(120).optional(),
   })
@@ -117,4 +117,40 @@ export async function sendEmail(input: SendEmailInput): Promise<ConnectorResult<
 
 function stripHtml(s: string): string {
   return s.replace(/<[^>]*>/g, '');
+}
+
+export async function testConnection(
+  creds: SendgridCredentials,
+): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    const res = await fetch('https://api.sendgrid.com/v3/scopes', {
+      headers: {
+        authorization: `Bearer ${creds.apiKey}`,
+      },
+    });
+
+    if (res.ok) {
+      return { ok: true, latencyMs: Date.now() - start };
+    }
+
+    // Attempt to parse error
+    let errorMessage = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { errors?: Array<{ message: string }> };
+      if (body.errors && body.errors.length > 0) {
+        errorMessage = body.errors.map((e) => e.message).join(', ');
+      }
+    } catch {
+      // Ignore JSON parse error
+    }
+
+    return { ok: false, error: errorMessage, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown SendGrid error',
+      latencyMs: Date.now() - start,
+    };
+  }
 }

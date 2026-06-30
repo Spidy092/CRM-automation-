@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
 
 interface StageInput {
@@ -18,6 +20,7 @@ export function PipelinePage() {
   const createPipeline = useCreatePipeline();
   const updatePipeline = useUpdatePipeline();
   const deletePipeline = useDeletePipeline();
+  const { showToast } = useToast();
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -49,8 +52,24 @@ export function PipelinePage() {
   };
 
   const handleStageChange = (index: number, field: keyof StageInput, value: unknown) => {
-    const newStages = [...stages];
-    newStages[index] = { ...newStages[index], [field]: value };
+    let newStages = [...stages];
+    
+    if (field === 'is_terminal_won' && value === true) {
+      newStages = newStages.map((stage, i) => 
+        i === index 
+          ? { ...stage, is_terminal_won: true, is_terminal_lost: false } 
+          : { ...stage, is_terminal_won: false }
+      );
+    } else if (field === 'is_terminal_lost' && value === true) {
+      newStages = newStages.map((stage, i) => 
+        i === index 
+          ? { ...stage, is_terminal_lost: true, is_terminal_won: false } 
+          : { ...stage, is_terminal_lost: false }
+      );
+    } else {
+      newStages[index] = { ...newStages[index], [field]: value };
+    }
+    
     setStages(newStages);
   };
 
@@ -68,10 +87,13 @@ export function PipelinePage() {
     ]);
   };
 
-  const handleEdit = (pipeline: { id: string; name: string; is_default: boolean }) => {
+  const handleEdit = (pipeline: { id: string; name: string; is_default: boolean; stages?: Array<{ name: string; position: number; is_terminal_won: boolean; is_terminal_lost: boolean }> }) => {
     setEditingId(pipeline.id);
     setPipelineName(pipeline.name);
     setIsDefault(pipeline.is_default);
+    if (pipeline.stages) {
+      setStages(pipeline.stages.map((s, i) => ({ ...s, position: i })));
+    }
     setShowForm(true);
   };
 
@@ -90,15 +112,23 @@ export function PipelinePage() {
           stages,
         });
       }
+      showToast(editingId ? 'Pipeline updated.' : 'Pipeline created.', 'success');
       resetForm();
     } catch (error) {
-      console.error(`Failed to ${editingId ? 'update' : 'create'} pipeline:`, error);
+      showToast(
+        getApiErrorMessage(error, `Failed to ${editingId ? 'update' : 'create'} pipeline.`),
+        'error',
+      );
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this pipeline?')) {
+    if (!window.confirm('Are you sure you want to delete this pipeline?')) return;
+    try {
       await deletePipeline.mutateAsync(id);
+      showToast('Pipeline deleted.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to delete pipeline.'), 'error');
     }
   };
 
@@ -151,6 +181,27 @@ export function PipelinePage() {
                 </div>
               </div>
 
+              {editingId && stages.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Current Stages</Label>
+                  <span className="text-xs text-slate-400">Stage editing is not available in this view</span>
+                </div>
+                <div className="space-y-2">
+                  {stages.map((stage, index) => (
+                    <div key={index} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <GripVertical className="h-4 w-4 text-slate-300" />
+                      <span className="flex-1 text-sm text-slate-600">{stage.name}</span>
+                      <div className="flex gap-2 text-xs">
+                        {stage.is_terminal_won && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700 font-medium">Won</span>}
+                        {stage.is_terminal_lost && <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 font-medium">Lost</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+
               {!editingId && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -160,13 +211,9 @@ export function PipelinePage() {
                     Add Stage
                   </Button>
                 </div>
-
                 <div className="space-y-2">
                   {stages.map((stage, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center gap-2 rounded-lg border p-3"
-                    >
+                    <div key={index} className="flex items-center gap-2 rounded-lg border p-3">
                       <GripVertical className="h-4 w-4 text-gray-400" />
                       <Input
                         value={stage.name}
@@ -177,31 +224,15 @@ export function PipelinePage() {
                       />
                       <div className="flex items-center space-x-2">
                         <label className="flex items-center space-x-1 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={stage.is_terminal_won}
-                            onChange={(e) => handleStageChange(index, 'is_terminal_won', e.target.checked)}
-                            className="h-3 w-3 rounded border-gray-300"
-                          />
+                          <input type="checkbox" checked={stage.is_terminal_won} onChange={(e) => handleStageChange(index, 'is_terminal_won', e.target.checked)} className="h-3 w-3 rounded border-gray-300" />
                           <span>Won</span>
                         </label>
                         <label className="flex items-center space-x-1 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={stage.is_terminal_lost}
-                            onChange={(e) => handleStageChange(index, 'is_terminal_lost', e.target.checked)}
-                            className="h-3 w-3 rounded border-gray-300"
-                          />
+                          <input type="checkbox" checked={stage.is_terminal_lost} onChange={(e) => handleStageChange(index, 'is_terminal_lost', e.target.checked)} className="h-3 w-3 rounded border-gray-300" />
                           <span>Lost</span>
                         </label>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRemoveStage(index)}
-                        disabled={stages.length <= 1}
-                      >
+                      <Button type="button" variant="ghost" size="icon" onClick={() => handleRemoveStage(index)} disabled={stages.length <= 1}>
                         <Trash2 className="h-4 w-4 text-red-500" />
                       </Button>
                     </div>
@@ -209,6 +240,7 @@ export function PipelinePage() {
                 </div>
               </div>
               )}
+
 
               <div className="flex justify-end space-x-4">
                 <Button type="button" variant="outline" onClick={resetForm}>

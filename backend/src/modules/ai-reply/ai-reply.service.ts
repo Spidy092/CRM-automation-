@@ -11,13 +11,16 @@ import {
 import { incAiTokens, incAiReplyClassified } from '../../shared/utils/metrics';
 import { invalidateProfileCache } from '../ai-intelligence/ai-intelligence.service';
 import { cancelPendingOutreachJobs, enqueueAiCreateInboxItem } from '../../workers/queue';
+import { findUserById } from '../users/users.repository';
+import { findStageByName } from '../pipeline/pipeline.repository';
+import { proposeAgentAction } from '../agent/agent.service';
+import type { AgentActor } from '../agent/agent.types';
 import {
   upsertConversationSummary,
   appendObjectionToProfile,
   appendBuyingSignalToProfile,
   updateProfileNextAction,
   getLeadCampaignContext,
-  moveLeadToStageByName,
 } from './ai-reply.repository';
 import { enqueueAiClassifyReply } from '../../workers/queue';
 import type { ClassifyReplyInput, ReplyClassification, AiReplyOutput } from './ai-reply.types';
@@ -28,11 +31,29 @@ const REPLY_MAX_TOKENS = 300;
 
 const AiReplySchema = z.object({
   intent_class: z.enum([
-    'interested', 'objection', 'not_now', 'meeting_request',
-    'pricing_question', 'wrong_contact', 'opt_out', 'neutral',
+    'interested',
+    'objection',
+    'not_now',
+    'meeting_request',
+    'pricing_question',
+    'wrong_contact',
+    'opt_out',
+    'neutral',
   ]),
   intent_subtype: z.union([
-    z.enum(['high', 'medium', 'soft', 'hard', 'price', 'timing', 'trust', 'competitor', 'not_relevant', 'angry', 'unsubscribe']),
+    z.enum([
+      'high',
+      'medium',
+      'soft',
+      'hard',
+      'price',
+      'timing',
+      'trust',
+      'competitor',
+      'not_relevant',
+      'angry',
+      'unsubscribe',
+    ]),
     z.null(),
   ]),
   confidence: z.number().int().min(0).max(100),
@@ -67,7 +88,9 @@ function intentToSentiment(intentClass: string): 'positive' | 'neutral' | 'negat
  *   5. Log decision to ai_decision_log
  *   6. Route: opt_out → stop; autopilot+confident → auto-send; else → inbox item
  */
-export async function classifyInboundReply(input: ClassifyReplyInput): Promise<ReplyClassification> {
+export async function classifyInboundReply(
+  input: ClassifyReplyInput,
+): Promise<ReplyClassification> {
   return classifyReply(input);
 }
 
@@ -80,22 +103,14 @@ export async function getReplyHistory(opts: {
 }): Promise<{ items: unknown[]; total: number }> {
   const { rows, total } = await listDecisionLogs({
     decisionType: 'reply_classify',
+    leadId: opts.leadId,
+    campaignId: opts.campaignId,
+    decision: opts.classification,
     limit: opts.limit,
     offset: opts.offset,
   });
 
-  let items = rows;
-  if (opts.leadId) {
-    items = items.filter((item) => item.lead_id === opts.leadId);
-  }
-  if (opts.campaignId) {
-    items = items.filter((item) => item.campaign_id === opts.campaignId);
-  }
-  if (opts.classification) {
-    items = items.filter((item) => item.decision === opts.classification);
-  }
-
-  return { items, total };
+  return { items: rows, total };
 }
 
 export async function triggerClassification(payload: ClassifyReplyInput): Promise<void> {
@@ -156,7 +171,9 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
   } catch (err) {
     const latencyMs = Date.now() - start;
     logger.error('ai reply: OpenAI call failed', {
-      leadId, channel, latency_ms: latencyMs,
+      leadId,
+      channel,
+      latency_ms: latencyMs,
       error: err instanceof Error ? err.message : String(err),
     });
     await insertDecisionLog({
@@ -185,12 +202,21 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
 
   // ── Stage movement ────────────────────────────────────────────────────
   if (raw.update_stage_to) {
-    await moveLeadToStageByName(leadId, raw.update_stage_to).catch((err: unknown) => {
-      logger.warn('ai reply: stage move failed', { leadId, stage: raw.update_stage_to, error: String(err) });
+    await proposeStageMoveAction(leadId, raw.update_stage_to, raw, context).catch((err: unknown) => {
+      logger.warn('ai reply: stage move proposal failed', {
+        leadId,
+        stage: raw.update_stage_to,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 
-  await updateProfileNextAction(leadId, raw.next_best_action, raw.chain_of_thought.slice(0, 300), raw.confidence);
+  await updateProfileNextAction(
+    leadId,
+    raw.next_best_action,
+    raw.chain_of_thought.slice(0, 300),
+    raw.confidence,
+  );
   await invalidateProfileCache(leadId);
 
   // ── Decision log ──────────────────────────────────────────────────────
@@ -216,7 +242,8 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
   }
 
   logger.info('ai reply: classified', {
-    leadId, channel,
+    leadId,
+    channel,
     intent: raw.intent_class,
     confidence: raw.confidence,
     requiresHumanReview,
@@ -240,12 +267,56 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
 
 // ── Routing logic ─────────────────────────────────────────────────────────
 
+async function proposeStageMoveAction(
+  leadId: string,
+  stageName: string,
+  raw: AiReplyOutput,
+  context: { assignedTo: string | null; autonomyLevel: string; aiMinConfidence: number } | null,
+): Promise<void> {
+  const stage = await findStageByName(stageName);
+  if (!stage) {
+    logger.warn('ai reply: requested stage not found', { leadId, stage: stageName });
+    return;
+  }
+
+  const actor = await resolveAssignedActor(context?.assignedTo ?? null);
+  if (!actor) {
+    logger.warn('ai reply: no assigned actor for stage move proposal', { leadId, stage: stageName });
+    return;
+  }
+
+  await proposeAgentAction({
+    source: 'ai_reply',
+    actionName: 'pipeline.move_lead',
+    args: { leadId, stageId: stage.id },
+    actor,
+    assignTo: actor.id,
+    confidence: raw.confidence,
+    autonomyLevel: normalizeAutonomyLevel(context?.autonomyLevel),
+    aiMinConfidence: context?.aiMinConfidence ?? 70,
+    sourceMessage: raw.chain_of_thought.slice(0, 500),
+  });
+}
+
+async function resolveAssignedActor(userId: string | null): Promise<AgentActor | null> {
+  if (!userId) return null;
+  const user = await findUserById(userId).catch(() => null);
+  if (!user || !user.is_active) return null;
+  return { id: user.id, role: user.role, email: user.email, name: user.name };
+}
+
+function normalizeAutonomyLevel(value: string | null | undefined): 'supervised' | 'guarded' | 'autopilot' {
+  if (value === 'supervised' || value === 'guarded' || value === 'autopilot') return value;
+  return 'guarded';
+}
+
 function shouldRouteToInbox(
   raw: AiReplyOutput,
   context: { autonomyLevel: string; aiMinConfidence: number } | null,
 ): boolean {
   // Always route urgent intents
-  if (['meeting_request', 'pricing_question', 'wrong_contact'].includes(raw.intent_class)) return true;
+  if (['meeting_request', 'pricing_question', 'wrong_contact'].includes(raw.intent_class))
+    return true;
   // Always route opt_out for human awareness
   if (raw.intent_class === 'opt_out') return true;
   // Route if below confidence threshold
@@ -339,9 +410,7 @@ async function persistMemoryUpdates(
     raw.objection_type
       ? appendObjectionToProfile(leadId, raw.objection_type, messageText)
       : Promise.resolve(),
-    raw.buying_signal
-      ? appendBuyingSignalToProfile(leadId, raw.buying_signal)
-      : Promise.resolve(),
+    raw.buying_signal ? appendBuyingSignalToProfile(leadId, raw.buying_signal) : Promise.resolve(),
   ]);
 }
 
@@ -386,7 +455,9 @@ function buildReplyUserPrompt(
 
 function buildFallbackClassification(messageText: string): ReplyClassification {
   const lower = messageText.toLowerCase();
-  const isOptOut = ['stop', 'unsubscribe', 'remove me', 'dont contact', "don't contact"].some(w => lower.includes(w));
+  const isOptOut = ['stop', 'unsubscribe', 'remove me', 'dont contact', "don't contact"].some((w) =>
+    lower.includes(w),
+  );
   return {
     intent_class: isOptOut ? 'opt_out' : 'neutral',
     intent_subtype: null,

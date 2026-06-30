@@ -35,12 +35,16 @@ export async function insertCampaign(
     sequence_id?: string;
     pipeline_id?: string;
     ai_personalization_enabled?: boolean;
+    autonomy_level?: string;
   },
   createdBy: string,
 ): Promise<Campaign> {
+  // Set autonomy_level explicitly rather than relying on the column default —
+  // migration 1750000000022 stored a malformed default ('''guarded''') that
+  // violates campaigns_autonomy_level_check. Default to the intended 'guarded'.
   const result = await pool.query<Campaign>(
-    `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id, ai_personalization_enabled, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id, ai_personalization_enabled, autonomy_level, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
     [
       data.name,
       data.tone,
@@ -49,6 +53,7 @@ export async function insertCampaign(
       data.sequence_id || null,
       data.pipeline_id || null,
       data.ai_personalization_enabled ?? false,
+      data.autonomy_level ?? 'guarded',
       createdBy,
     ],
   );
@@ -154,8 +159,12 @@ export async function addLeadsToCampaign(
   for (const leadId of leadIds) {
     try {
       const result = await pool.query<CampaignLead>(
-        `INSERT INTO campaign_leads (campaign_id, lead_id) VALUES ($1, $2)
-         ON CONFLICT (campaign_id, lead_id) DO NOTHING RETURNING *`,
+        `INSERT INTO campaign_leads (campaign_id, lead_id)
+         SELECT $1, $2
+         WHERE NOT EXISTS (
+           SELECT 1 FROM campaign_leads WHERE campaign_id = $1 AND lead_id = $2
+         )
+         RETURNING *`,
         [campaignId, leadId],
       );
       if (result.rows[0]) {

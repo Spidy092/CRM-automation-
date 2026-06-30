@@ -1,6 +1,12 @@
 import { useState } from 'react';
-import { useIntegrations, useUpdateIntegration, useTestIntegration } from '@/api/integrations';
-import type { Integration } from '@/api/integrations';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  useIntegrations,
+  useUpdateIntegration,
+  useTestIntegration,
+  bulkTestIntegrations,
+} from '@/api/integrations';
+import type { Integration, BulkTestResult } from '@/api/integrations';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +15,7 @@ import { LoadingTable } from '@/components/ui/LoadingTable';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
+import { IntegrationSetupWizard } from '@/components/IntegrationSetupWizard';
 import {
   CheckCircle,
   XCircle,
@@ -16,6 +23,8 @@ import {
   RefreshCw,
   Settings,
   Link2,
+  X,
+  Loader2,
 } from 'lucide-react';
 
 // ── Credential field schemas per provider ──────────────────────────────────
@@ -23,8 +32,10 @@ import {
 interface FieldDef {
   key: string;
   label: string;
-  type?: 'text' | 'password' | 'number';
+  type?: 'text' | 'password' | 'secret' | 'number' | 'list';
   placeholder?: string;
+  required?: boolean;
+  helpText?: string;
 }
 
 const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
@@ -66,6 +77,12 @@ const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
     { key: 'pageId', label: 'Page ID (optional)' },
     { key: 'formId', label: 'Lead Form ID (optional)' },
   ],
+  openwa: [
+    { key: 'baseUrl', label: 'OpenWA Base URL', type: 'text', required: true, placeholder: 'https://openwa.example.com', helpText: 'The root URL of your external OpenWA HTTP server.' },
+    { key: 'apiKey', label: 'API Key', type: 'secret', required: true, helpText: 'OpenWA API key used in the x-api-key header.' },
+    { key: 'sessionId', label: 'Session ID', type: 'text', required: true, helpText: 'WhatsApp session identifier managed by the OpenWA server.' },
+    { key: 'numbers', label: 'Phone Numbers', type: 'list', required: true, helpText: 'One or more WhatsApp sender numbers for rotation (E.164 format).' },
+  ],
   slack: [
     { key: 'webhookUrl', label: 'Slack Webhook URL', placeholder: 'https://hooks.slack.com/...' },
   ],
@@ -90,7 +107,44 @@ const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
     { key: 'clientSecret', label: 'Client Secret', type: 'password' },
     { key: 'fromEmail', label: 'From Email' },
   ],
+  hunter: [
+    { key: 'api_key', label: 'Hunter.io API Key', type: 'password', required: true, helpText: 'Get your free API key at hunter.io' },
+  ],
 };
+
+// ── Category mapping ───────────────────────────────────────────────────────
+
+const CATEGORY_MAP: Record<string, string> = {
+  whatsapp: 'Messaging',
+  twilio: 'Messaging',
+  sendgrid: 'Messaging',
+  smtp: 'Messaging',
+  openwa: 'Messaging',
+  google_sheets: 'Productivity',
+  google_calendar: 'Productivity',
+  outlook: 'Productivity',
+  google_ads: 'Advertising',
+  facebook: 'Advertising',
+  google_drive: 'Storage',
+  hunter: 'Data Enrichment',
+};
+
+const CATEGORY_ORDER = ['Messaging', 'Productivity', 'Advertising', 'Data Enrichment', 'Storage', 'Other'];
+
+function getCategory(name: string): string {
+  return CATEGORY_MAP[name] ?? 'Other';
+}
+
+function groupByCategory(integrations: Integration[]): Record<string, Integration[]> {
+  return integrations.reduce<Record<string, Integration[]>>((acc, integration) => {
+    const category = getCategory(integration.name);
+    if (!acc[category]) {
+      acc[category] = [];
+    }
+    acc[category].push(integration);
+    return acc;
+  }, {});
+}
 
 // ── Status badge ───────────────────────────────────────────────────────────
 
@@ -106,6 +160,37 @@ function StatusBadge({ status }: { status: string | null }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
         <CheckCircle className="h-3 w-3" /> Connected
+      </span>
+    );
+  }
+  if (status === 'no_credentials') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+        <AlertCircle className="h-3 w-3" /> No credentials
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+      <XCircle className="h-3 w-3" /> {status}
+    </span>
+  );
+}
+
+// ── Bulk test result status badge ──────────────────────────────────────────
+
+function ResultStatusBadge({ status, ok }: { status: string; ok: boolean }) {
+  if (status === 'ok' || status === 'success' || ok) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+        <CheckCircle className="h-3 w-3" /> Connected
+      </span>
+    );
+  }
+  if (status === 'skipped') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+        <AlertCircle className="h-3 w-3" /> Skipped
       </span>
     );
   }
@@ -146,8 +231,17 @@ function CredentialForm({
 
     const credentials: Record<string, unknown> = {};
     for (const f of fields) {
-      if (values[f.key] !== undefined && values[f.key] !== '') {
-        credentials[f.key] = f.type === 'number' ? Number(values[f.key]) : values[f.key];
+      const raw = values[f.key];
+      if (raw === undefined || raw === '') continue;
+      if (f.type === 'list') {
+        credentials[f.key] = raw
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } else if (f.type === 'number') {
+        credentials[f.key] = Number(raw);
+      } else {
+        credentials[f.key] = raw;
       }
     }
 
@@ -171,21 +265,29 @@ function CredentialForm({
   return (
     <div className="mt-4 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
       <p className="text-sm font-medium text-gray-700">Configure credentials</p>
-      {fields.map((f) => (
-        <div key={f.key} className="space-y-1">
-          <Label htmlFor={`cred-${integration.id}-${f.key}`} className="text-xs">
-            {f.label}
-          </Label>
-          <Input
-            id={`cred-${integration.id}-${f.key}`}
-            type={f.type ?? 'text'}
-            placeholder={f.placeholder}
-            value={values[f.key] ?? ''}
-            onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-            className="h-8 text-sm"
-          />
-        </div>
-      ))}
+      {fields.map((f) => {
+        const inputType =
+          f.type === 'number' ? 'number' : f.type === 'password' || f.type === 'secret' ? 'password' : 'text';
+        return (
+          <div key={f.key} className="space-y-1">
+            <Label htmlFor={`cred-${integration.id}-${f.key}`} className="text-xs">
+              {f.label}
+              {f.required && <span className="ml-0.5 text-red-500">*</span>}
+            </Label>
+            {f.helpText && (
+              <p className="text-xs text-muted-foreground">{f.helpText}</p>
+            )}
+            <Input
+              id={`cred-${integration.id}-${f.key}`}
+              type={inputType}
+              placeholder={f.placeholder}
+              value={values[f.key] ?? ''}
+              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+              className="h-8 text-sm"
+            />
+          </div>
+        );
+      })}
       <div className="flex gap-2 pt-1">
         <Button
           size="sm"
@@ -202,9 +304,82 @@ function CredentialForm({
   );
 }
 
+// ── Health summary ─────────────────────────────────────────────────────────
+
+interface HealthSummaryProps {
+  integrations: Integration[];
+}
+
+function HealthSummary({ integrations }: HealthSummaryProps) {
+  const total = integrations.length;
+  const enabled = integrations.filter((i) => i.is_enabled).length;
+  const ok = integrations.filter((i) => i.last_test_status === 'ok').length;
+  const failed = integrations.filter((i) => i.last_test_status === 'failed').length;
+  const noCredentials = integrations.filter((i) => i.last_test_status === 'no_credentials').length;
+  const untested = integrations.filter((i) => !i.last_test_status).length;
+
+  const enabledFailed = integrations.some((i) => i.is_enabled && i.last_test_status === 'failed');
+  const statusLabel = enabledFailed ? 'Needs attention' : total > 0 ? 'Healthy' : 'No integrations';
+  const statusClass = enabledFailed
+    ? 'text-red-600 bg-red-50 border-red-200'
+    : total > 0
+      ? 'text-green-600 bg-green-50 border-green-200'
+      : 'text-gray-600 bg-gray-50 border-gray-200';
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-base">Integration health summary</CardTitle>
+            <CardDescription className="text-xs">Overview of provider status and readiness</CardDescription>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-xs font-medium ${statusClass}`}>
+            {statusLabel}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-gray-500">Total</p>
+            <p className="text-xl font-semibold">{total}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-gray-500">Enabled</p>
+            <p className="text-xl font-semibold text-green-600">{enabled}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-gray-500">Connected</p>
+            <p className="text-xl font-semibold text-green-600">{ok}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-gray-500">Failed</p>
+            <p className="text-xl font-semibold text-red-600">{failed}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-gray-500">No credentials</p>
+            <p className="text-xl font-semibold text-amber-600">{noCredentials}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-gray-500">Untested</p>
+            <p className="text-xl font-semibold text-gray-600">{untested}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Integration card ───────────────────────────────────────────────────────
 
-function IntegrationCard({ integration }: { integration: Integration }) {
+function IntegrationCard({
+  integration,
+  onSetup,
+}: {
+  integration: Integration;
+  onSetup: (integration: Integration) => void;
+}) {
   const updateIntegration = useUpdateIntegration();
   const testIntegration = useTestIntegration();
   const { showToast } = useToast();
@@ -285,6 +460,15 @@ function IntegrationCard({ integration }: { integration: Integration }) {
             <Settings className="mr-1 h-3 w-3" />
             Credentials
           </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onSetup(integration)}
+            className="h-7 text-xs"
+          >
+            Setup
+          </Button>
         </div>
 
         {showForm && (
@@ -295,10 +479,91 @@ function IntegrationCard({ integration }: { integration: Integration }) {
   );
 }
 
+// ── Bulk test results dialog ───────────────────────────────────────────────
+
+function BulkTestResultsDialog({
+  result,
+  onClose,
+}: {
+  result: BulkTestResult;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bulk-test-results-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+    >
+      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <div>
+            <h2 id="bulk-test-results-title" className="text-lg font-semibold text-slate-900">
+              Connection Test Results
+            </h2>
+            <p className="text-xs text-slate-500">
+              {result.total} providers tested · {result.passed} passed · {result.failed} failed ·{' '}
+              {result.skipped} skipped
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {result.results.length === 0 ? (
+            <p className="text-sm text-slate-500">No providers were tested.</p>
+          ) : (
+            <ul className="space-y-3">
+              {result.results.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-start justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-900">{item.name}</p>
+                    {item.message && (
+                      <p className="mt-1 break-words text-xs text-slate-600">{item.message}</p>
+                    )}
+                    <p className="mt-1 text-xs text-slate-400">
+                      Tested {new Date(item.tested_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="shrink-0">
+                    <ResultStatusBadge status={item.status} ok={item.ok} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex justify-end border-t px-6 py-4">
+          <Button size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export function IntegrationsPage() {
   const { data: integrations, isLoading, error } = useIntegrations();
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const [bulkResult, setBulkResult] = useState<BulkTestResult | null>(null);
+  const [isBulkTesting, setIsBulkTesting] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardIntegration, setWizardIntegration] = useState<Integration | undefined>(undefined);
 
   if (isLoading) {
     return (
@@ -322,7 +587,8 @@ export function IntegrationsPage() {
   }
 
   const list = integrations ?? [];
-  const enabledCount = list.filter((i) => i.is_enabled).length;
+  const grouped = groupByCategory(list);
+  const categories = CATEGORY_ORDER.filter((category) => grouped[category]?.length > 0);
 
   return (
     <div className="space-y-6">
@@ -330,12 +596,44 @@ export function IntegrationsPage() {
         eyebrow="Channel readiness"
         title="Integrations"
         description="Enable providers, save credentials, and test each connection before running automation."
-        metrics={[
-          { label: 'Providers', value: list.length },
-          { label: 'Enabled', value: enabledCount, tone: 'success' },
-          { label: 'Needs setup', value: list.filter((i) => !i.last_test_status || i.last_test_status === 'no_credentials').length, tone: 'warning' },
-          { label: 'Errors', value: list.filter((i) => i.last_test_status && !['ok', 'no_credentials'].includes(i.last_test_status)).length, tone: 'danger' },
-        ]}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setWizardIntegration(undefined);
+                setWizardOpen(true);
+              }}
+            >
+              Add Integration
+            </Button>
+            <Button
+              size="sm"
+              onClick={async () => {
+                setIsBulkTesting(true);
+                try {
+                  const result = await bulkTestIntegrations();
+                  setBulkResult(result);
+                  queryClient.invalidateQueries({ queryKey: ['integrations'] });
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : 'Bulk connection test failed.';
+                  showToast(message, 'error');
+                } finally {
+                  setIsBulkTesting(false);
+                }
+              }}
+              disabled={isBulkTesting}
+            >
+              {isBulkTesting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Test Connections
+            </Button>
+          </div>
+        }
       />
 
       {list.length === 0 ? (
@@ -345,12 +643,41 @@ export function IntegrationsPage() {
           description="Provider records are created by the backend seed/configuration layer."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {list.map((integration) => (
-            <IntegrationCard key={integration.id} integration={integration} />
+        <div className="space-y-8">
+          <HealthSummary integrations={list} />
+
+          {categories.map((category) => (
+            <section key={category} className="space-y-3">
+              <h2 className="text-lg font-semibold text-gray-900">{category}</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {grouped[category].map((integration) => (
+                  <IntegrationCard
+                    key={integration.id}
+                    integration={integration}
+                    onSetup={(i) => {
+                      setWizardIntegration(i);
+                      setWizardOpen(true);
+                    }}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
+
+      {bulkResult && (
+        <BulkTestResultsDialog result={bulkResult} onClose={() => setBulkResult(null)} />
+      )}
+
+      <IntegrationSetupWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        integration={wizardIntegration}
+        onComplete={() => {
+          // query invalidation already handled inside the wizard
+        }}
+      />
     </div>
   );
 }

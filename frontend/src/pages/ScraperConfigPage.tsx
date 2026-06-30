@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useToast } from '@/components/ui/Toast';
-import { Search, Globe, Video, Facebook, Plus, Play, Trash2, Eye, X, Loader2 } from 'lucide-react';
+import { getApiErrorMessage } from '@/lib/apiError';
+import { Search, Globe, Video, Facebook, Plus, Play, Trash2, Eye, X, Loader2, Sparkles } from 'lucide-react';
 import {
   useScraperConfigs,
   useCreateScraperConfig,
@@ -9,6 +10,7 @@ import {
   useDeleteScraperConfig,
   useTriggerScrape,
   useScraperLogs,
+  useDetectSelectors,
 } from '@/api/scraper';
 import type { ScraperSourceType, ScraperConfig } from '@/types';
 
@@ -56,11 +58,21 @@ function getPlaceholderConfig(sourceType: ScraperSourceType): Record<string, unk
     case 'youtube':
       return { query: '', channelId: '', maxResults: 10, apiKeyRef: 'YOUTUBE_API_KEY' };
     case 'web_scrape':
-      return { url: '', selectors: {}, maxPages: 1 };
+      return { url: '', mode: 'smart', selectors: {}, maxPages: 1 };
   }
 }
 
-function getConfigFields(sourceType: ScraperSourceType, config: Record<string, unknown>, onChange: (key: string, value: unknown) => void) {
+interface WebScrapeExtras {
+  onAutoDetect: () => void;
+  detecting: boolean;
+}
+
+function getConfigFields(
+  sourceType: ScraperSourceType,
+  config: Record<string, unknown>,
+  onChange: (key: string, value: unknown) => void,
+  web?: WebScrapeExtras,
+) {
   switch (sourceType) {
     case 'google_places':
       return (
@@ -220,10 +232,44 @@ function getConfigFields(sourceType: ScraperSourceType, config: Record<string, u
           </div>
         </>
       );
-    case 'web_scrape':
+    case 'web_scrape': {
+      const mode = (config.mode as string) ?? 'smart';
       return (
         <>
-          <div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">Extraction Mode</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => onChange('mode', 'smart')}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  mode === 'smart'
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                }`}
+              >
+                ✨ Smart (no setup)
+              </button>
+              <button
+                type="button"
+                onClick={() => onChange('mode', 'selectors')}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  mode === 'selectors'
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                }`}
+              >
+                Custom selectors
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-slate-400">
+              {mode === 'smart'
+                ? 'Auto-grabs emails & phone numbers from the page — no CSS selectors needed. Best for a single contact / about page.'
+                : 'Precisely target each field with CSS selectors. Best for directory pages with many listings.'}
+            </p>
+          </div>
+
+          <div className="col-span-2">
             <label className="block text-xs font-medium text-slate-500 mb-1">URL *</label>
             <input
               type="url"
@@ -233,32 +279,56 @@ function getConfigFields(sourceType: ScraperSourceType, config: Record<string, u
               placeholder="https://example.com/businesses"
             />
           </div>
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-slate-500 mb-1">CSS Selectors (JSON)</label>
-            <textarea
-              value={config.selectors ? JSON.stringify(config.selectors, null, 2) : ''}
-              onChange={(e) => {
-                try {
-                  onChange('selectors', JSON.parse(e.target.value));
-                } catch {
-                  // Allow typing
-                }
-              }}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
-              rows={4}
-              placeholder='{"business_name": ".business-name", "phone": ".phone", "email": ".email"}'
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Container Selector</label>
-            <input
-              type="text"
-              value={(config.containerSelector as string) ?? ''}
-              onChange={(e) => onChange('containerSelector', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder=".listing-card"
-            />
-          </div>
+
+          {mode === 'selectors' && (
+            <>
+              <div className="col-span-2 flex items-center justify-between">
+                <span className="text-xs text-slate-400">
+                  Don&apos;t know the selectors? Let AI read the page and fill them in.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => web?.onAutoDetect()}
+                  disabled={web?.detecting}
+                  className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+                >
+                  {web?.detecting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  Auto-detect with AI
+                </button>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-500 mb-1">CSS Selectors (JSON)</label>
+                <textarea
+                  value={config.selectors ? JSON.stringify(config.selectors, null, 2) : ''}
+                  onChange={(e) => {
+                    try {
+                      onChange('selectors', JSON.parse(e.target.value));
+                    } catch {
+                      // Allow typing
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                  rows={4}
+                  placeholder='{"business_name": ".business-name", "phone": ".phone", "email": ".email"}'
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Container Selector</label>
+                <input
+                  type="text"
+                  value={(config.containerSelector as string) ?? ''}
+                  onChange={(e) => onChange('containerSelector', e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder=".listing-card"
+                />
+              </div>
+            </>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Max Pages</label>
             <input
@@ -270,8 +340,16 @@ function getConfigFields(sourceType: ScraperSourceType, config: Record<string, u
               max={10}
             />
           </div>
+
+          {mode === 'smart' && (
+            <div className="col-span-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              Heads up: this reads the page&apos;s raw HTML and doesn&apos;t run JavaScript. If a site renders
+              its content with JS, few or no results may come back.
+            </div>
+          )}
         </>
       );
+    }
   }
 }
 
@@ -285,6 +363,7 @@ export function ScraperConfigPage() {
   const updateMutation = useUpdateScraperConfig();
   const deleteMutation = useDeleteScraperConfig();
   const triggerMutation = useTriggerScrape();
+  const detectMutation = useDetectSelectors();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [showLogs, setShowLogs] = useState<string | null>(null);
@@ -297,6 +376,14 @@ export function ScraperConfigPage() {
     setForm(emptyForm);
     setShowAddForm(false);
     setEditConfig(null);
+  }
+
+  function openAddForm() {
+    // Seed the form with the default source type AND its placeholder config so
+    // required fields (e.g. apiKeyRef, radius) are pre-filled — otherwise the
+    // create request is rejected by backend validation.
+    setForm({ ...emptyForm, config: getPlaceholderConfig(emptyForm.source_type) });
+    setShowAddForm(true);
   }
 
   function handleSourceChange(sourceType: ScraperSourceType) {
@@ -314,6 +401,31 @@ export function ScraperConfigPage() {
     }));
   }
 
+  function handleAutoDetect(
+    currentConfig: Record<string, unknown>,
+    applyChange: (key: string, value: unknown) => void,
+  ) {
+    const url = (currentConfig.url as string) || '';
+    if (!url) {
+      showToast('Enter the page URL first.', 'error');
+      return;
+    }
+    detectMutation.mutate(url, {
+      onSuccess: (res) => {
+        applyChange('selectors', res.selectors ?? {});
+        if (res.containerSelector) applyChange('containerSelector', res.containerSelector);
+        const count = Object.keys(res.selectors ?? {}).length;
+        showToast(
+          count > 0
+            ? `Detected ${count} field selector(s). Review them and Save.`
+            : 'No selectors detected. Try Smart mode or enter them manually.',
+          count > 0 ? 'success' : 'error',
+        );
+      },
+      onError: (error) => showToast(getApiErrorMessage(error, 'Auto-detect failed.'), 'error'),
+    });
+  }
+
   async function handleCreate() {
     try {
       await createMutation.mutateAsync({
@@ -322,9 +434,10 @@ export function ScraperConfigPage() {
         config: form.config,
         schedule_cron: form.schedule_cron || null,
       });
+      showToast('Scraper source created.', 'success');
       resetForm();
-    } catch {
-      // Error handled by mutation
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to create scraper source.'), 'error');
     }
   }
 
@@ -337,10 +450,20 @@ export function ScraperConfigPage() {
         config: editConfig.form.config,
         schedule_cron: editConfig.form.schedule_cron || null,
       });
+      showToast('Scraper source updated.', 'success');
       setEditConfig(null);
-    } catch {
-      // Error handled by mutation
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to update scraper source.'), 'error');
     }
+  }
+
+  function handleDelete(config: ScraperConfig) {
+    if (!window.confirm(`Delete "${config.name}"? This cannot be undone.`)) return;
+    deleteMutation.mutate(config.id, {
+      onSuccess: () => showToast('Scraper source deleted.', 'success'),
+      onError: (error) =>
+        showToast(getApiErrorMessage(error, 'Failed to delete scraper source.'), 'error'),
+    });
   }
 
   function handleRun(config: ScraperConfig) {
@@ -394,7 +517,7 @@ export function ScraperConfigPage() {
         </div>
         {isAdmin && (
           <button
-            onClick={() => setShowAddForm(true)}
+            onClick={openAddForm}
             className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             <Plus className="h-4 w-4" />
@@ -458,19 +581,30 @@ export function ScraperConfigPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                {getConfigFields(
-                  editConfig ? editConfig.form.source_type : form.source_type,
-                  editConfig ? editConfig.form.config : form.config,
-                  (key, value) => {
+                {(() => {
+                  const currentSourceType = editConfig
+                    ? editConfig.form.source_type
+                    : form.source_type;
+                  const currentConfig = editConfig ? editConfig.form.config : form.config;
+                  const applyChange = (key: string, value: unknown) => {
                     if (editConfig) {
                       setEditConfig((prev) =>
-                        prev ? { ...prev, form: { ...prev.form, config: { ...prev.form.config, [key]: value } } } : null
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, config: { ...prev.form.config, [key]: value } },
+                            }
+                          : null,
                       );
                     } else {
                       handleConfigChange(key, value);
                     }
-                  },
-                )}
+                  };
+                  return getConfigFields(currentSourceType, currentConfig, applyChange, {
+                    onAutoDetect: () => handleAutoDetect(currentConfig, applyChange),
+                    detecting: detectMutation.isPending,
+                  });
+                })()}
               </div>
 
               <div>
@@ -533,7 +667,7 @@ export function ScraperConfigPage() {
           </p>
           {isAdmin && (
             <button
-              onClick={() => setShowAddForm(true)}
+              onClick={openAddForm}
               className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
             >
               <Plus className="h-4 w-4" />
@@ -600,11 +734,7 @@ export function ScraperConfigPage() {
                         <Eye className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => {
-                          if (window.confirm(`Delete "${config.name}"? This cannot be undone.`)) {
-                            deleteMutation.mutate(config.id);
-                          }
-                        }}
+                        onClick={() => handleDelete(config)}
                         className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -622,8 +752,8 @@ export function ScraperConfigPage() {
                     <p className="text-sm text-slate-400">No runs yet. Click "Run Now" to start.</p>
                   ) : (
                     <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {(Array.isArray(logs) ? logs : []).map((log: Record<string, unknown>) => (
-                        <div key={log.id as string} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                      {(Array.isArray(logs) ? logs : []).map((log) => (
+                        <div key={log.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
                               <span className={`h-2 w-2 rounded-full ${
@@ -632,18 +762,18 @@ export function ScraperConfigPage() {
                                 log.status === 'running' ? 'bg-amber-500 animate-pulse' :
                                 'bg-slate-400'
                               }`} />
-                              <span className="text-slate-600">{new Date(log.created_at as string).toLocaleString()}</span>
+                              <span className="text-slate-600">{new Date(log.created_at).toLocaleString()}</span>
                             </div>
                             <div className="flex items-center gap-4 text-xs text-slate-500">
-                              <span>Found: {log.records_found as number}</span>
-                              <span>Imported: {log.records_imported as number}</span>
-                              <span className={log.records_failed && (log.records_failed as number) > 0 ? 'text-red-500' : ''}>
-                                Failed: {log.records_failed as number}
+                              <span>Found: {log.records_found}</span>
+                              <span>Imported: {log.records_imported}</span>
+                              <span className={log.records_failed > 0 ? 'text-red-500' : ''}>
+                                Failed: {log.records_failed}
                               </span>
                             </div>
                           </div>
                           {log.status === 'failed' && log.error_message ? (
-                            <p className="mt-1.5 pl-5 text-xs text-red-600">{log.error_message as string}</p>
+                            <p className="mt-1.5 pl-5 text-xs text-red-600">{log.error_message}</p>
                           ) : null}
                         </div>
                       ))}

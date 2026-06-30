@@ -1,7 +1,7 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
-import { cancelPendingOutreachJobs, enqueueOutreachDispatch } from '../../workers/queue';
+import { cancelPendingOutreachJobs, enqueueOutreachDispatch, enqueueAiCampaignBrief } from '../../workers/queue';
 import { findSequenceById } from '../outreach/outreach.repository';
 import { findByName as findIntegrationByName } from '../integrations/integrations.repository';
 import { findTemplateById } from '../templates/templates.repository';
@@ -78,6 +78,10 @@ export async function createCampaign(input: CreateCampaignInput, actor: Actor): 
     ipAddress: actor.ipAddress ?? null,
   });
 
+  if (campaign.ai_personalization_enabled) {
+    await enqueueAiCampaignBrief({ campaignId: campaign.id, triggeredBy: actor.id });
+  }
+
   return campaign;
 }
 
@@ -106,6 +110,10 @@ export async function updateCampaignById(
     newValue: updated,
     ipAddress: actor.ipAddress ?? null,
   });
+
+  if (updated.ai_personalization_enabled) {
+    await enqueueAiCampaignBrief({ campaignId: updated.id, triggeredBy: actor.id });
+  }
 
   return updated;
 }
@@ -136,7 +144,10 @@ type LaunchStep = NonNullable<AutomationPreview['firstStep']>;
 
 type PreviewBuild = AutomationPreview & { firstStep: LaunchStep | null };
 
-function getDestination(lead: { email: string; phone: string }, channel: LaunchStep['channel']): string {
+function getDestination(
+  lead: { email: string; phone: string },
+  channel: LaunchStep['channel'],
+): string {
   if (channel === 'email') return lead.email;
   return lead.phone;
 }
@@ -246,10 +257,11 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
     throw new AppError('Campaign can only be launched from draft or paused status', 400);
   }
 
-  // AI brief approval is required before launch unless the campaign is explicitly
+  // AI brief approval is required before launch ONLY if AI is enabled, unless the campaign is explicitly
   // configured as fully supervised with no confidence threshold (manual override).
   const canLaunchWithoutBrief =
-    existing.autonomy_level === 'supervised' && existing.ai_min_confidence === 0;
+    !existing.ai_personalization_enabled ||
+    (existing.autonomy_level === 'supervised' && existing.ai_min_confidence === 0);
   if (!canLaunchWithoutBrief) {
     const approvedBrief = await findCampaignBrief(existing.id);
     if (!approvedBrief || approvedBrief.status !== 'approved') {

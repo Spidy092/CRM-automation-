@@ -119,3 +119,42 @@ export function incAiInboxItem(itemType: string, event: string): void {
 }
 
 export { register };
+
+// ── Agent Harness Metrics ─────────────────────────────────────────────────
+
+export const agentActionsTotal = new Counter({
+  name: 'crm_agent_actions_total',
+  help: 'Agent action lifecycle events by source, action, status, and risk tier',
+  labelNames: ['source', 'action', 'status', 'risk_tier'] as const,
+});
+
+export const agentActionDurationSeconds = new Histogram({
+  name: 'crm_agent_action_duration_seconds',
+  help: 'Agent action execution duration in seconds',
+  labelNames: ['action', 'risk_tier'] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
+});
+
+export function incAgentAction(labels: {
+  source: string;
+  action: string;
+  status: string;
+  riskTier: string;
+}): void {
+  agentActionsTotal.inc({
+    source: labels.source,
+    action: labels.action,
+    status: labels.status,
+    risk_tier: labels.riskTier,
+  });
+}
+
+export function observeAgentActionDuration(labels: {
+  action: string;
+  riskTier: string;
+}, durationSec: number): void {
+  agentActionDurationSeconds.observe(
+    { action: labels.action, risk_tier: labels.riskTier },
+    durationSec,
+  );
+}

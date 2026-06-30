@@ -15,10 +15,14 @@
  */
 
 import { logger } from '../../shared/utils/logger';
+import { decryptJson } from '../../shared/utils/encryption';
+import { findByName, findCredentialsById } from './integrations.repository';
 import * as whatsapp from './whatsapp/whatsapp.connector';
+import * as openwa from './openwa/openwa.connector';
 import * as twilio from './twilio/twilio.connector';
 import * as sendgrid from './sendgrid/sendgrid.connector';
 import * as smtp from './smtp/smtp.connector';
+import { OpenWACredentials } from './openwa/openwa.types';
 
 export interface DispatchInput {
   leadId: string;
@@ -42,6 +46,9 @@ export interface DispatchOutcome {
   latencyMs: number;
   retryable: boolean;
   error?: string;
+  /** Provider actually used for the dispatch. Only set for WhatsApp/OpenWA where
+   *  a fallback path exists. */
+  channel?: 'openwa' | 'whatsapp';
 }
 
 export async function dispatchOutbound(input: DispatchInput): Promise<DispatchOutcome> {
@@ -63,13 +70,52 @@ export async function dispatchOutbound(input: DispatchInput): Promise<DispatchOu
   try {
     switch (input.channel) {
       case 'whatsapp': {
+        try {
+          const openwaIntegration = await loadOpenwaIntegrationIfEnabled();
+          if (openwaIntegration) {
+            const res = await openwa.sendMessage({
+              credentials: openwaIntegration.credentials,
+              leadId: input.leadId,
+              campaignId: input.campaignId,
+              to: input.destination,
+              body: input.body,
+              integrationId: openwaIntegration.integrationId,
+            });
+            if (res.ok) {
+              return {
+                ok: true,
+                externalId: res.data.messageId,
+                latencyMs: res.latencyMs,
+                retryable: false,
+                channel: 'openwa',
+              };
+            }
+            return {
+              ok: false,
+              latencyMs: res.latencyMs,
+              retryable: res.retryable === true,
+              error: res.error,
+              channel: 'openwa',
+            };
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'OpenWA dispatch error';
+          return {
+            ok: false,
+            latencyMs: Date.now() - startedAt,
+            retryable: false,
+            error: message,
+            channel: 'openwa',
+          };
+        }
+
         const res = await whatsapp.sendMessage({
           leadId: input.leadId,
           campaignId: input.campaignId,
           to: input.destination,
           body: input.body,
         });
-        return mapOutcome(res, startedAt);
+        return mapOutcome(res, startedAt, 'whatsapp');
       }
       case 'sms': {
         const res = await twilio.sendSms({
@@ -160,11 +206,27 @@ export async function dispatchOutbound(input: DispatchInput): Promise<DispatchOu
   }
 }
 
+async function loadOpenwaIntegrationIfEnabled(): Promise<{
+  credentials: OpenWACredentials;
+  integrationId: string;
+} | null> {
+  const row = await findByName('openwa');
+  if (!row || !row.is_enabled) return null;
+
+  const encrypted = await findCredentialsById(row.id);
+  if (!encrypted) return null;
+
+  const decrypted = decryptJson<unknown>(encrypted);
+  const credentials = await openwa.loadCredentials(decrypted);
+  return { credentials, integrationId: row.id };
+}
+
 function mapOutcome(
   res:
     | { ok: true; externalId?: string; latencyMs: number }
     | { ok: false; error: string; retryable?: boolean; latencyMs: number },
   startedAt: number,
+  channel?: 'openwa' | 'whatsapp',
 ): DispatchOutcome {
   const latency = res.latencyMs || Date.now() - startedAt;
   if (res.ok) {
@@ -173,6 +235,7 @@ function mapOutcome(
       externalId: res.externalId,
       latencyMs: latency,
       retryable: false,
+      channel,
     };
   }
   return {
@@ -180,5 +243,6 @@ function mapOutcome(
     latencyMs: latency,
     retryable: res.retryable === true,
     error: res.error,
+    channel,
   };
 }

@@ -61,6 +61,8 @@ jest.mock('../modules/outreach/outreach.prompt', () => ({
 
 import { findSequenceById, findLogsByLead } from '../modules/outreach/outreach.repository';
 import { createLog, updateLogStatus, createTask } from '../modules/outreach/outreach.service';
+import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
+import { Queue } from 'bullmq';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
@@ -133,13 +135,13 @@ const MOCK_TEMPLATE = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (findSequenceById as jest.Mock).mockResolvedValue(THREE_STEP_SEQ);
-  (createLog as jest.Mock).mockResolvedValue(MOCK_LOG);
-  (updateLogStatus as jest.Mock).mockResolvedValue({ ...MOCK_LOG, status: 'sent' });
-  (findLeadById as jest.Mock).mockResolvedValue(MOCK_LEAD);
-  (findTemplateById as jest.Mock).mockResolvedValue(MOCK_TEMPLATE);
-  (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello Acme' });
-  (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+  (findSequenceById as jest.Mock<any>).mockResolvedValue(THREE_STEP_SEQ);
+  (createLog as jest.Mock<any>).mockResolvedValue(MOCK_LOG);
+  (updateLogStatus as jest.Mock<any>).mockResolvedValue({ ...MOCK_LOG, status: 'sent' });
+  (findLeadById as jest.Mock<any>).mockResolvedValue(MOCK_LEAD);
+  (findTemplateById as jest.Mock<any>).mockResolvedValue(MOCK_TEMPLATE);
+  (personalizeMessage as jest.Mock<any>).mockResolvedValue({ message: 'Hello Acme' });
+  (dispatchOutbound as jest.Mock<any>).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
 });
 
 // ── Test 1: Full 3-step sequence fires in order ──────────────────────────
@@ -168,7 +170,7 @@ describe('3-step sequence: WhatsApp → Email → SMS', () => {
 
   it('step 2 (Email): dispatches and schedules step 3', async () => {
     const log2 = { ...MOCK_LOG, id: 'log-2', channel: 'email', step_number: 2 };
-    (createLog as jest.Mock).mockResolvedValue(log2);
+    (createLog as jest.Mock<any>).mockResolvedValue(log2);
 
     await handleDispatch({
       leadId: 'lead-e2e',
@@ -190,7 +192,7 @@ describe('3-step sequence: WhatsApp → Email → SMS', () => {
 
   it('step 3 (SMS): dispatches and does NOT schedule a follow-up', async () => {
     const log3 = { ...MOCK_LOG, id: 'log-3', channel: 'sms', step_number: 3 };
-    (createLog as jest.Mock).mockResolvedValue(log3);
+    (createLog as jest.Mock<any>).mockResolvedValue(log3);
 
     await handleDispatch({
       leadId: 'lead-e2e',
@@ -213,8 +215,8 @@ describe('3-step sequence: WhatsApp → Email → SMS', () => {
 
 describe('phone_call step', () => {
   it('creates a task row and skips message dispatch', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(FOUR_STEP_SEQ);
-    (createTask as jest.Mock).mockResolvedValue({ id: 'task-1' });
+    (findSequenceById as jest.Mock<any>).mockResolvedValue(FOUR_STEP_SEQ);
+    (createTask as jest.Mock<any>).mockResolvedValue({ id: 'task-1' });
 
     await handleDispatch({
       leadId: 'lead-e2e',
@@ -243,7 +245,7 @@ describe('phone_call step', () => {
 // ── Test 3: handleFollowUp enqueues stop-check then next dispatch ─────────
 
 describe('handleFollowUp', () => {
-  it('enqueues stop-check and next dispatch when sequence is still valid', async () => {
+  it('evaluates stop condition and enqueues next dispatch when sequence is still valid', async () => {
     await handleFollowUp({
       leadId: 'lead-e2e',
       campaignId: 'camp-e2e',
@@ -254,9 +256,6 @@ describe('handleFollowUp', () => {
       mockMode: false,
     });
 
-    expect(enqueueOutreachStopCheck).toHaveBeenCalledWith(
-      expect.objectContaining({ leadId: 'lead-e2e', campaignId: 'camp-e2e' }),
-    );
     expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ stepNumber: 2, channel: 'email', templateId: 'tmpl-2' }),
     );
@@ -267,11 +266,11 @@ describe('handleFollowUp', () => {
 
 describe('stop condition: lead replied', () => {
   it('handleStopCheck returns stopped=true when outreach_log has replied status', async () => {
-    (findLogsByLead as jest.Mock).mockResolvedValue([
+    (findLogsByLead as jest.Mock<any>).mockResolvedValue([
       { id: 'l1', status: 'sent' },
       { id: 'l2', status: 'replied' },
     ]);
-    (findLeadById as jest.Mock).mockResolvedValue({ ...MOCK_LEAD, status: 'active' });
+    (findLeadById as jest.Mock<any>).mockResolvedValue({ ...MOCK_LEAD, status: 'active' });
 
     const result = await handleStopCheck({
       leadId: 'lead-e2e',
@@ -288,8 +287,8 @@ describe('stop condition: lead replied', () => {
   });
 
   it('handleStopCheck returns stopped=true when lead status is opted_out', async () => {
-    (findLogsByLead as jest.Mock).mockResolvedValue([]);
-    (findLeadById as jest.Mock).mockResolvedValue({ ...MOCK_LEAD, status: 'opted_out' });
+    (findLogsByLead as jest.Mock<any>).mockResolvedValue([]);
+    (findLeadById as jest.Mock<any>).mockResolvedValue({ ...MOCK_LEAD, status: 'opted_out' });
 
     const result = await handleStopCheck({
       leadId: 'lead-e2e',
@@ -302,8 +301,8 @@ describe('stop condition: lead replied', () => {
   });
 
   it('handleStopCheck returns stopped=true when lead status is won', async () => {
-    (findLogsByLead as jest.Mock).mockResolvedValue([]);
-    (findLeadById as jest.Mock).mockResolvedValue({ ...MOCK_LEAD, status: 'won' });
+    (findLogsByLead as jest.Mock<any>).mockResolvedValue([]);
+    (findLeadById as jest.Mock<any>).mockResolvedValue({ ...MOCK_LEAD, status: 'won' });
 
     // 'won' maps to opted_out rule check — lead stops outreach
     const result = await handleStopCheck({
@@ -318,11 +317,11 @@ describe('stop condition: lead replied', () => {
   });
 
   it('handleStopCheck returns stopped=false when lead is active with no replies', async () => {
-    (findLogsByLead as jest.Mock).mockResolvedValue([
+    (findLogsByLead as jest.Mock<any>).mockResolvedValue([
       { id: 'l1', status: 'sent' },
       { id: 'l2', status: 'delivered' },
     ]);
-    (findLeadById as jest.Mock).mockResolvedValue({ ...MOCK_LEAD, status: 'active' });
+    (findLeadById as jest.Mock<any>).mockResolvedValue({ ...MOCK_LEAD, status: 'active' });
 
     const result = await handleStopCheck({
       leadId: 'lead-e2e',

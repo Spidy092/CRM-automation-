@@ -20,11 +20,13 @@ import {
 } from './webhook-handlers';
 import { publishAIDomainEvent } from '../shared/events/eventBus';
 
-// ── Mocks ──────────────────────────────────────────────────────────────────
-
 const mockQueryOne = jest.fn();
 const mockQuery = jest.fn();
 
+jest.mock('../workers/queue', () => ({
+  cancelPendingOutreachJobs: jest.fn().mockResolvedValue(undefined),
+  enqueueAiClassifyReply: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('../shared/utils/db', () => ({
   pool: { query: (...args: unknown[]) => mockQuery(...args) },
   queryOne: (...args: unknown[]) => mockQueryOne(...args),

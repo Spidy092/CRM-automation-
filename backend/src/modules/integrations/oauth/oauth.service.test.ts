@@ -1,3 +1,6 @@
+import { describe, it, expect } from '@jest/globals';
+process.env.GOOGLE_ADS_CLIENT_ID = 'test-client-id';
+process.env.FACEBOOK_APP_ID = 'test-client-id';
 import { generateAuthorizationUrl } from './oauth.service';
 
 describe('OAuth Service', () => {

@@ -1,5 +1,6 @@
 import { parse as parseCsv } from 'csv-parse/sync';
 import { read as readXlsx, utils } from 'xlsx';
+import { enqueueLeadEvent } from '../../workers/queue';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { normalizePhone } from '../../shared/utils/phone';
 import { findActiveDefinitions } from '../custom-fields/customFields.repository';
@@ -64,6 +65,19 @@ function mapRow(raw: Record<string, unknown>, defaultSource: string): LeadInput 
   const rowSource = toStr(norm.source_platform);
   const tagsRaw = toStr(norm.tags);
 
+  const standardKeys = new Set([
+    'business_name', 'contact_name', 'phone', 'email', 'website',
+    'industry', 'location', 'country', 'google_rating', 'review_count',
+    'source_platform', 'tags', 'notes'
+  ]);
+
+  const custom_fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(norm)) {
+    if (!standardKeys.has(k) && v !== '') {
+      custom_fields[k] = v;
+    }
+  }
+
   return {
     business_name: toStr(norm.business_name),
     contact_name: toStr(norm.contact_name),
@@ -83,6 +97,7 @@ function mapRow(raw: Record<string, unknown>, defaultSource: string): LeadInput 
           .filter(Boolean)
       : [],
     notes: toStr(norm.notes) || null,
+    custom_fields,
   };
 }
 
@@ -164,6 +179,7 @@ export async function importLeads(
           newValue: { source: 'import' },
           ipAddress: actor.ipAddress ?? null,
         });
+        void enqueueLeadEvent({ event: 'lead.created', leadId: created.id, payload: {} });
       }
     } catch (err) {
       summary.failed++;

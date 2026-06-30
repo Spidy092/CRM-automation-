@@ -22,9 +22,10 @@ const aiEventsQueue = new Queue(AI_EVENTS_QUEUE, {
 
 const handlerRegistry = new Map<AIDomainEvent['type'], Set<AnyHandler>>();
 
-function extractIdsFromPayload(
-  payload: AIDomainEvent['payload'],
-): { leadId?: string; campaignId?: string } {
+function extractIdsFromPayload(payload: AIDomainEvent['payload']): {
+  leadId?: string;
+  campaignId?: string;
+} {
   const record = payload as Record<string, unknown>;
   return {
     leadId: typeof record.lead_id === 'string' ? record.lead_id : undefined,

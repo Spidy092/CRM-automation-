@@ -23,10 +23,7 @@ export function sendError(res: Response, message: string, statusCode = 500): voi
  * instead of using `sendSuccess`, or when the same envelope shape must be
  * produced for non-Express responses (e.g. worker return values).
  */
-export function successResponse<T>(
-  data: T,
-  meta?: ApiResponse<T>['meta'],
-): ApiResponse<T> {
+export function successResponse<T>(data: T, meta?: ApiResponse<T>['meta']): ApiResponse<T> {
   const body: ApiResponse<T> = { success: true, data };
   if (meta) body.meta = meta;
   return body;

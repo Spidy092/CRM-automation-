@@ -12,6 +12,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import { BarChart3, Download, FileText, RefreshCw } from 'lucide-react';
 import type { ReportListFilters } from '@/types';
 
@@ -43,13 +45,20 @@ export function ReportsPage() {
   const { data: reps } = useSalesRepReport(filters);
 
   const exportMutation = useExportReport();
+  const { showToast } = useToast();
 
   const handleExport = (reportType: string) => {
-    exportMutation.mutate({
-      reportType,
-      format: 'csv',
-      filters: dateRange.start ? { startDate: dateRange.start, endDate: dateRange.end } : undefined,
-    });
+    exportMutation.mutate(
+      {
+        reportType,
+        format: 'csv',
+        filters: dateRange.start ? { startDate: dateRange.start, endDate: dateRange.end } : undefined,
+      },
+      {
+        onSuccess: () => showToast('Export queued — check the exports directory.', 'success'),
+        onError: (err) => showToast(getApiErrorMessage(err, 'Export failed.'), 'error'),
+      },
+    );
   };
 
   return (
@@ -83,7 +92,7 @@ export function ReportsPage() {
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Pipeline Conv.</p>
-            <p className="mt-1 text-2xl font-bold text-amber-600">{dashboard.pipelineConversion.toFixed(1)}%</p>
+            <p className="mt-1 text-2xl font-bold text-amber-600">{(dashboard.pipelineConversion ?? 0).toFixed(1)}%</p>
           </div>
         </div>
       )}
@@ -222,8 +231,8 @@ export function ReportsPage() {
                     <tr key={i} className="border-b border-slate-100">
                       <td className="py-3 pr-4 text-slate-700 font-medium">{row.stageName}</td>
                       <td className="py-3 pr-4">{row.leadCount}</td>
-                      <td className="py-3 pr-4">{row.conversionRate.toFixed(1)}%</td>
-                      <td className="py-3">{row.avgDays.toFixed(1)}</td>
+                      <td className="py-3 pr-4">{(row.conversionRate ?? 0).toFixed(1)}%</td>
+                      <td className="py-3">{(row.avgDays ?? 0).toFixed(1)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -254,8 +263,8 @@ export function ReportsPage() {
                       <td className="py-3 pr-4 text-slate-700 font-medium">{row.repName}</td>
                       <td className="py-3 pr-4">{row.leadsAssigned}</td>
                       <td className="py-3 pr-4">{row.leadsConverted}</td>
-                      <td className="py-3 pr-4">{row.conversionRate.toFixed(1)}%</td>
-                      <td className="py-3">{row.avgResponseTime.toFixed(1)}h</td>
+                      <td className="py-3 pr-4">{(row.conversionRate ?? 0).toFixed(1)}%</td>
+                      <td className="py-3">{(row.avgResponseTime ?? 0).toFixed(1)}h</td>
                     </tr>
                   ))}
                 </tbody>

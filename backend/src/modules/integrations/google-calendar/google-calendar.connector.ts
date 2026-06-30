@@ -154,23 +154,31 @@ export async function createEvent(
     'Content-Type': 'application/json',
   });
 
-  let res = await loggedFetch(url, { method: 'POST', headers: headers(creds.accessToken), body }, {
-    channel: 'google_ads',
-    leadId,
-    campaignId,
-    context: { provider: 'google_calendar', calendarId },
-  });
+  let res = await loggedFetch(
+    url,
+    { method: 'POST', headers: headers(creds.accessToken), body },
+    {
+      channel: 'google_ads',
+      leadId,
+      campaignId,
+      context: { provider: 'google_calendar', calendarId },
+    },
+  );
 
   // Retry once on 401 with refreshed token
   if (!res.ok && res.status === 401) {
     try {
       const freshToken = await refreshAccessToken(creds);
-      res = await loggedFetch(url, { method: 'POST', headers: headers(freshToken), body }, {
-        channel: 'google_ads',
-        leadId,
-        campaignId,
-        context: { provider: 'google_calendar', calendarId, tokenRefreshed: true },
-      });
+      res = await loggedFetch(
+        url,
+        { method: 'POST', headers: headers(freshToken), body },
+        {
+          channel: 'google_ads',
+          leadId,
+          campaignId,
+          context: { provider: 'google_calendar', calendarId, tokenRefreshed: true },
+        },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'token refresh failed';
       return { ok: false, error: message, retryable: false, latencyMs: Date.now() - start };
@@ -193,4 +201,21 @@ export async function createEvent(
     htmlLink: data?.htmlLink ?? '',
     latencyMs: Date.now() - start,
   };
+}
+
+export async function testConnection(
+  creds: GoogleCalendarCredentials,
+): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    // A successful token refresh confirms the OAuth credentials are valid and active
+    await refreshAccessToken(creds);
+    return { ok: true, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown Google Calendar error',
+      latencyMs: Date.now() - start,
+    };
+  }
 }

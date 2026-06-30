@@ -5,6 +5,7 @@ import {
   createScraperConfigSchema,
   updateScraperConfigSchema,
   listLogsQuerySchema,
+  detectSelectorsSchema,
 } from './scraper.schema';
 import * as scraperService from './scraper.service';
 
@@ -92,6 +93,20 @@ export async function triggerScrapeHandler(
 ): Promise<void> {
   try {
     const result = await scraperService.runScrape(req.params.configId, actorFromReq(req));
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function detectSelectorsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { url } = detectSelectorsSchema.parse(req.body);
+    const result = await scraperService.detectSelectors(url);
     sendSuccess(res, result);
   } catch (err) {
     next(err);

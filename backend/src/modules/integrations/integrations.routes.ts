@@ -5,6 +5,7 @@ import { authorize } from '../../shared/middleware/rbac';
 import {
   getIntegrationHandler,
   listIntegrationsHandler,
+  testAllIntegrationsHandler,
   testIntegrationHandler,
   updateIntegrationHandler,
 } from './integrations.controller';
@@ -22,8 +23,15 @@ router.use('/oauth', oauthRoutes);
 router.get('/', wrap(listIntegrationsHandler));
 router.get('/:id', wrap(getIntegrationHandler));
 
-// Only admins may modify credentials or trigger tests.
+// Only admins may modify credentials or trigger single integration tests.
 router.put('/:id', authorize('admin'), wrap(updateIntegrationHandler));
 router.post('/:id/test', authorize('admin'), wrap(testIntegrationHandler));
+
+// Admins, managers, and marketing may run a bulk health check across enabled integrations.
+router.post(
+  '/test-all',
+  authorize('admin', 'manager', 'marketing'),
+  wrap(testAllIntegrationsHandler),
+);
 
 export { router as integrationsRoutes };

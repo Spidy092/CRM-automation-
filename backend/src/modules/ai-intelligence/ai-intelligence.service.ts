@@ -2,6 +2,7 @@ import { z } from 'zod';
 import OpenAI from 'openai';
 import { redis } from '../../shared/utils/redis';
 import { logger } from '../../shared/utils/logger';
+import { Sentry } from '../../shared/utils/sentry';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { findLeadById } from '../leads/leads.repository';
 import {
@@ -15,11 +16,55 @@ import {
 } from './ai-intelligence.repository';
 import { incAiTokens } from '../../shared/utils/metrics';
 import { NotFoundError } from '../../shared/errors';
-import type { LeadAiProfileRow, AiDecisionLogRow, AiResearchOutput, NextBestAction, BuyingIntent, PreferredChannel } from './ai-intelligence.types';
+import type { LeadAiProfileRow, AiDecisionLogRow, AiResearchOutput } from './ai-intelligence.types';
 
 const PROFILE_CACHE_TTL = 60 * 60; // 1 hour — DB is authoritative
 const RESEARCH_MAX_TOKENS = 800;
 const NEXT_ACTION_MAX_TOKENS = 400;
+
+/**
+ * Surface — never silently swallow — a decision-log write failure.
+ *
+ * Two reasons we still swallow (do not re-throw) when called via `.catch()`:
+ *   1. The primary AI work (research, classification) has already succeeded
+ *      and we must not roll back the upserted profile / inbox item.
+ *   2. Re-throwing inside `.catch()` on a fire-and-forget chain would either
+ *      become an unhandled rejection or block the caller.
+ *
+ * What we MUST do instead of swallowing: emit a structured `error`-level log
+ * and forward the failure to Sentry so monitoring alerts can fire. Silent
+ * nullification (`.catch(() => null)`) hid a real audit-trail gap; this
+ * helper makes the gap visible without breaking the success path.
+ */
+function logDecisionLogFailure(context: {
+  leadId?: string | null;
+  campaignId?: string | null;
+  decisionType: string;
+  phase: 'success' | 'failure';
+  err: unknown;
+}): void {
+  const message = context.err instanceof Error ? context.err.message : String(context.err);
+  logger.error('ai decision log write failed', {
+    lead_id: context.leadId ?? null,
+    campaign_id: context.campaignId ?? null,
+    decision_type: context.decisionType,
+    phase: context.phase,
+    error: message,
+  });
+  Sentry.captureException(
+    context.err instanceof Error ? context.err : new Error(message),
+    {
+      tags: {
+        decision_type: context.decisionType,
+        decision_log_phase: context.phase,
+      },
+      extra: {
+        lead_id: context.leadId ?? null,
+        campaign_id: context.campaignId ?? null,
+      },
+    },
+  );
+}
 
 // ── Zod schema for OpenAI JSON output ────────────────────────────────────
 
@@ -33,9 +78,16 @@ const AiResearchSchema = z.object({
   preferred_channel: z.enum(['whatsapp', 'email', 'sms']),
   ai_notes: z.string().max(500),
   next_best_action: z.enum([
-    'send_whatsapp', 'send_email', 'send_sms', 'wait_and_followup',
-    'call', 'move_to_nurture', 'escalate_to_rep',
-    'request_human_approval', 'disqualify', 'request_review',
+    'send_whatsapp',
+    'send_email',
+    'send_sms',
+    'wait_and_followup',
+    'call',
+    'move_to_nurture',
+    'escalate_to_rep',
+    'request_human_approval',
+    'disqualify',
+    'request_review',
   ]),
   next_best_action_reason: z.string().max(300),
   next_best_action_confidence: z.number().int().min(0).max(100),
@@ -44,9 +96,16 @@ const AiResearchSchema = z.object({
 
 const NextBestActionSchema = z.object({
   next_best_action: z.enum([
-    'send_whatsapp', 'send_email', 'send_sms', 'wait_and_followup',
-    'call', 'move_to_nurture', 'escalate_to_rep',
-    'request_human_approval', 'disqualify', 'request_review',
+    'send_whatsapp',
+    'send_email',
+    'send_sms',
+    'wait_and_followup',
+    'call',
+    'move_to_nurture',
+    'escalate_to_rep',
+    'request_human_approval',
+    'disqualify',
+    'request_review',
   ]),
   next_best_action_reason: z.string().max(300),
   next_best_action_confidence: z.number().int().min(0).max(100),
@@ -76,7 +135,9 @@ export async function getAiProfile(leadId: string): Promise<LeadAiProfileRow | n
 
   const profile = await findAiProfileByLeadId(leadId);
   if (profile) {
-    await redis.setex(profileCacheKey(leadId), PROFILE_CACHE_TTL, JSON.stringify(profile)).catch(() => null);
+    await redis
+      .setex(profileCacheKey(leadId), PROFILE_CACHE_TTL, JSON.stringify(profile))
+      .catch(() => null);
   }
   return profile;
 }
@@ -149,7 +210,10 @@ export async function computeNextBestAction(
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: buildNextActionSystemPrompt() },
-        { role: 'user', content: buildNextActionUserPrompt(lead, existing, recentDecisions, opts?.context) },
+        {
+          role: 'user',
+          content: buildNextActionUserPrompt(lead, existing, recentDecisions, opts?.context),
+        },
       ],
     });
 
@@ -278,7 +342,14 @@ export async function researchLead(leadId: string, force = false): Promise<LeadA
       decision: 'failed',
       latency_ms: latencyMs,
       model_used: aiConfig.model,
-    }).catch(() => null);
+    }).catch((logErr: unknown) => {
+      logDecisionLogFailure({
+        leadId,
+        decisionType: 'research',
+        phase: 'failure',
+        err: logErr,
+      });
+    });
 
     throw err;
   }
@@ -291,11 +362,11 @@ export async function researchLead(leadId: string, force = false): Promise<LeadA
     pain_points: raw.pain_points,
     offer_angle: raw.offer_angle,
     inferred_budget_range: raw.inferred_budget_range,
-    buying_intent: raw.buying_intent as BuyingIntent,
+    buying_intent: raw.buying_intent,
     reachability_score: raw.reachability_score,
-    preferred_channel: raw.preferred_channel as PreferredChannel,
+    preferred_channel: raw.preferred_channel,
     ai_notes: raw.ai_notes,
-    next_best_action: raw.next_best_action as NextBestAction,
+    next_best_action: raw.next_best_action,
     next_best_action_reason: raw.next_best_action_reason,
     next_best_action_confidence: raw.next_best_action_confidence,
     enrichment_status: 'done',
@@ -318,9 +389,11 @@ export async function researchLead(leadId: string, force = false): Promise<LeadA
     latency_ms: latencyMs,
     model_used: aiConfig.model,
   }).catch((logErr: unknown) => {
-    logger.warn('ai research: failed to write decision log', {
+    logDecisionLogFailure({
       leadId,
-      error: logErr instanceof Error ? logErr.message : String(logErr),
+      decisionType: 'research',
+      phase: 'success',
+      err: logErr,
     });
   });
 
@@ -362,18 +435,22 @@ function buildResearchSystemPrompt(): string {
   );
 }
 
-function buildResearchUserPrompt(lead: Awaited<ReturnType<typeof findLeadById>> & {}): string {
-  const rating = lead?.google_rating ? `${lead.google_rating}/5 (${lead.review_count ?? 0} reviews)` : 'N/A';
+function buildResearchUserPrompt(
+  lead: NonNullable<Awaited<ReturnType<typeof findLeadById>>>,
+): string {
+  const rating = lead?.google_rating
+    ? `${lead.google_rating}/5 (${lead.review_count ?? 0} reviews)`
+    : 'N/A';
   return (
-    `Business: ${lead!.business_name}\n` +
-    `Industry: ${lead!.industry}\n` +
-    `Location: ${lead!.location}${lead!.country ? ', ' + lead!.country : ''}\n` +
+    `Business: ${lead.business_name}\n` +
+    `Industry: ${lead.industry}\n` +
+    `Location: ${lead.location}${lead.country ? ', ' + lead.country : ''}\n` +
     `Google rating: ${rating}\n` +
-    `Website: ${lead!.website ?? 'none'}\n` +
-    `Source: ${lead!.source_platform}\n` +
-    `Lead score: ${lead!.lead_score}\n` +
-    `Tags: ${(lead!.tags ?? []).join(', ') || 'none'}\n` +
-    `Notes: ${lead!.notes ?? 'none'}`
+    `Website: ${lead.website ?? 'none'}\n` +
+    `Source: ${lead.source_platform}\n` +
+    `Lead score: ${lead.lead_score}\n` +
+    `Tags: ${(lead.tags ?? []).join(', ') || 'none'}\n` +
+    `Notes: ${lead.notes ?? 'none'}`
   );
 }
 
@@ -393,7 +470,7 @@ function buildNextActionSystemPrompt(): string {
 }
 
 function buildNextActionUserPrompt(
-  lead: Awaited<ReturnType<typeof findLeadById>> & {},
+  lead: NonNullable<Awaited<ReturnType<typeof findLeadById>>>,
   profile: LeadAiProfileRow | null,
   recentDecisions: AiDecisionLogRow[],
   extraContext?: Record<string, unknown>,
@@ -409,13 +486,13 @@ function buildNextActionUserPrompt(
     : 'No recent decisions.';
 
   return (
-    `Lead: ${lead!.business_name}\n` +
-    `Status: ${lead!.status ?? 'unknown'}\n` +
-    `Pipeline stage: ${lead!.pipeline_stage_id ?? 'none'}\n` +
-    `Lead score: ${lead!.lead_score ?? 'unknown'}\n` +
-    `Industry: ${lead!.industry ?? 'unknown'}\n` +
-    `Location: ${lead!.location ?? 'unknown'}${lead!.country ? ', ' + lead!.country : ''}\n` +
-    `Source: ${lead!.source_platform ?? 'unknown'}\n\n` +
+    `Lead: ${lead.business_name}\n` +
+    `Status: ${lead.status ?? 'unknown'}\n` +
+    `Pipeline stage: ${lead.pipeline_stage_id ?? 'none'}\n` +
+    `Lead score: ${lead.lead_score ?? 'unknown'}\n` +
+    `Industry: ${lead.industry ?? 'unknown'}\n` +
+    `Location: ${lead.location ?? 'unknown'}${lead.country ? ', ' + lead.country : ''}\n` +
+    `Source: ${lead.source_platform ?? 'unknown'}\n\n` +
     `Existing AI profile:\n` +
     `- Buying intent: ${profile?.buying_intent ?? 'unknown'}\n` +
     `- Reachability score: ${profile?.reachability_score ?? 'unknown'}\n` +

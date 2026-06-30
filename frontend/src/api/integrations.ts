@@ -25,6 +25,23 @@ export interface TestIntegrationResult {
   tested_at: string;
 }
 
+export interface BulkTestResultItem {
+  id: string;
+  name: string;
+  ok: boolean;
+  status: string;
+  message?: string;
+  tested_at: string;
+}
+
+export interface BulkTestResult {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  results: BulkTestResultItem[];
+}
+
 export function useIntegrations() {
   return useQuery({
     queryKey: ['integrations'],
@@ -51,7 +68,7 @@ export function useUpdateIntegration() {
 
   return useMutation({
     mutationFn: async ({ id, input }: { id: string; input: UpdateIntegrationInput }) => {
-      const response = await apiClient.patch<ApiResponse<Integration>>(
+      const response = await apiClient.put<ApiResponse<Integration>>(
         `/integrations/${id}`,
         input,
       );
@@ -77,4 +94,20 @@ export function useTestIntegration() {
       queryClient.invalidateQueries({ queryKey: ['integrations'] });
     },
   });
+}
+
+export function useBulkTestIntegration() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: bulkTestIntegrations,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['integrations'] });
+    },
+  });
+}
+
+export async function bulkTestIntegrations(): Promise<BulkTestResult> {
+  const response = await apiClient.post<ApiResponse<BulkTestResult>>('/integrations/test-all');
+  return response.data.data;
 }

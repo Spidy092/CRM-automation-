@@ -1,3 +1,5 @@
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+
 jest.mock('./users.repository', () => ({
   findUserByEmail: jest.fn(),
   findAllUsers: jest.fn(),
@@ -22,12 +24,14 @@ import { AuthenticatedUser } from '../../shared/types';
 
 const adminUser: AuthenticatedUser = {
   id: 'admin-1',
+  name: 'Admin',
   email: 'admin@crm.com',
   role: 'admin',
 };
 
 const salesUser: AuthenticatedUser = {
   id: 'sales-1',
+  name: 'Sales',
   email: 'sales@crm.com',
   role: 'sales',
 };
@@ -43,12 +47,12 @@ const sampleUser: User = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
+  (bcrypt.hash as jest.Mock<any>).mockResolvedValue('hashed-password');
 });
 
 describe('createUser', () => {
   it('rejects when email already exists (409)', async () => {
-    (findUserByEmail as jest.Mock).mockResolvedValue(sampleUser);
+    (findUserByEmail as jest.Mock<any>).mockResolvedValue(sampleUser);
     await expect(
       createUser({
         name: 'Bob',
@@ -63,8 +67,8 @@ describe('createUser', () => {
   });
 
   it('hashes the password with bcrypt cost 12 and inserts the user', async () => {
-    (findUserByEmail as jest.Mock).mockResolvedValue(null);
-    (insertUser as jest.Mock).mockResolvedValue({ ...sampleUser, id: 'mock-uuid-v4' });
+    (findUserByEmail as jest.Mock<any>).mockResolvedValue(null);
+    (insertUser as jest.Mock<any>).mockResolvedValue({ ...sampleUser, id: 'mock-uuid-v4' });
 
     const result = await createUser({
       name: 'Bob',
@@ -79,7 +83,7 @@ describe('createUser', () => {
       'mock-uuid-v4',
       {
         name: 'Bob',
-        email: 'BOB@CRM.COM',
+        email: 'bob@crm.com',
         password: 'pw12345',
         role: 'sales',
         is_active: true,
@@ -90,8 +94,8 @@ describe('createUser', () => {
   });
 
   it('lowercases the email when checking for duplicates and inserting', async () => {
-    (findUserByEmail as jest.Mock).mockResolvedValue(null);
-    (insertUser as jest.Mock).mockResolvedValue(sampleUser);
+    (findUserByEmail as jest.Mock<any>).mockResolvedValue(null);
+    (insertUser as jest.Mock<any>).mockResolvedValue(sampleUser);
 
     await createUser({
       name: 'Bob',
@@ -104,7 +108,7 @@ describe('createUser', () => {
     expect(findUserByEmail).toHaveBeenCalledWith('mixedcase@crm.com');
     expect(insertUser).toHaveBeenCalledWith(
       'mock-uuid-v4',
-      expect.objectContaining({ email: 'MixedCase@CRM.com', is_active: false }),
+      expect.objectContaining({ email: 'mixedcase@crm.com', is_active: false }),
       'hashed-password',
     );
   });
@@ -112,14 +116,14 @@ describe('createUser', () => {
 
 describe('listUsers', () => {
   it('returns all users from the repository', async () => {
-    (findAllUsers as jest.Mock).mockResolvedValue([sampleUser]);
+    (findAllUsers as jest.Mock<any>).mockResolvedValue([sampleUser]);
     const result = await listUsers();
     expect(result).toEqual([sampleUser]);
     expect(findAllUsers).toHaveBeenCalledTimes(1);
   });
 
   it('returns an empty array when there are no users', async () => {
-    (findAllUsers as jest.Mock).mockResolvedValue([]);
+    (findAllUsers as jest.Mock<any>).mockResolvedValue([]);
     const result = await listUsers();
     expect(result).toEqual([]);
   });
@@ -127,20 +131,20 @@ describe('listUsers', () => {
 
 describe('getUser', () => {
   it('allows admin to retrieve any user', async () => {
-    (findUserById as jest.Mock).mockResolvedValue(sampleUser);
+    (findUserById as jest.Mock<any>).mockResolvedValue(sampleUser);
     const result = await getUser('user-1', adminUser);
     expect(result).toEqual(sampleUser);
   });
 
   it('allows manager to retrieve any user', async () => {
-    (findUserById as jest.Mock).mockResolvedValue(sampleUser);
-    const manager: AuthenticatedUser = { id: 'mgr-1', email: 'mgr@crm.com', role: 'manager' };
+    (findUserById as jest.Mock<any>).mockResolvedValue(sampleUser);
+    const manager: AuthenticatedUser = { id: 'mgr-1', name: 'Manager', email: 'mgr@crm.com', role: 'manager' };
     const result = await getUser('user-1', manager);
     expect(result).toEqual(sampleUser);
   });
 
   it('allows sales actor to retrieve their own profile', async () => {
-    (findUserById as jest.Mock).mockResolvedValue({ ...sampleUser, id: 'sales-1' });
+    (findUserById as jest.Mock<any>).mockResolvedValue({ ...sampleUser, id: 'sales-1' });
     const result = await getUser('sales-1', salesUser);
     expect(result.id).toBe('sales-1');
   });
@@ -151,21 +155,21 @@ describe('getUser', () => {
   });
 
   it('returns 404 when user not found (admin)', async () => {
-    (findUserById as jest.Mock).mockResolvedValue(null);
+    (findUserById as jest.Mock<any>).mockResolvedValue(null);
     await expect(getUser('missing', adminUser)).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
 describe('updateProfile', () => {
   it('allows admin to update any profile', async () => {
-    (updateUserProfile as jest.Mock).mockResolvedValue({ ...sampleUser, name: 'Bob' });
+    (updateUserProfile as jest.Mock<any>).mockResolvedValue({ ...sampleUser, name: 'Bob' });
     const result = await updateProfile('user-1', { name: 'Bob' }, adminUser);
     expect(result.name).toBe('Bob');
     expect(updateUserProfile).toHaveBeenCalledWith('user-1', { name: 'Bob' });
   });
 
   it('allows sales actor to update their own profile', async () => {
-    (updateUserProfile as jest.Mock).mockResolvedValue({ ...sampleUser, id: 'sales-1', name: 'Carl' });
+    (updateUserProfile as jest.Mock<any>).mockResolvedValue({ ...sampleUser, id: 'sales-1', name: 'Carl' });
     const result = await updateProfile('sales-1', { name: 'Carl' }, salesUser);
     expect(result.name).toBe('Carl');
   });
@@ -178,7 +182,7 @@ describe('updateProfile', () => {
   });
 
   it('returns 404 when the target user does not exist', async () => {
-    (updateUserProfile as jest.Mock).mockResolvedValue(null);
+    (updateUserProfile as jest.Mock<any>).mockResolvedValue(null);
     await expect(updateProfile('missing', { name: 'X' }, adminUser)).rejects.toMatchObject({
       statusCode: 404,
     });

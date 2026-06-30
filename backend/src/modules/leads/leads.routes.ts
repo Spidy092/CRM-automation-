@@ -13,6 +13,7 @@ import {
   listLeadsHandler,
   pauseLeadHandler,
   updateLeadHandler,
+  enrichLeadHandler,
 } from './leads.controller';
 
 const router = Router();
@@ -42,9 +43,16 @@ router.post(
 );
 
 // Activity timeline — Admin, Manager, Sales, Viewer.
-router.get('/:id/activity', authorize('admin', 'manager', 'sales', 'viewer'), wrap(getLeadActivityHandler));
+router.get(
+  '/:id/activity',
+  authorize('admin', 'manager', 'sales', 'viewer'),
+  wrap(getLeadActivityHandler),
+);
 
 // Pause/resume outreach — Sales, Manager, Admin (sales: own only, enforced in service).
 router.post('/:id/pause', authorize('admin', 'manager', 'sales'), wrap(pauseLeadHandler));
+
+// Enrich data using Hunter.io — Admin, Manager, Sales
+router.post('/:id/enrich', authorize('admin', 'manager', 'sales'), wrap(enrichLeadHandler));
 
 export { router as leadsRoutes };

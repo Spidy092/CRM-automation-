@@ -68,3 +68,16 @@ export async function testIntegrationHandler(
     next(err);
   }
 }
+
+export async function testAllIntegrationsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const result = await integrationsService.testAllIntegrations(actorFromReq(req));
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}

@@ -11,6 +11,7 @@ import {
   deleteConfigHandler,
   triggerScrapeHandler,
   listLogsHandler,
+  detectSelectorsHandler,
 } from './scraper.controller';
 
 const router = Router();
@@ -28,6 +29,9 @@ router.get(
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   wrap(getConfigHandler),
 );
+
+// AI-assisted selector detection — admin only (calls the configured LLM)
+router.post('/detect-selectors', authorize('admin'), wrap(detectSelectorsHandler));
 
 // Only admin can create/update/delete scraper configs
 router.post('/', authorize('admin'), wrap(createConfigHandler));

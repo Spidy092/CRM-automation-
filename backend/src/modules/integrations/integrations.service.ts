@@ -11,6 +11,7 @@ import {
 import {
   Integration,
   IntegrationActor,
+  IntegrationBulkTestResult,
   IntegrationPublic,
   IntegrationTestResult,
   IntegrationUpdateInput,
@@ -22,6 +23,8 @@ import * as smtpConnector from './smtp/smtp.connector';
 import * as googleSheetsConnector from './google-sheets/google-sheets.connector';
 import * as googleCalendarConnector from './google-calendar/google-calendar.connector';
 import * as outlookConnector from './outlook/outlook.connector';
+import * as openwaConnector from './openwa/openwa.connector';
+import * as hunterConnector from './hunter/hunter.service';
 
 function toPublic(row: Integration | IntegrationPublic): IntegrationPublic {
   // Explicit field projection — keeps `encrypted_credentials` out of the response.
@@ -40,6 +43,75 @@ function toPublic(row: Integration | IntegrationPublic): IntegrationPublic {
 export async function listIntegrations(): Promise<IntegrationPublic[]> {
   const rows = await findAllPublic();
   return rows.map((r) => toPublic(r));
+}
+
+/**
+ * Tests all enabled integrations in parallel.
+ * Disabled integrations are counted as skipped and are not exercised.
+ * Each individual test is wrapped so one failure cannot abort the batch.
+ */
+export async function testAllIntegrations(
+  actor: IntegrationActor,
+): Promise<IntegrationBulkTestResult> {
+  const integrations = await findAllPublic();
+
+  const enabled = integrations.filter((i) => i.is_enabled);
+  const skipped = integrations.length - enabled.length;
+
+  const settled = await Promise.allSettled(
+    enabled.map(async (integration) => {
+      try {
+        const result = await testIntegration(integration.id, actor);
+        return {
+          id: integration.id,
+          name: integration.name,
+          ok: result.ok,
+          status: result.status,
+          message: result.message,
+          tested_at: result.tested_at,
+        };
+      } catch (err) {
+        // Defensive fallback: testIntegration normally never throws, but if it
+        // does we still want the batch to continue and report the reason.
+        const message = err instanceof Error ? err.message : 'unknown error';
+        return {
+          id: integration.id,
+          name: integration.name,
+          ok: false,
+          status: 'failed',
+          message,
+          tested_at: new Date().toISOString(),
+        };
+      }
+    }),
+  );
+
+  const results = settled.map((outcome) => {
+    if (outcome.status === 'fulfilled') {
+      return outcome.value;
+    }
+    // Promise.allSettled rejects only when the inner wrapper itself throws,
+    // which should never happen. Provide a safe fallback just in case.
+    return {
+      id: 'unknown',
+      name: 'unknown',
+      ok: false,
+      status: 'failed',
+      message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+      tested_at: new Date().toISOString(),
+    };
+  });
+
+  const passed = results.filter((r) => r.ok).length;
+  const failed = results.length - passed;
+
+  return {
+    total: integrations.length,
+    passed,
+    failed,
+    skipped,
+    results,
+  };
 }
 
 export async function getIntegration(id: string): Promise<IntegrationPublic> {
@@ -123,8 +195,9 @@ export async function testIntegration(
   }
 
   // Base sanity-check: credentials must decrypt to valid JSON.
+  let decryptedCredentials: Record<string, unknown> | null = null;
   try {
-    JSON.parse(decrypt(credentials));
+    decryptedCredentials = JSON.parse(decrypt(credentials)) as Record<string, unknown>;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unknown error';
     await recordTestResult(id, 'failed');
@@ -148,34 +221,87 @@ export async function testIntegration(
   let testMessage = 'Credentials validated successfully.';
   try {
     switch (integration.name) {
-      case 'whatsapp':
-        await whatsappConnector.loadCredentials();
-        testMessage = 'WhatsApp credentials validated (shape + decryption OK).';
+      case 'whatsapp': {
+        const creds = await whatsappConnector.loadCredentials();
+        const testRes = await whatsappConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `WhatsApp connection successful (${testRes.latencyMs}ms).`;
         break;
-      case 'twilio':
-        await twilioConnector.loadCredentials();
-        testMessage = 'Twilio credentials validated (shape + decryption OK).';
+      }
+      case 'twilio': {
+        const creds = await twilioConnector.loadCredentials();
+        const testRes = await twilioConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Twilio connection successful (${testRes.latencyMs}ms).`;
         break;
-      case 'sendgrid':
-        await sendgridConnector.loadCredentials();
-        testMessage = 'SendGrid credentials validated (shape + decryption OK).';
+      }
+      case 'sendgrid': {
+        const creds = await sendgridConnector.loadCredentials();
+        const testRes = await sendgridConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `SendGrid connection successful (${testRes.latencyMs}ms).`;
         break;
-      case 'smtp':
-        await smtpConnector.loadCredentials();
-        testMessage = 'SMTP credentials validated (shape + decryption OK).';
+      }
+      case 'smtp': {
+        const creds = await smtpConnector.loadCredentials();
+        const testRes = await smtpConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `SMTP connection successful (${testRes.latencyMs}ms).`;
         break;
-      case 'google_sheets':
-        await googleSheetsConnector.loadCredentials();
-        testMessage = 'Google Sheets credentials validated (shape + decryption OK).';
+      }
+      case 'google_sheets': {
+        const creds = await googleSheetsConnector.loadCredentials();
+        const testRes = await googleSheetsConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Google Sheets connection successful (${testRes.latencyMs}ms).`;
         break;
-      case 'google_calendar':
-        await googleCalendarConnector.loadCredentials();
-        testMessage = 'Google Calendar credentials validated (shape + decryption OK).';
+      }
+      case 'google_calendar': {
+        const creds = await googleCalendarConnector.loadCredentials();
+        const testRes = await googleCalendarConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Google Calendar connection successful (${testRes.latencyMs}ms).`;
         break;
-      case 'outlook':
-        await outlookConnector.loadCredentials();
-        testMessage = 'Outlook credentials validated (shape + decryption OK).';
+      }
+      case 'outlook': {
+        const creds = await outlookConnector.loadCredentials();
+        const testRes = await outlookConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Outlook connection successful (${testRes.latencyMs}ms).`;
         break;
+      }
+      case 'openwa': {
+        const loaded = await openwaConnector.loadCredentials(decryptedCredentials);
+        const healthCheck = await openwaConnector.healthCheck({ credentials: loaded });
+        if (healthCheck.ok) {
+          testMessage = `OpenWA session healthy (${healthCheck.latencyMs}ms).`;
+        } else {
+          const errorMessage = healthCheck.error ?? 'OpenWA health check failed';
+          await recordTestResult(id, 'failed');
+          await writeAuditLog({
+            userId: actor.id,
+            action: 'integration.test_failed',
+            entityType: 'integration',
+            entityId: id,
+            newValue: { reason: 'openwa_health_check_failed', error: errorMessage },
+            ipAddress: actor.ipAddress ?? null,
+          });
+          return {
+            ok: false,
+            status: 'failed',
+            message: errorMessage,
+            tested_at: new Date().toISOString(),
+          };
+        }
+        break;
+      }
+      case 'hunter': {
+        const creds = await hunterConnector.loadCredentials(decryptedCredentials || undefined);
+        const testRes = await hunterConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Hunter.io connection successful (${testRes.latencyMs}ms).`;
+        break;
+      }
       default:
         testMessage = `Credentials for "${integration.display_name}" decrypted and parsed successfully.`;
     }

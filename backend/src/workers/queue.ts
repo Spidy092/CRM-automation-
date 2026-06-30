@@ -64,7 +64,7 @@ export const AI_CREATE_INBOX_ITEM = 'ai:create-inbox-item';
 export const AI_INBOX_QUEUE = 'ai-inbox';
 
 // AI Sales Operator events (Phase 2)
-export const AI_EVENTS_QUEUE = 'ai-events' as const;
+export const AI_EVENTS_QUEUE = 'ai-events';
 
 // AI Next-Best-Action decisions (Phase 2 — Sprint 6)
 export const AI_DECISION_LEAD = 'ai:next-action';
@@ -309,6 +309,12 @@ export interface AiGenerateCampaignBriefJob {
   triggeredBy: string;
 }
 
+export interface AiDecisionLeadJob {
+  leadId: string;
+  force?: boolean;
+  context?: Record<string, unknown>;
+}
+
 export type AiEventJob = {
   event: AIDomainEvent['type'];
   payload: AIDomainEvent['payload'];
@@ -321,7 +327,7 @@ export type LeadEventType =
   | 'lead.stage_moved'
   | 'lead.assigned'
   | 'lead.status_changed'
-  | 'lead.reply.received';   // Phase 2 — inbound message from any channel
+  | 'lead.reply.received'; // Phase 2 — inbound message from any channel
 
 export interface LeadEventJob {
   event: LeadEventType;
@@ -415,6 +421,12 @@ export async function enqueueAiCampaignBrief(payload: AiGenerateCampaignBriefJob
   });
 }
 
+export async function enqueueAiDecision(payload: AiDecisionLeadJob): Promise<void> {
+  await aiDecisionQueue.add(AI_DECISION_LEAD, payload, {
+    jobId: `ai:decision:${payload.leadId}${payload.force ? ':force' : ''}`,
+  });
+}
+
 export async function enqueueOutreachStopCheck(payload: OutreachStopCheckJob): Promise<void> {
   await outreachQueue.add(OUTREACH_STOP_CHECK, payload, {
     jobId: outreachJobId('stop-check', payload),
@@ -425,10 +437,17 @@ export async function cancelPendingOutreachJobs(filter: {
   leadId?: string;
   campaignId?: string;
 }): Promise<number> {
-  const jobs = await outreachQueue.getJobs(['waiting', 'delayed', 'prioritized', 'waiting-children']);
+  const jobs = await outreachQueue.getJobs([
+    'waiting',
+    'delayed',
+    'prioritized',
+    'waiting-children',
+  ]);
   let removed = 0;
   for (const job of jobs) {
-    const data = job.data as Partial<OutreachDispatchJob & OutreachFollowUpJob & OutreachStopCheckJob>;
+    const data = job.data as Partial<
+      OutreachDispatchJob & OutreachFollowUpJob & OutreachStopCheckJob
+    >;
     if (filter.leadId && data.leadId !== filter.leadId) continue;
     if (filter.campaignId && data.campaignId !== filter.campaignId) continue;
     try {

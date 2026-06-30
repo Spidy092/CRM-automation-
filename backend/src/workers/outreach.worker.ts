@@ -245,7 +245,8 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
 // ── Follow-up Scheduler (exported for testability) ─────────────────────────
 
 export async function handleFollowUp(data: OutreachFollowUpJob): Promise<void> {
-  const { leadId, campaignId, sequenceId, nextStepNumber, mockMode, aiPersonalizationEnabled } = data;
+  const { leadId, campaignId, sequenceId, nextStepNumber, mockMode, aiPersonalizationEnabled } =
+    data;
 
   // 1. Re-validate the sequence and step before dispatching
   const sequence = await findSequenceById(sequenceId);

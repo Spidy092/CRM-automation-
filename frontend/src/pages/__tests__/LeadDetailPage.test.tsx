@@ -72,11 +72,11 @@ describe('LeadDetailPage', () => {
 
   it('renders lead score', () => {
     renderWithProviders(<LeadDetailPage />);
-    expect(screen.getByText('75')).toBeDefined();
+    expect(screen.getAllByText('75').length).toBeGreaterThan(0);
   });
 
   it('renders classification', () => {
     renderWithProviders(<LeadDetailPage />);
-    expect(screen.getByText('hot')).toBeDefined();
+    expect(screen.getAllByText('hot').length).toBeGreaterThan(0);
   });
 });

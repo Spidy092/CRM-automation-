@@ -16,6 +16,8 @@ jest.mock('./queue', () => ({
   enqueueOutreachFollowUp: jest.fn(),
   enqueueOutreachStopCheck: jest.fn(),
   enqueueAiResearch: jest.fn(),
+  enqueueAiDecision: jest.fn(),
+  enqueueAiCreateInboxItem: jest.fn(),
   cancelPendingOutreachJobs: jest.fn(),
   scoringQueue: { add: jest.fn() },
   SCORING_CALCULATE_LEAD: 'scoring:calculate-lead',
@@ -51,6 +53,14 @@ jest.mock('../modules/leads/leads.repository', () => ({
   findLeadById: jest.fn(),
 }));
 
+jest.mock('../modules/users/users.repository', () => ({
+  findUserById: jest.fn(),
+}));
+
+jest.mock('../modules/agent/agent.service', () => ({
+  proposeAgentAction: jest.fn(),
+}));
+
 jest.mock('../modules/notifications/notifications.emitter', () => ({
   pushToUser: jest.fn(),
 }));
@@ -67,10 +77,14 @@ import { handleStageMoved, handleLeadEvent, startEventsWorker } from './events.w
 import { findActiveCampaignsByPipeline, addLeadsToCampaign } from '../modules/campaigns/campaigns.repository';
 import { findSequenceById, findNextBestActionByLeadId } from '../modules/outreach/outreach.repository';
 import { findLeadById } from '../modules/leads/leads.repository';
+import { findUserById } from '../modules/users/users.repository';
+import { proposeAgentAction } from '../modules/agent/agent.service';
 import { pushToUser } from '../modules/notifications/notifications.emitter';
 import {
   enqueueOutreachDispatch,
   enqueueAiResearch,
+  enqueueAiDecision,
+  enqueueAiCreateInboxItem,
   scoringQueue,
   cancelPendingOutreachJobs,
 } from './queue';
@@ -81,9 +95,13 @@ const mockAddLeadsToCampaign = addLeadsToCampaign as jest.Mock;
 const mockFindSequenceById = findSequenceById as jest.Mock;
 const mockFindNextBestActionByLeadId = findNextBestActionByLeadId as jest.Mock;
 const mockFindLeadById = findLeadById as jest.Mock;
+const mockFindUserById = findUserById as jest.Mock;
+const mockProposeAgentAction = proposeAgentAction as jest.Mock;
 const mockPushToUser = pushToUser as jest.Mock;
 const mockEnqueueOutreachDispatch = enqueueOutreachDispatch as jest.Mock;
 const mockEnqueueAiResearch = enqueueAiResearch as jest.Mock;
+const mockEnqueueAiDecision = enqueueAiDecision as jest.Mock;
+const mockEnqueueAiCreateInboxItem = enqueueAiCreateInboxItem as jest.Mock;
 const mockScoringQueueAdd = scoringQueue.add as jest.Mock;
 const mockCancelPendingOutreachJobs = cancelPendingOutreachJobs as jest.Mock;
 
@@ -123,6 +141,18 @@ beforeEach(() => {
   mockFindSequenceById.mockResolvedValue(baseSequence);
   mockFindNextBestActionByLeadId.mockResolvedValue(null);
   mockFindLeadById.mockResolvedValue(null);
+  mockFindUserById.mockResolvedValue({
+    id: 'rep1',
+    name: 'Sales Rep',
+    email: 'rep@example.com',
+    role: 'sales',
+    is_active: true,
+    created_at: new Date('2026-06-25T00:00:00Z'),
+  });
+  mockProposeAgentAction.mockResolvedValue({
+    policy: { outcome: 'require_approval', reason: 'Action requires human approval', assignTo: 'rep1' },
+    action: { id: 'agent-action-1' },
+  });
 });
 
 describe('startEventsWorker', () => {
@@ -186,7 +216,8 @@ describe('handleStageMoved', () => {
       ['send_email', 'email'],
       ['send_sms', 'sms'],
       ['send_whatsapp', 'whatsapp'],
-    ] as const)('switches to %s when next_best_action is %s', async (action, expectedChannel) => {
+    ] as const)('routes %s through an agent action using %s', async (action, expectedChannel) => {
+      mockFindLeadById.mockResolvedValue({ id: 'lead1', assigned_to: 'rep1', business_name: 'Acme' });
       mockFindNextBestActionByLeadId.mockResolvedValue({
         action,
         reason: 'preferred channel',
@@ -195,12 +226,48 @@ describe('handleStageMoved', () => {
 
       await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
 
-      expect(mockEnqueueOutreachDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ channel: expectedChannel }),
+      expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();
+      expect(mockProposeAgentAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'ai_decision',
+          actionName: 'outreach.send_manual',
+          actor: expect.objectContaining({ id: 'rep1', role: 'sales' }),
+          assignTo: 'rep1',
+          confidence: 90,
+          autonomyLevel: 'supervised',
+          aiMinConfidence: 70,
+          args: expect.objectContaining({
+            leadId: 'lead1',
+            campaignId: 'camp1',
+            sequenceId: 'seq1',
+            stepNumber: 1,
+            channel: expectedChannel,
+            templateId: 't1',
+            mockMode: false,
+          }),
+        }),
       );
       expect(logger.info).toHaveBeenCalledWith(
-        'lead.stage_moved: outreach channel switched per next_best_action',
-        expect.objectContaining({ leadId: 'lead1', action, channel: expectedChannel }),
+        'lead.stage_moved: outreach channel routed through agent action',
+        expect.objectContaining({ leadId: 'lead1', action, channel: expectedChannel, agentActionId: 'agent-action-1' }),
+      );
+    });
+
+    it('routes to review when no assigned actor can be resolved for AI outreach', async () => {
+      mockFindLeadById.mockResolvedValue({ id: 'lead1', assigned_to: null, business_name: 'Acme' });
+      mockFindNextBestActionByLeadId.mockResolvedValue({
+        action: 'send_email',
+        reason: 'preferred channel',
+        confidence: 90,
+      });
+
+      await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
+
+      expect(mockProposeAgentAction).not.toHaveBeenCalled();
+      expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        'lead.stage_moved: no assigned actor for next_best_action outreach, routing to review',
+        expect.objectContaining({ leadId: 'lead1', campaignId: 'camp1', action: 'send_email' }),
       );
     });
   });
@@ -225,33 +292,28 @@ describe('handleStageMoved', () => {
   });
 
   describe('other skip actions', () => {
-    it.each([
-      ['call', false],
-      ['escalate_to_rep', true],
-      ['move_to_nurture', true],
-      ['request_review', false],
-    ] as const)('skips outreach and logs for action %s', async (action, shouldLogEventBusUnavailable) => {
-      mockFindNextBestActionByLeadId.mockResolvedValue({
-        action,
-        reason: 'needs human touch',
-        confidence: 85,
-      });
+    it.each(['call', 'escalate_to_rep', 'move_to_nurture', 'request_review'] as const)(
+      'skips outreach and creates review item for action %s',
+      async (action) => {
+        mockFindLeadById.mockResolvedValue({ id: 'lead1', assigned_to: 'rep1', business_name: 'Acme' });
+        mockFindNextBestActionByLeadId.mockResolvedValue({
+          action,
+          reason: 'needs human touch',
+          confidence: 85,
+        });
 
-      await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
+        await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
 
-      expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();
-      expect(logger.info).toHaveBeenCalledWith(
-        'lead.stage_moved: outreach skipped per next_best_action',
-        expect.objectContaining({ leadId: 'lead1', action }),
-      );
-
-      if (shouldLogEventBusUnavailable) {
+        expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();
         expect(logger.info).toHaveBeenCalledWith(
-          'lead.stage_moved: internal event not emitted (eventBus unavailable)',
+          'lead.stage_moved: outreach skipped per next_best_action',
           expect.objectContaining({ leadId: 'lead1', action }),
         );
-      }
-    });
+        expect(mockEnqueueAiCreateInboxItem).toHaveBeenCalledWith(
+          expect.objectContaining({ assignedTo: 'rep1', leadId: 'lead1', campaignId: 'camp1' }),
+        );
+      },
+    );
   });
 
   it('skips campaign when sequence_id is missing', async () => {
@@ -342,6 +404,11 @@ describe('handleLeadEvent', () => {
       'lead.scored',
       { leadId: 'lead1', score: 85, classification: 'hot' },
     );
+    expect(mockEnqueueAiDecision).toHaveBeenCalledWith({
+      leadId: 'lead1',
+      force: true,
+      context: { score: 85, classification: 'hot' },
+    });
   });
 
   it('logs warning for unknown events', async () => {

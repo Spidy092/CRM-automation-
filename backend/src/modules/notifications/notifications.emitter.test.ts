@@ -3,15 +3,22 @@
  * Redis-backed paths (pushToUser, initNotificationSubscriber) are exercised
  * with the ioredis constructor mocked — no real Redis required.
  */
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+
+const mockPublish = jest.fn<any>().mockResolvedValue(1);
+const mockSubscribe = jest.fn<any>().mockResolvedValue(1);
+const mockOn = jest.fn();
+
 jest.mock('ioredis', () => {
-  const EventEmitter = require('events').EventEmitter;
   return jest.fn().mockImplementation(() => {
-    const ee = new EventEmitter();
-    (ee as unknown as { publish: jest.Mock }).publish = jest.fn().mockResolvedValue(1);
-    (ee as unknown as { subscribe: jest.Mock }).subscribe = jest.fn().mockResolvedValue(1);
-    return ee;
+    return {
+      publish: mockPublish,
+      subscribe: mockSubscribe,
+      on: mockOn,
+    };
   });
 });
+
 jest.mock('../../shared/utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -67,54 +74,40 @@ describe('subscribeUser', () => {
 
 describe('pushToUser', () => {
   beforeEach(() => {
-    (IORedis as unknown as jest.Mock).mockClear();
+    mockPublish.mockClear();
+    mockSubscribe.mockClear();
+    (IORedis as unknown as jest.Mock<any>).mockClear();
   });
 
   it('publishes a JSON payload to the crm:notifications channel', async () => {
-    const publish = jest.fn().mockResolvedValue(1);
-    (IORedis as unknown as jest.Mock).mockImplementation(() => ({
-      publish,
-      subscribe: jest.fn().mockResolvedValue(1),
-      on: jest.fn(),
-    }));
+    mockPublish.mockResolvedValueOnce(1);
 
     await pushToUser('u-1', baseNotification);
 
-    expect(IORedis).toHaveBeenCalled();
-    expect(publish).toHaveBeenCalledTimes(1);
-    const [channel, payload] = publish.mock.calls[0];
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    const [channel, payload] = mockPublish.mock.calls[0];
     expect(channel).toBe('crm:notifications');
-    const parsed = JSON.parse(payload);
+    const parsed = JSON.parse(payload as string);
     expect(parsed.userId).toBe('u-1');
     expect(parsed.notification).toEqual(baseNotification);
   });
 
   it('swallows publish errors and logs a warning', async () => {
-    const publish = jest.fn().mockRejectedValue(new Error('redis down'));
-    (IORedis as unknown as jest.Mock).mockImplementation(() => ({
-      publish,
-      subscribe: jest.fn().mockResolvedValue(1),
-      on: jest.fn(),
-    }));
+    mockPublish.mockRejectedValueOnce(new Error('redis down'));
 
     await expect(pushToUser('u-2', baseNotification)).resolves.toBeUndefined();
     // No throw — error is logged, not propagated.
-    expect(publish).toHaveBeenCalled();
+    expect(mockPublish).toHaveBeenCalled();
   });
 });
 
 describe('initNotificationSubscriber', () => {
   beforeEach(() => {
-    (IORedis as unknown as jest.Mock).mockClear();
+    (IORedis as unknown as jest.Mock<any>).mockClear();
   });
 
   it('is idempotent — calling twice does not create a second subscriber', () => {
-    const subscribe = jest.fn().mockResolvedValue(1);
-    (IORedis as unknown as jest.Mock).mockImplementation(() => ({
-      publish: jest.fn().mockResolvedValue(1),
-      subscribe,
-      on: jest.fn(),
-    }));
+    mockSubscribe.mockResolvedValue(1);
 
     initNotificationSubscriber();
     initNotificationSubscriber();
@@ -122,6 +115,6 @@ describe('initNotificationSubscriber', () => {
 
     // Only the first call should construct a subscriber; subsequent calls are no-ops.
     expect(IORedis).toHaveBeenCalledTimes(1);
-    expect(subscribe).toHaveBeenCalledWith('crm:notifications');
+    expect(mockSubscribe).toHaveBeenCalledWith('crm:notifications');
   });
 });

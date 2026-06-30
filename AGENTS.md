@@ -63,18 +63,18 @@
 | Sprint 3 | Week 5–6 | Automation — Outreach Engine, All Integrations, Webhooks | 🟢 100% | outreach, templates, integrations, webhooks modules fully implemented with tests. 5 BullMQ workers (scoring, assignment, outreach, reportExport, scraper). 9 integration connectors (WhatsApp, Twilio, SendGrid, SMTP, Google Ads, Facebook, Google Sheets, Google Calendar, Outlook). OAuth flow fully implemented (Google Ads + Facebook). Webhook handlers + verifiers for WhatsApp/Twilio/SendGrid. |
 | Sprint 4 | Week 7–8 | Intelligence — AI Personalization, Scrapers, Dashboards, UAT | 🟢 ~90% | reports, scraper modules fully implemented with tests. AI settings module done. `outreach.prompt.ts` handles OpenAI personalization. DLQ routing implemented (`lib/dlq.ts`). Prometheus counters on all 5 workers. Sentry wired (`initSentry()` in `index.ts`). `docker-compose.prod.yml` + `.env.prod.example` created. Remaining: Sentry not verified with real DSN, backend test coverage below 70% target. |
 
-### Overall Progress
+### Overall Progress (verified 2026-06-27)
 
-| Area | % done |
-|---|---|
-| Backend modules | ~95% (19 module directories: 14 Phase 1 fully implemented + 4 Phase 2 AI modules partially scaffolded + notifications module; all Phase 1 modules have controller/service/repository/routes/schema/types) |
-| Backend tests | ~85% (75 test files covering all 14 Phase 1 modules + workers + webhooks + shared utils; overall stmts 53.9%, branches 39.3%, funcs 54.3%, lines 54.9%) |
-| Frontend pages | ~95% (24 pages, all wired in App.tsx routing; covers all major modules) |
-| Frontend tests | ~60% (37 test files covering 24 pages + 10 API clients + 2 stores + 1 component; overall stmts 64.2%, branches 68.7%) |
-| DevOps / CI-CD | ~45% (docker-compose.yml with postgres/redis/minio/api/worker/bull-board; docker-compose.prod.yml with health checks; Dockerfile + Dockerfile.dev; nginx config; .env.prod.example; NO ci.yml — GitHub Actions not yet created) |
-| **Overall Phase 1** | **~85–90%** |
+| Area | % done | Details |
+|---|---|---|
+| Backend modules | 100% | All 14 Phase 1 modules fully implemented (controller/service/repository/routes/schema/types). Phase 2 AI modules also fully implemented (not scaffolding). |
+| Backend tests | 95% | 1581 passed, 3 failed (compile errors). Overall coverage: **86.2% stmts, 72.4% branches, 82.5% funcs, 87.0% lines** — exceeds 70% target. |
+| Frontend pages | 100% | 30 pages, all wired in App.tsx routing with ProtectedRoute wrapper. |
+| Frontend tests | 90% | 42 passed, 1 failed (integrations.test.tsx). 43 test files total (28 pages + 10 API + 2 stores + 3 components). |
+| DevOps / CI-CD | 85% | docker-compose.yml + docker-compose.prod.yml + Dockerfile + Dockerfile.dev + nginx config + GitHub Actions CI (.github/workflows/ci.yml) + .env.prod.example all exist. |
+| **Overall Phase 1** | **~95%** | |
 
-### What's Done (verified 2026-06-26)
+### What's Done (verified 2026-06-27)
 
 **Backend (19 module directories, 75 test files, 23 migrations):**
 
@@ -94,29 +94,29 @@ Phase 1 modules (fully implemented with controller/service/repository/routes/sch
 - `scraper/` — Cheerio-based scraper, config CRUD, run logs (7 files, 4 tests)
 - `ai-settings/` — OpenAI config management (6 files, 1 test)
 
-Phase 2 modules (partially scaffolded):
-- `ai-intelligence/` — Lead research, memory, AI profiles, decision log (3 source files, 2 tests — repo+service only, no HTTP layer)
-- `ai-reply/` — Inbound reply classification, draft generation (3 source files, 0 tests — repo+service only)
-- `ai-campaign-brain/` — Campaign pre-launch strategy brief (3 source files, 0 tests — repo+service only)
-- `ai-inbox/` — Copilot inbox for reps (6 source files, 0 tests — full module structure but untested)
+Phase 2 modules (fully implemented with tests):
+- `ai-intelligence/` — Lead research, memory, AI profiles, decision log (6 files, 4 tests — 38 test cases)
+- `ai-reply/` — Inbound reply classification, draft generation (6 files, 5 tests — 57 test cases)
+- `ai-campaign-brain/` — Campaign pre-launch strategy brief (6 files, 4 tests — 34 test cases)
+- `ai-inbox/` — Copilot inbox for reps (6 files, 5 tests — 46 test cases)
 
 Additional module:
 - `notifications/` — SSE real-time notification emitter (3 files, 2 tests — custom architecture, no service/repo)
 
-**Workers (10 processor files, 3 test files):**
+**Workers (10 processor files, 10 test files):**
 Phase 1:
-- `scoring.worker.ts` — `scoring:calculate-lead`, `scoring:recalculate-all`
-- `assignment.worker.ts` — `assignment:round-robin`
-- `outreach.worker.ts` — Outreach message dispatch (430 lines, has E2E test)
+- `scoring.worker.ts` — `scoring:calculate-lead`, `scoring:recalculate-all` (has test)
+- `assignment.worker.ts` — `assignment:round-robin` (has test)
+- `outreach.worker.ts` — Outreach message dispatch (has test + E2E test)
 - `reportExport.worker.ts` — Async CSV export (has test)
-- `scraper.worker.ts` — Background scraper runs
+- `scraper.worker.ts` — Background scraper runs (**NO test file**)
 
-Phase 2 (scaffolded):
-- `aiResearch.worker.ts` — Lead research on scrape/import (95 lines, 0 tests)
-- `aiReply.worker.ts` — Inbound reply classification (67 lines, 0 tests)
-- `aiCampaignBrain.worker.ts` — Campaign brief generation (67 lines, 0 tests)
-- `aiInbox.worker.ts` — Inbox item creation (94 lines, 0 tests)
-- `events.worker.ts` — Event bus worker (205 lines, 0 tests)
+Phase 2 (fully implemented):
+- `aiResearch.worker.ts` — Lead research on scrape/import (has test)
+- `aiReply.worker.ts` — Inbound reply classification (has test)
+- `aiCampaignBrain.worker.ts` — Campaign brief generation (has test)
+- `aiInbox.worker.ts` — Inbox item creation + expiry sweep cron (has test)
+- `events.worker.ts` — Event bus worker (has test)
 
 Infrastructure: `index.ts` (worker orchestration), `queue.ts` (queue definitions, 428 lines)
 
@@ -136,23 +136,41 @@ Infrastructure: `index.ts` (worker orchestration), `queue.ts` (queue definitions
 - Migrations 0000–0016: Phase 1 schema, seeds, fixes
 - Migrations 0017–0022: Phase 2 tables (lead_ai_profiles, ai_decision_log, lead_conversation_summaries, campaign_ai_briefs, ai_inbox_items, campaign autonomy columns)
 
-**Frontend (24 pages, 15 API clients, 2 stores, 17 components, 37 tests):**
-- All 24 pages routed in App.tsx with ProtectedRoute wrapper
-- 26 routes (3 public + 23 protected, with parametric reuse)
+**Frontend (30 pages, 19 API clients, 2 stores, 16 components, 43 tests):**
+- All 30 pages routed in App.tsx with ProtectedRoute wrapper
+- 30 routes (3 public + 27 protected)
 - TanStack Query for server state, Zustand for client state
 - shadcn/ui component library (14 UI components + 2 top-level)
 - Layout with sidebar navigation, toast notifications, loading/empty states
-- Frontend coverage: 64.2% stmts, 68.7% branches (latest run)
+- Frontend coverage: 42 passed, 1 failed (integrations.test.tsx — apiClient.put mock issue)
 
 ### Remaining Gaps (to reach 100% Phase 1)
 
-1. **Coverage gap** — Backend overall 53.9% stmts (target 70%); auth module likely needs 90%+. Sprint 2 modules individually pass but overall is dragged down by newer modules.
-2. **Frontend tests** — 37 test files exist (24 page + 10 API + 2 store + 1 component). Overall coverage is 64.2% stmts.
-3. ~~**OAuth flow**~~ — ✅ **Done 2026-06-24** — `integrations/oauth/` fully implemented with Google Ads + Facebook OAuth 2.0 flows, state parameter CSRF protection, token exchange, and refresh.
-4. ~~**DLQ routing**~~ — ✅ **Already implemented** — `lib/dlq.ts` provides `moveToDLQ()` and `registerDLQHandler()`. All 5 workers use it.
-5. ~~**Prometheus metrics**~~ — ✅ **Done 2026-06-24** — All 5 workers now emit `crm_jobs_processed_total`, `crm_jobs_failed_total`, `crm_job_duration_seconds`.
-6. **Sentry integration** — ✅ **Already wired** — `initSentry()` called in `index.ts`, all workers capture exceptions. Needs end-to-end verification with real DSN.
-7. ~~**Prod deploy**~~ — ✅ **Done 2026-06-24** — `docker-compose.prod.yml` created with production-grade settings (health checks, networks, env vars). `.env.prod.example` added.
+1. **3 failing backend tests** (compile errors — not logic bugs):
+   - `reports/reports.routes.test.ts` — `wrap(downloadExportHandler)` returns `void` instead of `Promise<unknown>`
+   - `integrations/oauth/oauth.routes.test.ts` — `asyncHandler` return type mismatch
+   - `integrations/integrations.routes.test.ts` — cascade from oauth route error
+2. **1 failing frontend test** — `integrations.test.tsx` — `apiClient.put is not a function`
+3. **Low-coverage backend files** (drag down overall):
+   - `dlq.ts` — 30.4% stmts (test infrastructure, not business logic)
+   - `oauth.service.ts` — 28.7% stmts (needs more test scenarios)
+   - `scraper.worker.ts` — 0% stmts (no test file)
+   - `httpMetrics.ts` — 0% stmts (no test file)
+   - `notifications.routes.ts` — 0% stmts (no test file)
+   - `users.repository.ts` — 42.9% stmts (needs more test scenarios)
+   - `rateLimiter.ts` — 0% stmts (no test file)
+   - `upload.ts` — 0% stmts (no test file)
+   - `shared/middleware/` — 65.2% stmts overall
+   - `shared/utils/` — 77.2% stmts overall
+4. **Missing frontend test files** (8 API clients):
+   - `aiCampaignBrain.ts`, `aiDecisions.ts`, `aiInbox.ts`, `aiIntelligence.ts`, `aiSettings.ts`, `customFields.ts`, `outreach.ts`, `templates.ts`
+5. **Missing frontend component test** — `LeadTimeline.tsx`
+6. ~~**OAuth flow**~~ — ✅ **Done 2026-06-24**
+7. ~~**DLQ routing**~~ — ✅ **Already implemented**
+8. ~~**Prometheus metrics**~~ — ✅ **Done 2026-06-24**
+9. **Sentry integration** — ✅ **Already wired** — `initSentry()` called in `index.ts`. Needs end-to-end verification with real DSN.
+10. ~~**Prod deploy**~~ — ✅ **Done 2026-06-24**
+11. ~~**GitHub Actions CI**~~ — ✅ **Done** — `.github/workflows/ci.yml` exists (7276 bytes).
 
 ---
 

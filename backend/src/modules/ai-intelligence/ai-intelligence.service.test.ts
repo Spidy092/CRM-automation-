@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { redis } from '../../shared/utils/redis';
 import { logger } from '../../shared/utils/logger';
+import { Sentry } from '../../shared/utils/sentry';
 import { incAiTokens } from '../../shared/utils/metrics';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { findLeadById } from '../leads/leads.repository';
@@ -35,6 +36,10 @@ jest.mock('../../shared/utils/logger', () => ({
     warn: jest.fn(),
     error: jest.fn(),
   },
+}));
+
+jest.mock('../../shared/utils/sentry', () => ({
+  Sentry: { captureException: jest.fn() },
 }));
 
 jest.mock('../../shared/utils/metrics', () => ({
@@ -538,7 +543,7 @@ describe('ai-intelligence.service', () => {
       expect(incAiTokens).toHaveBeenCalledWith('research', 50);
     });
 
-    it('warns but does not throw when decision log write fails on success path', async () => {
+    it('logs at error level and forwards to Sentry (no swallow) when decision log write fails on success path', async () => {
       (findAiProfileByLeadId as jest.Mock).mockResolvedValueOnce(null);
       (findLeadById as jest.Mock).mockResolvedValueOnce(lead);
       (getAiConfig as jest.Mock).mockResolvedValueOnce(aiConfig);
@@ -551,13 +556,32 @@ describe('ai-intelligence.service', () => {
 
       const result = await researchLead('l1');
       expect(result).toEqual(profile);
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(logger.warn).not.toHaveBeenCalledWith(
         'ai research: failed to write decision log',
-        expect.any(Object),
+        expect.anything(),
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        'ai decision log write failed',
+        expect.objectContaining({
+          lead_id: 'l1',
+          decision_type: 'research',
+          phase: 'success',
+          error: 'db down',
+        }),
+      );
+      expect(Sentry.captureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          tags: expect.objectContaining({
+            decision_type: 'research',
+            decision_log_phase: 'success',
+          }),
+          extra: expect.objectContaining({ lead_id: 'l1' }),
+        }),
       );
     });
 
-    it('warns but does not throw when decision log write fails with a non-Error value', async () => {
+    it('handles a non-Error decision-log write failure without throwing', async () => {
       (findAiProfileByLeadId as jest.Mock).mockResolvedValueOnce(null);
       (findLeadById as jest.Mock).mockResolvedValueOnce(lead);
       (getAiConfig as jest.Mock).mockResolvedValueOnce(aiConfig);
@@ -570,9 +594,9 @@ describe('ai-intelligence.service', () => {
 
       const result = await researchLead('l1');
       expect(result).toEqual(profile);
-      expect(logger.warn).toHaveBeenCalledWith(
-        'ai research: failed to write decision log',
-        expect.objectContaining({ leadId: 'l1', error: 'db down' }),
+      expect(logger.error).toHaveBeenCalledWith(
+        'ai decision log write failed',
+        expect.objectContaining({ lead_id: 'l1', error: 'db down' }),
       );
     });
 
@@ -589,6 +613,38 @@ describe('ai-intelligence.service', () => {
       await expect(researchLead('l1')).rejects.toThrow('rate limit');
       expect(setEnrichmentStatus).toHaveBeenCalledWith('l1', 'failed');
       expect(insertDecisionLog).toHaveBeenCalled();
+    });
+
+    it('logs at error level and forwards to Sentry (no silent null) when failure-phase decision log write fails', async () => {
+      (findAiProfileByLeadId as jest.Mock).mockResolvedValueOnce(null);
+      (findLeadById as jest.Mock).mockResolvedValueOnce(lead);
+      (getAiConfig as jest.Mock).mockResolvedValueOnce(aiConfig);
+      const mockCreate = jest.fn().mockRejectedValueOnce(new Error('rate limit'));
+      MockedOpenAI.mockImplementation(() => ({
+        chat: { completions: { create: mockCreate } },
+      }));
+      // Failure-phase decision log write itself rejects
+      (insertDecisionLog as jest.Mock).mockRejectedValueOnce(new Error('audit db down'));
+
+      await expect(researchLead('l1')).rejects.toThrow('rate limit');
+      expect(logger.error).toHaveBeenCalledWith(
+        'ai decision log write failed',
+        expect.objectContaining({
+          lead_id: 'l1',
+          decision_type: 'research',
+          phase: 'failure',
+          error: 'audit db down',
+        }),
+      );
+      expect(Sentry.captureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          tags: expect.objectContaining({
+            decision_type: 'research',
+            decision_log_phase: 'failure',
+          }),
+        }),
+      );
     });
   });
 });

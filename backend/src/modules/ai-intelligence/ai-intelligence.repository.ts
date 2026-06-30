@@ -122,6 +122,10 @@ export async function listDecisionLogsByLead(
 
 export async function listDecisionLogs(opts: {
   decisionType?: string;
+  leadId?: string;
+  campaignId?: string;
+  /** Filter on `decision` column (e.g. classification label, action name). */
+  decision?: string;
   limit: number;
   offset: number;
 }): Promise<{ rows: AiDecisionLogRow[]; total: number }> {
@@ -130,6 +134,18 @@ export async function listDecisionLogs(opts: {
   if (opts.decisionType) {
     params.push(opts.decisionType);
     conditions.push(`decision_type = $${params.length}`);
+  }
+  if (opts.leadId) {
+    params.push(opts.leadId);
+    conditions.push(`lead_id = $${params.length}`);
+  }
+  if (opts.campaignId) {
+    params.push(opts.campaignId);
+    conditions.push(`campaign_id = $${params.length}`);
+  }
+  if (opts.decision) {
+    params.push(opts.decision);
+    conditions.push(`decision = $${params.length}`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 

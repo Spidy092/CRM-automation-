@@ -38,9 +38,7 @@ export interface UpdateAiSettingsRepoInput {
   updated_by?: string;
 }
 
-export async function upsertAiSettings(
-  input: UpdateAiSettingsRepoInput,
-): Promise<AiSettingsRow> {
+export async function upsertAiSettings(input: UpdateAiSettingsRepoInput): Promise<AiSettingsRow> {
   const setClauses: string[] = ['updated_at = NOW()'];
   const values: unknown[] = [];
 

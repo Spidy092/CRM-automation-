@@ -4,6 +4,8 @@ import { useImportLeads } from '@/api/leads';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import type { ImportSummary } from '@/types';
 import { Upload, FileText } from 'lucide-react';
 
@@ -14,6 +16,7 @@ export function ImportLeadsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const importLeads = useImportLeads();
+  const { showToast } = useToast();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -30,8 +33,15 @@ export function ImportLeadsPage() {
     try {
       const result = await importLeads.mutateAsync({ file, source });
       setSummary(result);
+      const created = result.created + result.updated;
+      showToast(
+        result.failed > 0
+          ? `Imported ${created} leads, ${result.failed} failed. See details below.`
+          : `Imported ${created} leads successfully.`,
+        result.failed > 0 && created === 0 ? 'error' : 'success',
+      );
     } catch (error) {
-      console.error('Import failed:', error);
+      showToast(getApiErrorMessage(error, 'Import failed. Please check the file and try again.'), 'error');
     }
   };
 
@@ -44,7 +54,7 @@ export function ImportLeadsPage() {
           <CardTitle>Upload File</CardTitle>
           <CardDescription>
             Import leads from CSV or Excel files. The file should contain columns for business_name,
-            contact_name, email, phone, industry, location, and source_platform.
+            contact_name, email, phone, industry, location, and source_platform. Any other columns will be automatically mapped to your Custom Fields.
           </CardDescription>
         </CardHeader>
         <CardContent>

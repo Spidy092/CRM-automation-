@@ -1,3 +1,5 @@
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+
 jest.mock('./templates.service', () => ({
   listTemplates: jest.fn(),
   getTemplate: jest.fn(),
@@ -37,11 +39,11 @@ function mockRes() {
 
 const next = jest.fn();
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => { jest.clearAllMocks(); });
 
 describe('listTemplatesHandler', () => {
   it('returns templates', async () => {
-    (templatesService.listTemplates as jest.Mock).mockResolvedValue({
+    (templatesService.listTemplates as jest.Mock<any>).mockResolvedValue({
       items: [{ id: 't1' }],
       meta: { hasMore: false },
     });
@@ -53,22 +55,22 @@ describe('listTemplatesHandler', () => {
 
 describe('getTemplateHandler', () => {
   it('returns template', async () => {
-    (templatesService.getTemplate as jest.Mock).mockResolvedValue({ id: 't1' });
+    (templatesService.getTemplate as jest.Mock<any>).mockResolvedValue({ id: 't1' });
     const res = mockRes();
-    await getTemplateHandler(mockReq({ params: { id: 't1' } }), res, next);
+    await getTemplateHandler(mockReq({ params: { id: '123e4567-e89b-12d3-a456-426614174000' } }), res, next);
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it('calls next on error', async () => {
-    (templatesService.getTemplate as jest.Mock).mockRejectedValue(new Error('not found'));
-    await getTemplateHandler(mockReq({ params: { id: 'x' } }), mockRes(), next);
+    (templatesService.getTemplate as jest.Mock<any>).mockRejectedValue(new Error('not found'));
+    await getTemplateHandler(mockReq({ params: { id: '00000000-0000-0000-0000-000000000000' } }), mockRes(), next);
     expect(next).toHaveBeenCalled();
   });
 });
 
 describe('createTemplateHandler', () => {
   it('creates template', async () => {
-    (templatesService.createTemplate as jest.Mock).mockResolvedValue({ id: 't1' });
+    (templatesService.createTemplate as jest.Mock<any>).mockResolvedValue({ id: 't1' });
     const res = mockRes();
     await createTemplateHandler(
       mockReq({ body: { name: 'Test', channel: 'email', body: 'Hello' } }),
@@ -81,10 +83,10 @@ describe('createTemplateHandler', () => {
 
 describe('updateTemplateHandler', () => {
   it('updates template', async () => {
-    (templatesService.updateTemplate as jest.Mock).mockResolvedValue({ id: 't1', name: 'Updated' });
+    (templatesService.updateTemplate as jest.Mock<any>).mockResolvedValue({ id: 't1', name: 'Updated' });
     const res = mockRes();
     await updateTemplateHandler(
-      mockReq({ params: { id: 't1' }, body: { name: 'Updated' } }),
+      mockReq({ params: { id: '123e4567-e89b-12d3-a456-426614174000' }, body: { name: 'Updated' } }),
       res,
       next,
     );
@@ -94,13 +96,13 @@ describe('updateTemplateHandler', () => {
 
 describe('approveTemplateHandler', () => {
   it('approves template', async () => {
-    (templatesService.approveTemplate as jest.Mock).mockResolvedValue({
+    (templatesService.approveTemplate as jest.Mock<any>).mockResolvedValue({
       id: 't1',
       approval_status: 'approved',
     });
     const res = mockRes();
     await approveTemplateHandler(
-      mockReq({ params: { id: 't1' }, body: { approved: true } }),
+      mockReq({ params: { id: '123e4567-e89b-12d3-a456-426614174000' }, body: { approved: true } }),
       res,
       next,
     );
@@ -110,9 +112,9 @@ describe('approveTemplateHandler', () => {
 
 describe('deleteTemplateHandler', () => {
   it('deletes template', async () => {
-    (templatesService.removeTemplate as jest.Mock).mockResolvedValue(undefined);
+    (templatesService.removeTemplate as jest.Mock<any>).mockResolvedValue(undefined);
     const res = mockRes();
-    await deleteTemplateHandler(mockReq({ params: { id: 't1' } }), res, next);
+    await deleteTemplateHandler(mockReq({ params: { id: '123e4567-e89b-12d3-a456-426614174000' } }), res, next);
     expect(res.status).toHaveBeenCalledWith(200);
   });
 });

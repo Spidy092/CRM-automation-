@@ -13,7 +13,7 @@ export type NextBestAction =
   | 'disqualify'
   | 'request_review';
 
-export type DecisionType = 'research' | 'next_action' | 'reply_classify' | 'campaign_brief';
+export type DecisionType = 'research' | 'next_action' | 'reply_classify' | 'campaign_brief' | 'chat' | 'agent_action';
 
 export interface LeadAiProfileRow {
   id: string;

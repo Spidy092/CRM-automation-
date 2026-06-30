@@ -1,3 +1,4 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import type { Request, Response } from 'express';
 import { sseHandler } from './notifications.controller';
 import * as emitter from './notifications.emitter';
@@ -11,14 +12,15 @@ jest.mock('../../shared/utils/logger', () => ({
 
 const mockedEmitter = emitter as jest.Mocked<typeof emitter>;
 
-interface MockReq extends Partial<Request> {
-  on: jest.Mock;
-  user?: { id: string; role: string };
+interface MockReq {
+  on: any;
+  user?: { id: string; role: 'admin' | 'sales' | 'manager' | 'viewer'; name: string; email: string };
 }
 
-function buildReq(user: { id: string; role: string } | undefined = { id: 'u-1', role: 'sales' }): MockReq {
+function buildReq(opts: { user?: { id: string; role: 'admin' | 'sales' | 'manager' | 'viewer'; name: string; email: string } | null } = {}): MockReq {
+  const user = opts.user === undefined ? { id: 'u-1', role: 'sales' as const, name: 'Test', email: 'test@test.com' } : opts.user;
   return {
-    user,
+    user: user === null ? undefined : user,
     on: jest.fn(),
   };
 }
@@ -35,22 +37,27 @@ function buildRes(): MockRes {
   const clearedIntervals: number[] = [];
   let intervalCounter = 0;
 
-  const res: MockRes = {
+  const res = {
     _writes: writes,
     _headers: headers,
     _clearedIntervals: clearedIntervals,
-    setHeader: jest.fn((name: string, value: string) => {
-      headers[name] = value;
-      return res;
-    }),
+    setHeader: jest.fn(),
     flushHeaders: jest.fn(),
-    write: jest.fn((chunk: string) => {
-      writes.push(chunk);
-      return true;
-    }),
-    status: jest.fn().mockReturnValue(res),
-    json: jest.fn().mockReturnValue(res),
-  };
+    write: jest.fn(),
+    status: jest.fn(),
+    json: jest.fn(),
+  } as unknown as MockRes;
+
+  (res.setHeader as jest.Mock<any>).mockImplementation((name: string, value: string) => {
+    headers[name] = value;
+    return res;
+  });
+  (res.write as jest.Mock<any>).mockImplementation((chunk: string) => {
+    writes.push(chunk);
+    return true;
+  });
+  (res.status as jest.Mock<any>).mockReturnValue(res);
+  (res.json as jest.Mock<any>).mockReturnValue(res);
 
   // Patch the global setInterval/clearInterval behavior we need to verify.
   const origSetInterval = global.setInterval;
@@ -85,7 +92,7 @@ describe('sseHandler', () => {
   });
 
   it('returns 401 when req.user is missing', () => {
-    const req = buildReq(undefined);
+    const req = buildReq({ user: null });
     const res = buildRes();
 
     sseHandler(req as unknown as Request, res as unknown as Response);
@@ -133,12 +140,16 @@ describe('sseHandler', () => {
     (res as unknown as { _restore: () => void })._restore();
 
     expect(req.on).toHaveBeenCalledWith('close', expect.any(Function));
-    const closeHandler = req.on.mock.calls.find((c) => c[0] === 'close')?.[1] as () => void;
+    const closeHandler = req.on.mock.calls.find((c: any[]) => c[0] === 'close')?.[1] as () => void;
     expect(closeHandler).toBeDefined();
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
+    
     closeHandler();
 
     expect(unsubscribe).toHaveBeenCalledTimes(1);
-    expect(res._clearedIntervals.length).toBeGreaterThan(0);
+    expect(clearIntervalSpy).toHaveBeenCalled();
+    
+    clearIntervalSpy.mockRestore();
   });
 
   it('writes incoming notifications as SSE data frames', () => {

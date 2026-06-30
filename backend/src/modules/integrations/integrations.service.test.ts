@@ -1,6 +1,7 @@
 import {
   getIntegration,
   listIntegrations,
+  testAllIntegrations,
   testIntegration,
   updateIntegration,
 } from './integrations.service';
@@ -17,11 +18,16 @@ jest.mock('./integrations.repository', () => ({
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
-// Mock all four connector modules so loadCredentials() doesn't hit the DB / env
-jest.mock('./whatsapp/whatsapp.connector', () => ({ loadCredentials: jest.fn() }));
-jest.mock('./twilio/twilio.connector', () => ({ loadCredentials: jest.fn() }));
-jest.mock('./sendgrid/sendgrid.connector', () => ({ loadCredentials: jest.fn() }));
-jest.mock('./smtp/smtp.connector', () => ({ loadCredentials: jest.fn() }));
+// Mock all connector modules so loadCredentials() / testConnection() don't hit
+// the DB / env / network. testConnection defaults to a successful live ping.
+jest.mock('./whatsapp/whatsapp.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./twilio/twilio.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./sendgrid/sendgrid.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./smtp/smtp.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./google-sheets/google-sheets.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./google-calendar/google-calendar.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./outlook/outlook.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
+jest.mock('./openwa/openwa.connector', () => ({ loadCredentials: jest.fn(), healthCheck: jest.fn() }));
 
 jest.mock('../../shared/utils/encryption', () => ({
   encryptJson: jest.fn((v: unknown) => `enc(${JSON.stringify(v)})`),
@@ -41,6 +47,7 @@ import {
   recordTestResult,
   updateIntegration as updateIntegrationRepo,
 } from './integrations.repository';
+import * as openwaConnector from './openwa/openwa.connector';
 import { writeAuditLog } from '../../shared/utils/audit';
 
 const baseRow: Integration = {
@@ -226,5 +233,207 @@ describe('testIntegration', () => {
     const allAuditCalls = (writeAuditLog as jest.Mock).mock.calls.map((c) => JSON.stringify(c[0]));
     expect(resultStr).not.toContain('SUPER_SECRET');
     expect(allAuditCalls.every((s) => !s.includes('SUPER_SECRET'))).toBe(true);
+  });
+
+  it('returns ok when OpenWA health check succeeds', async () => {
+    const openwaRow = { ...baseRow, name: 'openwa', display_name: 'OpenWA' };
+    (findById as jest.Mock).mockResolvedValue(openwaRow);
+    (findCredentialsById as jest.Mock).mockResolvedValue(
+      'enc({"baseUrl":"https://openwa.example","apiKey":"key","sessionId":"session","numbers":["+1234567890"]})',
+    );
+    (openwaConnector.loadCredentials as jest.Mock).mockResolvedValue({
+      baseUrl: 'https://openwa.example',
+      apiKey: 'key',
+      sessionId: 'session',
+      numbers: ['+1234567890'],
+    });
+    (openwaConnector.healthCheck as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      latencyMs: 42,
+    });
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...openwaRow, last_test_status: 'ok' });
+    const result = await testIntegration(openwaRow.id, { id: 'u1' });
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(openwaConnector.loadCredentials).toHaveBeenCalled();
+    expect(openwaConnector.healthCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: expect.objectContaining({ baseUrl: 'https://openwa.example' }),
+      }),
+    );
+    expect(recordTestResult).toHaveBeenCalledWith(openwaRow.id, 'ok');
+  });
+
+  it('returns failed when OpenWA health check fails', async () => {
+    const openwaRow = { ...baseRow, name: 'openwa', display_name: 'OpenWA' };
+    (findById as jest.Mock).mockResolvedValue(openwaRow);
+    (findCredentialsById as jest.Mock).mockResolvedValue(
+      'enc({"baseUrl":"https://openwa.example","apiKey":"key","sessionId":"session","numbers":["+1234567890"]})',
+    );
+    (openwaConnector.loadCredentials as jest.Mock).mockResolvedValue({
+      baseUrl: 'https://openwa.example',
+      apiKey: 'key',
+      sessionId: 'session',
+      numbers: ['+1234567890'],
+    });
+    (openwaConnector.healthCheck as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 503,
+      latencyMs: 120,
+      error: 'OpenWA session unreachable',
+    });
+    (recordTestResult as jest.Mock).mockResolvedValue({
+      ...openwaRow,
+      last_test_status: 'failed',
+    });
+    const result = await testIntegration(openwaRow.id, { id: 'u1' });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
+    expect(result.message).toBe('OpenWA session unreachable');
+    expect(recordTestResult).toHaveBeenCalledWith(openwaRow.id, 'failed');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'integration.test_failed',
+        newValue: expect.objectContaining({ reason: 'openwa_health_check_failed' }),
+      }),
+    );
+  });
+
+  it('returns failed when reading credentials throws', async () => {
+    (findById as jest.Mock).mockResolvedValue(baseRow);
+    (findCredentialsById as jest.Mock).mockRejectedValue(new Error('db offline'));
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'failed' });
+    const result = await testIntegration(baseRow.id, { id: 'u1' });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
+    expect(result.message).toContain('Failed to read credentials');
+    expect(recordTestResult).toHaveBeenCalledWith(baseRow.id, 'failed');
+  });
+
+  it('returns failed with a generic message when the thrown value is not an Error', async () => {
+    (findById as jest.Mock).mockResolvedValue(baseRow);
+    (findCredentialsById as jest.Mock).mockRejectedValue('plain string');
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'failed' });
+    const result = await testIntegration(baseRow.id, { id: 'u1' });
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('unknown error');
+  });
+
+  it.each([
+    ['twilio', './twilio/twilio.connector'],
+    ['sendgrid', './sendgrid/sendgrid.connector'],
+    ['smtp', './smtp/smtp.connector'],
+    ['google_sheets', './google-sheets/google-sheets.connector'],
+    ['google_calendar', './google-calendar/google-calendar.connector'],
+    ['outlook', './outlook/outlook.connector'],
+  ])('validates %s credentials via its connector and returns ok', async (name, modPath) => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const connector = require(modPath) as { loadCredentials: jest.Mock };
+    connector.loadCredentials.mockResolvedValue(undefined);
+    const row = { ...baseRow, name, display_name: name };
+    (findById as jest.Mock).mockResolvedValue(row);
+    (findCredentialsById as jest.Mock).mockResolvedValue('enc({"token":"abc"})');
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...row, last_test_status: 'ok' });
+    const result = await testIntegration(row.id, { id: 'u1' });
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(connector.loadCredentials).toHaveBeenCalled();
+    expect(recordTestResult).toHaveBeenCalledWith(row.id, 'ok');
+  });
+
+  it('uses the default branch for an unknown connector name', async () => {
+    const row = { ...baseRow, name: 'some_unknown_provider', display_name: 'Mystery Provider' };
+    (findById as jest.Mock).mockResolvedValue(row);
+    (findCredentialsById as jest.Mock).mockResolvedValue('enc({"token":"abc"})');
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...row, last_test_status: 'ok' });
+    const result = await testIntegration(row.id, { id: 'u1' });
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('Mystery Provider');
+  });
+
+  it('returns failed when a connector loadCredentials throws', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const twilio = require('./twilio/twilio.connector') as { loadCredentials: jest.Mock };
+    twilio.loadCredentials.mockRejectedValue(new Error('invalid shape'));
+    const row = { ...baseRow, name: 'twilio', display_name: 'Twilio' };
+    (findById as jest.Mock).mockResolvedValue(row);
+    (findCredentialsById as jest.Mock).mockResolvedValue('enc({"token":"abc"})');
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...row, last_test_status: 'failed' });
+    const result = await testIntegration(row.id, { id: 'u1' });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
+    expect(result.message).toContain('Connector credential validation failed');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'integration.test_failed',
+        newValue: expect.objectContaining({ reason: 'connector_validation_failed' }),
+      }),
+    );
+  });
+});
+
+describe('testAllIntegrations', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('skips disabled integrations and tests only enabled ones', async () => {
+    const enabledRow = { ...baseRow, id: 'a', name: 'twilio', display_name: 'Twilio', is_enabled: true };
+    const disabledRow = { ...baseRow, id: 'b', name: 'smtp', display_name: 'SMTP', is_enabled: false };
+    (findAllPublic as jest.Mock).mockResolvedValue([enabledRow, disabledRow]);
+    // testIntegration internals for the enabled one
+    (findById as jest.Mock).mockResolvedValue(enabledRow);
+    (findCredentialsById as jest.Mock).mockResolvedValue('enc({"token":"abc"})');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const twilio = require('./twilio/twilio.connector') as { loadCredentials: jest.Mock };
+    twilio.loadCredentials.mockResolvedValue(undefined);
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...enabledRow, last_test_status: 'ok' });
+
+    const result = await testAllIntegrations({ id: 'u1' });
+    expect(result.total).toBe(2);
+    expect(result.skipped).toBe(1);
+    expect(result.passed).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].id).toBe('a');
+    expect(result.results[0].ok).toBe(true);
+  });
+
+  it('counts failures when an enabled integration fails the test', async () => {
+    const enabledRow = { ...baseRow, id: 'a', name: 'twilio', display_name: 'Twilio', is_enabled: true };
+    (findAllPublic as jest.Mock).mockResolvedValue([enabledRow]);
+    (findById as jest.Mock).mockResolvedValue(enabledRow);
+    (findCredentialsById as jest.Mock).mockResolvedValue(null);
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...enabledRow, last_test_status: 'no_credentials' });
+
+    const result = await testAllIntegrations({ id: 'u1' });
+    expect(result.total).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.passed).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.results[0].ok).toBe(false);
+  });
+
+  it('falls back gracefully when testIntegration itself throws (404)', async () => {
+    const enabledRow = { ...baseRow, id: 'a', name: 'twilio', display_name: 'Twilio', is_enabled: true };
+    (findAllPublic as jest.Mock).mockResolvedValue([enabledRow]);
+    // findById returns null inside testIntegration -> throws AppError 404
+    (findById as jest.Mock).mockResolvedValue(null);
+
+    const result = await testAllIntegrations({ id: 'u1' });
+    expect(result.failed).toBe(1);
+    expect(result.results[0].ok).toBe(false);
+    expect(result.results[0].status).toBe('failed');
+    expect(result.results[0].message).toContain('Integration not found');
+  });
+
+  it('returns all-zero counts when there are no integrations', async () => {
+    (findAllPublic as jest.Mock).mockResolvedValue([]);
+    const result = await testAllIntegrations({ id: 'u1' });
+    expect(result.total).toBe(0);
+    expect(result.passed).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.results).toHaveLength(0);
   });
 });

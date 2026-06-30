@@ -11,6 +11,7 @@ import {
 } from './leads.schema';
 import * as leadsService from './leads.service';
 import { importLeads, isSupportedFile } from './leads.import';
+import { enrichLead } from './leads.enrichment';
 import { LeadInput, LeadListFilters } from './leads.types';
 
 function actorFromReq(req: Request): {
@@ -177,6 +178,19 @@ export async function importLeadsHandler(
       actorFromReq(req),
     );
     sendSuccess(res, summary, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function enrichLeadHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const lead = await enrichLead(req.params.id, actorFromReq(req));
+    sendSuccess(res, lead, 200);
   } catch (err) {
     next(err);
   }

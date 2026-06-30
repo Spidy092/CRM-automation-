@@ -28,18 +28,15 @@ const httpRequestDuration = new Histogram({
   registers: [register],
 });
 
-export function httpMetricsMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void {
+export function httpMetricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const start = process.hrtime.bigint();
 
   res.on('finish', () => {
     // Use the matched Express route pattern, or fall back to the raw path
-    const route = req.route?.path
-      ? `${req.baseUrl ?? ''}${req.route.path as string}`
-      : req.path;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const matchedRoute = (req as Request & { route?: { path: string } }).route;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const route = matchedRoute?.path ? `${req.baseUrl ?? ''}${matchedRoute.path}` : req.path;
 
     const method = req.method;
     const statusCode = String(res.statusCode);

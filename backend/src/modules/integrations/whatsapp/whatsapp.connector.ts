@@ -145,3 +145,40 @@ function maskPhone(p: string): string {
   if (p.length <= 4) return '***';
   return `${p.slice(0, 2)}***${p.slice(-2)}`;
 }
+
+export async function testConnection(
+  creds: WhatsappCredentials,
+): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    const url = `https://graph.facebook.com/${creds.apiVersion}/${creds.phoneNumberId}`;
+    const res = await fetch(url, {
+      headers: {
+        authorization: `Bearer ${creds.apiToken}`,
+      },
+    });
+
+    if (res.ok) {
+      return { ok: true, latencyMs: Date.now() - start };
+    }
+
+    // Attempt to parse error
+    let errorMessage = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error && body.error.message) {
+        errorMessage = body.error.message;
+      }
+    } catch {
+      // Ignore JSON parse error
+    }
+
+    return { ok: false, error: errorMessage, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown WhatsApp error',
+      latencyMs: Date.now() - start,
+    };
+  }
+}

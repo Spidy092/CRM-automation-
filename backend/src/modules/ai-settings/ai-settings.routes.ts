@@ -23,10 +23,6 @@ router.get(
  * PATCH /api/v1/ai-settings
  * Admin-only: only admins may change AI provider settings.
  */
-router.patch(
-  '/',
-  authorize('admin'),
-  wrap(updateAiSettingsHandler),
-);
+router.patch('/', authorize('admin'), wrap(updateAiSettingsHandler));
 
 export { router as aiSettingsRoutes };

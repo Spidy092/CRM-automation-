@@ -4,6 +4,7 @@ import { useLead, useCreateLead, useUpdateLead, usePauseLead } from '@/api/leads
 import { useCampaigns } from '@/api/campaigns';
 import { useSequences, useManualOutreachSend } from '@/api/outreach';
 import { useTemplates } from '@/api/templates';
+import { useCustomFields } from '@/api/customFields';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,6 +29,7 @@ export function LeadFormPage() {
   const { data: campaigns = [] } = useCampaigns();
   const { data: sequenceData } = useSequences();
   const { data: templates = [] } = useTemplates({ approval_status: 'approved' });
+  const { data: customFields = [] } = useCustomFields();
 
   const [manualSendData, setManualSendData] = useState({
     campaignId: '',
@@ -50,6 +52,7 @@ export function LeadFormPage() {
     source_platform: 'manual',
     tags: [],
     notes: null,
+    custom_fields: {},
   });
 
   useEffect(() => {
@@ -69,6 +72,7 @@ export function LeadFormPage() {
         source_platform: lead.source_platform,
         tags: lead.tags,
         notes: lead.notes,
+        custom_fields: lead.custom_fields || {},
       }));
     }
   }, [lead, isEditing]);
@@ -347,6 +351,80 @@ export function LeadFormPage() {
                 className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
+
+            {customFields.length > 0 && (
+              <div className="space-y-4 pt-4 border-t border-slate-200">
+                <h3 className="text-lg font-semibold text-slate-900">Custom Fields</h3>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {customFields.map((field) => (
+                    <div key={field.id} className="space-y-2">
+                      <Label htmlFor={`cf-${field.field_key}`}>
+                        {field.label} {field.is_required && '*'}
+                      </Label>
+                      {field.field_type === 'dropdown' ? (
+                        <select
+                          id={`cf-${field.field_key}`}
+                          value={(formData.custom_fields?.[field.field_key] as string) || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData((prev) => ({
+                              ...prev,
+                              custom_fields: {
+                                ...(prev.custom_fields || {}),
+                                [field.field_key]: val === '' ? null : val,
+                              },
+                            }));
+                          }}
+                          required={field.is_required}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <option value="">Select option</option>
+                          {field.options?.map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      ) : field.field_type === 'checkbox' ? (
+                        <div className="flex items-center space-x-2 pt-2">
+                          <input
+                            type="checkbox"
+                            id={`cf-${field.field_key}`}
+                            checked={!!formData.custom_fields?.[field.field_key]}
+                            onChange={(e) => {
+                              const val = e.target.checked;
+                              setFormData((prev) => ({
+                                ...prev,
+                                custom_fields: {
+                                  ...(prev.custom_fields || {}),
+                                  [field.field_key]: val,
+                                },
+                              }));
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                          />
+                        </div>
+                      ) : (
+                        <Input
+                          id={`cf-${field.field_key}`}
+                          type={field.field_type === 'number' ? 'number' : field.field_type === 'date' ? 'date' : 'text'}
+                          value={(formData.custom_fields?.[field.field_key] as string | number) || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData((prev) => ({
+                              ...prev,
+                              custom_fields: {
+                                ...(prev.custom_fields || {}),
+                                [field.field_key]: val === '' ? null : field.field_type === 'number' ? Number(val) : val,
+                              },
+                            }));
+                          }}
+                          required={field.is_required}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-end gap-4">
               <Button type="button" variant="outline" onClick={() => navigate('/leads')}>

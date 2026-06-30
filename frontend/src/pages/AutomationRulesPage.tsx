@@ -189,7 +189,7 @@ function RuleCard({
           <Link to="/outreach/sequences">View Sequence</Link>
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs" asChild>
-          <Link to="/campaigns">Edit Rule</Link>
+          <Link to={`/campaigns/${campaign.id}/edit`}>Edit Rule</Link>
         </Button>
       </div>
     </Card>

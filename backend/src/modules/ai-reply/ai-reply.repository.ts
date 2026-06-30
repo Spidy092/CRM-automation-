@@ -27,7 +27,11 @@ export async function appendObjectionToProfile(
   objectionType: string,
   messageText: string,
 ): Promise<void> {
-  const entry = JSON.stringify({ type: objectionType, text: messageText.slice(0, 200), logged_at: new Date().toISOString() });
+  const entry = JSON.stringify({
+    type: objectionType,
+    text: messageText.slice(0, 200),
+    logged_at: new Date().toISOString(),
+  });
   await pool.query(
     `UPDATE lead_ai_profiles
      SET objection_log = objection_log || $2::jsonb,
@@ -37,10 +41,7 @@ export async function appendObjectionToProfile(
   );
 }
 
-export async function appendBuyingSignalToProfile(
-  leadId: string,
-  signal: string,
-): Promise<void> {
+export async function appendBuyingSignalToProfile(leadId: string, signal: string): Promise<void> {
   const entry = JSON.stringify({ signal, detected_at: new Date().toISOString() });
   await pool.query(
     `UPDATE lead_ai_profiles
@@ -104,15 +105,3 @@ export async function getLeadCampaignContext(leadId: string): Promise<{
   };
 }
 
-export async function moveLeadToStageByName(leadId: string, stageName: string): Promise<void> {
-  const stage = await queryOne<{ id: string }>(
-    `SELECT id FROM pipeline_stages WHERE LOWER(name) = LOWER($1) ORDER BY created_at ASC LIMIT 1`,
-    [stageName],
-  );
-  if (!stage) return;
-
-  await pool.query(
-    `UPDATE leads SET pipeline_stage_id = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`,
-    [stage.id, leadId],
-  );
-}

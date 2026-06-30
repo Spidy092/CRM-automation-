@@ -6,7 +6,7 @@
     "sourceType": "module",
     "project": "./tsconfig.json"
   },
-  "ignorePatterns": ["**/*.test.ts", "**/*.spec.ts"],
+  "ignorePatterns": ["**/*.test.ts", "**/*.spec.ts", "dist/**", "node_modules/**", "jest.config.ts", "query_db.ts", "scripts/**", "src/coverage/**"],
   "plugins": ["@typescript-eslint", "prettier"],
   "extends": [
     "eslint:recommended",

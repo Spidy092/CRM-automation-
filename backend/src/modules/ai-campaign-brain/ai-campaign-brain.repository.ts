@@ -60,10 +60,9 @@ export async function upsertCampaignBrief(input: UpsertBriefInput): Promise<Camp
 }
 
 export async function findBriefByCampaignId(campaignId: string): Promise<CampaignBrief | null> {
-  return queryOne<CampaignBrief>(
-    `SELECT * FROM campaign_ai_briefs WHERE campaign_id = $1`,
-    [campaignId],
-  );
+  return queryOne<CampaignBrief>(`SELECT * FROM campaign_ai_briefs WHERE campaign_id = $1`, [
+    campaignId,
+  ]);
 }
 
 /** Returns the latest approved AI brief for a campaign, or null if none exists. */
@@ -86,10 +85,9 @@ export async function approveBrief(campaignId: string, approvedBy: string): Prom
 }
 
 export async function rejectBrief(campaignId: string): Promise<void> {
-  await pool.query(
-    `UPDATE campaign_ai_briefs SET status = 'rejected' WHERE campaign_id = $1`,
-    [campaignId],
-  );
+  await pool.query(`UPDATE campaign_ai_briefs SET status = 'rejected' WHERE campaign_id = $1`, [
+    campaignId,
+  ]);
 }
 
 /** Returns basic campaign info + aggregated lead AI profile stats. */
@@ -101,7 +99,10 @@ export async function getCampaignLeadStats(campaignId: string): Promise<{
   topPainPoints: string[];
 } | null> {
   const campaign = await queryOne<{
-    id: string; name: string; target_industries: string[]; tone: string;
+    id: string;
+    name: string;
+    target_industries: string[];
+    tone: string;
   }>(
     `SELECT id, name, target_industries, tone FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
     [campaignId],

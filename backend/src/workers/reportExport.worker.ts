@@ -22,7 +22,7 @@ import { type DashboardMetrics, type ReportListFilters } from '../modules/report
 export function startReportExportWorker(): Worker {
   const worker = new Worker(
     REPORTS_QUEUE,
-    async (job: Job) => {
+    async (job: Job<ReportExportJob>) => {
       const start = Date.now();
       const meta = {
         jobId: job.id,
@@ -34,7 +34,7 @@ export function startReportExportWorker(): Worker {
       logger.info('report export job started', meta);
 
       try {
-        const result = await handleReportExport(job.data as ReportExportJob, job.id as string);
+        const result = await handleReportExport(job.data, job.id as string);
         const durationSec = (Date.now() - start) / 1000;
         observeJobDuration({ name: job.name, queue: REPORTS_QUEUE }, durationSec);
         incJobsProcessed({ name: job.name, queue: REPORTS_QUEUE, status: 'success' });
@@ -146,7 +146,8 @@ export async function handleReportExport(
       const ws = xlsx.utils.json_to_sheet(rows);
       const wb = xlsx.utils.book_new();
       xlsx.utils.book_append_sheet(wb, ws, 'Report');
-      const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const buffer: Buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
       fs.writeFileSync(filePath, buffer);
       break;
     }

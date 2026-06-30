@@ -34,6 +34,7 @@ import { AIInboxPage } from '@/pages/AIInboxPage';
 import { LeadAIProfilePage } from '@/pages/LeadAIProfilePage';
 import { CampaignBriefPage } from '@/pages/CampaignBriefPage';
 import { AIDecisionLogPage } from '@/pages/AIDecisionLogPage';
+import { CampaignDetailPage } from '@/pages/CampaignDetailPage';
 import { ToastProvider } from '@/components/ui/Toast';
 
 const queryClient = new QueryClient({
@@ -138,6 +139,8 @@ function App() {
                 <Route path="leads/:id/edit" element={<LeadFormPage />} />
                 <Route path="campaigns" element={<CampaignsPage />} />
                 <Route path="campaigns/new" element={<CampaignFormPage />} />
+                <Route path="campaigns/:id" element={<CampaignDetailPage />} />
+                <Route path="campaigns/:id/edit" element={<CampaignFormPage />} />
                 <Route path="campaigns/:id/brief" element={<CampaignBriefPage />} />
                 <Route path="admin/ai-decisions" element={<AIDecisionLogPage />} />
                 <Route path="pipelines" element={<PipelinePage />} />

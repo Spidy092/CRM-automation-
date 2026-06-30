@@ -229,7 +229,6 @@ export async function findTasks(filters: {
   );
 }
 
-
 export async function updateTask(
   id: string,
   fields: Partial<{
@@ -320,7 +319,12 @@ export async function findTimelineByLead(leadId: string, limit: number): Promise
 export async function findNextBestActionByLeadId(
   leadId: string,
 ): Promise<{ action: string; reason: string; confidence: number } | null> {
-  const row = await queryOne<Pick<LeadAiProfileRow, 'next_best_action' | 'next_best_action_reason' | 'next_best_action_confidence'>>(
+  const row = await queryOne<
+    Pick<
+      LeadAiProfileRow,
+      'next_best_action' | 'next_best_action_reason' | 'next_best_action_confidence'
+    >
+  >(
     `SELECT next_best_action, next_best_action_reason, next_best_action_confidence
      FROM lead_ai_profiles
      WHERE lead_id = $1`,

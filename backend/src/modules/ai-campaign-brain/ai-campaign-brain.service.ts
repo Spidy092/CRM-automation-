@@ -23,17 +23,25 @@ const BriefSchema = z.object({
   recommended_offer_angle: z.string().max(400),
   expected_objections: z.array(z.string().max(200)).max(6),
   risk_warnings: z.array(z.string().max(200)).max(6),
-  recommended_sequence: z.array(z.object({
-    step_number: z.number().int().min(1),
-    channel: z.enum(['whatsapp', 'email', 'sms']),
-    delay_hours: z.number().int().min(0),
-    goal: z.string().max(200),
-  })).max(8),
-  template_suggestions: z.array(z.object({
-    channel: z.enum(['whatsapp', 'email', 'sms']),
-    subject: z.string().max(200).nullable(),
-    body_preview: z.string().max(300),
-  })).max(4),
+  recommended_sequence: z
+    .array(
+      z.object({
+        step_number: z.number().int().min(1),
+        channel: z.enum(['whatsapp', 'email', 'sms', 'phone', 'linkedin']),
+        delay_hours: z.number().int().min(0),
+        goal: z.string().max(200),
+      }),
+    )
+    .max(8),
+  template_suggestions: z
+    .array(
+      z.object({
+        channel: z.enum(['whatsapp', 'email', 'sms', 'phone', 'linkedin']),
+        subject: z.string().max(200).nullable(),
+        body_preview: z.string().max(300),
+      }),
+    )
+    .max(4),
   recommended_autonomy_level: z.enum(['supervised', 'guarded', 'autopilot']),
   confidence_score: z.number().int().min(0).max(100),
   chain_of_thought: z.string().max(2000),
@@ -121,7 +129,8 @@ export async function generateCampaignBrief(
   } catch (err) {
     const latencyMs = Date.now() - start;
     logger.error('ai campaign brain: OpenAI call failed', {
-      campaignId, latency_ms: latencyMs,
+      campaignId,
+      latency_ms: latencyMs,
       error: err instanceof Error ? err.message : String(err),
     });
     await insertDecisionLog({
@@ -199,7 +208,7 @@ export async function generateCampaignBrief(
 
 function buildBriefSystemPrompt(): string {
   return (
-    'You are an AI campaign strategy analyst. Given a campaign\'s target segment data and lead AI profiles, ' +
+    "You are an AI campaign strategy analyst. Given a campaign's target segment data and lead AI profiles, " +
     'produce a pre-launch strategy brief. Return ONLY valid JSON — no prose, no markdown.\n\n' +
     'Required JSON fields:\n' +
     '- segment_summary: string (max 400 chars) — who these leads are and their shared characteristics\n' +
@@ -214,7 +223,9 @@ function buildBriefSystemPrompt(): string {
   );
 }
 
-function buildBriefUserPrompt(stats: NonNullable<Awaited<ReturnType<typeof getCampaignLeadStats>>>): string {
+function buildBriefUserPrompt(
+  stats: NonNullable<Awaited<ReturnType<typeof getCampaignLeadStats>>>,
+): string {
   return (
     `Campaign: ${stats.campaign.name}\n` +
     `Tone: ${stats.campaign.tone}\n` +

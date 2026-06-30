@@ -255,6 +255,49 @@ describe('ai-intelligence.repository', () => {
 
       expect(result).toEqual({ rows: [], total: 0 });
     });
+
+    it('filters by leadId, campaignId, and decision together', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([{ count: '1' }]))
+        .mockResolvedValueOnce(mockQueryResult([baseDecisionLog]));
+
+      const result = await listDecisionLogs({
+        decisionType: 'reply_classify',
+        leadId: 'l1',
+        campaignId: 'c1',
+        decision: 'interested',
+        limit: 10,
+        offset: 0,
+      });
+
+      expect(result).toEqual({ rows: [baseDecisionLog], total: 1 });
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        1,
+        expect.stringMatching(
+          /WHERE decision_type = \$1 AND lead_id = \$2 AND campaign_id = \$3 AND decision = \$4/,
+        ),
+        ['reply_classify', 'l1', 'c1', 'interested'],
+      );
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('LIMIT $5 OFFSET $6'),
+        ['reply_classify', 'l1', 'c1', 'interested', 10, 0],
+      );
+    });
+
+    it('omits WHERE clause when no filters are provided', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([{ count: '5' }]))
+        .mockResolvedValueOnce(mockQueryResult([baseDecisionLog]));
+
+      await listDecisionLogs({ limit: 10, offset: 0 });
+
+      expect(mockPoolQuery).toHaveBeenNthCalledWith(
+        1,
+        expect.stringMatching(/FROM ai_decision_log /),
+        [],
+      );
+    });
   });
 
   describe('insertDecisionLog', () => {

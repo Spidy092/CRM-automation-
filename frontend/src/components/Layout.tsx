@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/ui/NotificationBell';
+import { ChatWidget } from '@/components/ChatWidget';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard, group: 'Workspace' },
@@ -178,6 +179,8 @@ export function Layout() {
           </div>
         </main>
       </div>
+
+      <ChatWidget />
 
       {sidebarOpen && (
         <div

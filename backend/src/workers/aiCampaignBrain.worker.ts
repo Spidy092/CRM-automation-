@@ -1,5 +1,10 @@
 import { Worker, type ConnectionOptions, type Job } from 'bullmq';
-import { getBullConnection, AI_CAMPAIGN_QUEUE, AI_CAMPAIGN_BRIEF, type AiGenerateCampaignBriefJob } from './queue';
+import {
+  getBullConnection,
+  AI_CAMPAIGN_QUEUE,
+  AI_CAMPAIGN_BRIEF,
+  type AiGenerateCampaignBriefJob,
+} from './queue';
 import { logger } from '../shared/utils/logger';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
@@ -41,20 +46,18 @@ export async function handleAiCampaignBrainJob(job: Job<AiGenerateCampaignBriefJ
 }
 
 export function startAiCampaignBrainWorker(): Worker {
-  const worker = new Worker(
-    AI_CAMPAIGN_QUEUE,
-    handleAiCampaignBrainJob,
-    {
-      connection: getBullConnection() as unknown as ConnectionOptions,
-      concurrency: 3,
-    },
-  );
+  const worker = new Worker(AI_CAMPAIGN_QUEUE, handleAiCampaignBrainJob, {
+    connection: getBullConnection() as unknown as ConnectionOptions,
+    concurrency: 3,
+  });
 
-  worker.on('ready', () => logger.info('ai campaign brain worker ready', { queue: AI_CAMPAIGN_QUEUE }));
+  worker.on('ready', () =>
+    logger.info('ai campaign brain worker ready', { queue: AI_CAMPAIGN_QUEUE }),
+  );
 
   worker.on('failed', (job, err) => {
     const id = job?.id ?? 'unknown';
-    const campaignId = (job?.data as AiGenerateCampaignBriefJob | undefined)?.campaignId ?? 'unknown';
+    const campaignId = job?.data?.campaignId ?? 'unknown';
     incJobsFailed({ name: AI_CAMPAIGN_BRIEF, queue: AI_CAMPAIGN_QUEUE });
     logger.error('ai campaign brain job failed', { id, campaignId, error: err.message });
     Sentry.captureException(err, { extra: { jobId: id, campaignId } });

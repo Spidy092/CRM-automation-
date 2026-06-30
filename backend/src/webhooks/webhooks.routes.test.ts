@@ -1,3 +1,4 @@
+jest.mock('../workers/queue');
 jest.mock('../shared/utils/db', () => ({
   pool: { query: jest.fn() },
   queryOne: jest.fn(),

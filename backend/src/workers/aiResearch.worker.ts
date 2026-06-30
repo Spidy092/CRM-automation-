@@ -65,20 +65,16 @@ export async function handleAiResearchJob(job: Job<AiResearchLeadJob>) {
 }
 
 export function startAiResearchWorker(): Worker {
-  const worker = new Worker(
-    AI_RESEARCH_QUEUE,
-    handleAiResearchJob,
-    {
-      connection: getBullConnection() as unknown as ConnectionOptions,
-      concurrency: 5,
-    },
-  );
+  const worker = new Worker(AI_RESEARCH_QUEUE, handleAiResearchJob, {
+    connection: getBullConnection() as unknown as ConnectionOptions,
+    concurrency: 5,
+  });
 
   worker.on('ready', () => logger.info('ai research worker ready', { queue: AI_RESEARCH_QUEUE }));
 
   worker.on('failed', (job, err) => {
     const id = job?.id ?? 'unknown';
-    const leadId = (job?.data as AiResearchLeadJob | undefined)?.leadId ?? 'unknown';
+    const leadId = job?.data?.leadId ?? 'unknown';
     logger.error('ai research job failed (worker event)', { id, leadId, error: err.message });
     Sentry.captureException(err, { extra: { jobId: id, leadId } });
 

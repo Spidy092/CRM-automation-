@@ -52,4 +52,17 @@ describe('AISettingsPage', () => {
     renderWithProviders(<AISettingsPage />);
     expect(document.body.textContent).toContain('Save Settings');
   });
+
+  it('defaults a fresh install to the Xiaomi MiMo provider preset', () => {
+    const { container } = renderWithProviders(<AISettingsPage />);
+    const providerSelect = container.querySelector<HTMLSelectElement>('#provider');
+    expect(providerSelect).toBeTruthy();
+    expect(providerSelect?.value).toBe('xiaomi');
+
+    // The MiMo preset should have pre-filled base_url + model.
+    const baseUrl = container.querySelector<HTMLInputElement>('#base_url');
+    const model = container.querySelector<HTMLInputElement>('#model');
+    expect(baseUrl?.value).toBe('https://api.xiaomimimo.com/v1');
+    expect(model?.value).toBe('mimo-v2.5-pro');
+  });
 });

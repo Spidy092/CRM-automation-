@@ -20,6 +20,7 @@ import {
   SCORING_RECALCULATE_ALL,
   ASSIGNMENT_ROUND_ROBIN,
   enqueueAssignment,
+  enqueueLeadEvent,
   type ScoringCalculateLeadJob,
   type ScoringRecalculateAllJob,
 } from './queue';
@@ -116,6 +117,24 @@ async function handleCalculateLead(payload: ScoringCalculateLeadJob): Promise<{
     }
   }
 
+  // Cross-trigger: every successful score recalc fans out to the lead-events
+  // queue as `lead.scored`. The events worker then enqueues an
+  // `ai:next-action` job so the AI decision queue runs computeNextBestAction
+  // against the freshly-updated score. Fire-and-forget so a downstream queue
+  // outage cannot block scoring itself; we attach `.catch()` to avoid an
+  // unhandled rejection and to surface the failure in logs.
+  void enqueueLeadEvent({
+    event: 'lead.scored',
+    leadId: result.lead_id,
+    payload: { score: result.score, classification: result.classification },
+  }).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn('failed to enqueue lead.scored event for ai decision queue', {
+      leadId: result.lead_id,
+      error: message,
+    });
+  });
+
   return {
     leadId: result.lead_id,
     score: result.score,
@@ -162,6 +181,20 @@ async function handleRecalculateAll(_payload: ScoringRecalculateAllJob): Promise
         });
         enqueued += 1;
       }
+      // Emit lead.scored for every recalculated lead so the events worker
+      // can enqueue an ai:next-action job per lead. Fire-and-forget — a
+      // downstream queue outage must not abort the recalculate-all batch.
+      void enqueueLeadEvent({
+        event: 'lead.scored',
+        leadId: result.lead_id,
+        payload: { score: result.score, classification: result.classification },
+      }).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn('failed to enqueue lead.scored event for ai decision queue', {
+          leadId: result.lead_id,
+          error: message,
+        });
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('recalculate: per-lead failure', { leadId: row.id, error: message });

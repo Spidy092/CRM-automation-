@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
+import { apiClient } from '@/api/client';
 import { PipelinePage } from '../PipelinePage';
 
 vi.mock('@/api/client', () => {
@@ -77,5 +78,37 @@ describe('PipelinePage', () => {
     const { container } = renderWithProviders(<PipelinePage />);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(container).toBeTruthy();
+  });
+
+  async function openFormAndSubmit() {
+    // Open the create form (header toggle button), fill the name, submit.
+    fireEvent.click(screen.getAllByRole('button', { name: /create pipeline/i })[0]);
+    fireEvent.change(screen.getByLabelText(/pipeline name/i), {
+      target: { value: 'My Pipeline' },
+    });
+    const buttons = screen.getAllByRole('button', { name: /create pipeline/i });
+    fireEvent.click(buttons[buttons.length - 1]); // submit button
+  }
+
+  it('shows a success toast after creating a pipeline', async () => {
+    renderWithProviders(<PipelinePage />);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    await openFormAndSubmit();
+
+    expect(await screen.findByText('Pipeline created.')).toBeInTheDocument();
+  });
+
+  it('shows an error toast with the backend message when create fails', async () => {
+    (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+      response: { data: { success: false, error: 'Pipeline name already exists' } },
+    });
+
+    renderWithProviders(<PipelinePage />);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    await openFormAndSubmit();
+
+    expect(await screen.findByText('Pipeline name already exists')).toBeInTheDocument();
   });
 });

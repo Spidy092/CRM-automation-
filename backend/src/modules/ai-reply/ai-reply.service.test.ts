@@ -25,8 +25,10 @@ import {
   appendBuyingSignalToProfile,
   updateProfileNextAction,
   getLeadCampaignContext,
-  moveLeadToStageByName,
 } from './ai-reply.repository';
+import { findUserById } from '../users/users.repository';
+import { findStageByName } from '../pipeline/pipeline.repository';
+import { proposeAgentAction } from '../agent/agent.service';
 import OpenAI from 'openai';
 import { logger } from '../../shared/utils/logger';
 import type { ClassifyReplyInput, ReplyClassification } from './ai-reply.types';
@@ -46,6 +48,9 @@ jest.mock('../ai-intelligence/ai-intelligence.service');
 jest.mock('../../shared/utils/metrics');
 jest.mock('../../workers/queue');
 jest.mock('./ai-reply.repository');
+jest.mock('../users/users.repository');
+jest.mock('../pipeline/pipeline.repository');
+jest.mock('../agent/agent.service');
 
 const mockedOpenAI = OpenAI as jest.MockedClass<typeof OpenAI>;
 const mockedLogger = logger as unknown as {
@@ -69,7 +74,9 @@ const mockedAppendObjectionToProfile = appendObjectionToProfile as jest.MockedFu
 const mockedAppendBuyingSignalToProfile = appendBuyingSignalToProfile as jest.MockedFunction<typeof appendBuyingSignalToProfile>;
 const mockedUpdateProfileNextAction = updateProfileNextAction as jest.MockedFunction<typeof updateProfileNextAction>;
 const mockedGetLeadCampaignContext = getLeadCampaignContext as jest.MockedFunction<typeof getLeadCampaignContext>;
-const mockedMoveLeadToStageByName = moveLeadToStageByName as jest.MockedFunction<typeof moveLeadToStageByName>;
+const mockedFindUserById = findUserById as jest.MockedFunction<typeof findUserById>;
+const mockedFindStageByName = findStageByName as jest.MockedFunction<typeof findStageByName>;
+const mockedProposeAgentAction = proposeAgentAction as jest.MockedFunction<typeof proposeAgentAction>;
 
 const leadId = '019f079c-f429-762a-89ab-d143218efd4e';
 const campaignId = '019f079c-f429-762a-89ab-d143218efd4f';
@@ -149,7 +156,28 @@ beforeEach(() => {
   mockedAppendObjectionToProfile.mockResolvedValue(undefined);
   mockedAppendBuyingSignalToProfile.mockResolvedValue(undefined);
   mockedUpdateProfileNextAction.mockResolvedValue(undefined);
-  mockedMoveLeadToStageByName.mockResolvedValue(undefined);
+  mockedFindUserById.mockResolvedValue({
+    id: 'user-1',
+    name: 'Sales Rep',
+    email: 'rep@example.com',
+    role: 'sales',
+    is_active: true,
+    created_at: new Date('2026-06-25T00:00:00Z'),
+  });
+  mockedFindStageByName.mockResolvedValue({
+    id: 'stage-qualified',
+    pipeline_id: 'pipeline-1',
+    name: 'Qualified',
+    position: 2,
+    is_terminal_won: false,
+    is_terminal_lost: false,
+    created_at: '2026-06-25T00:00:00Z',
+    updated_at: '2026-06-25T00:00:00Z',
+  });
+  mockedProposeAgentAction.mockResolvedValue({
+    policy: { outcome: 'require_approval', reason: 'Action requires human approval', assignTo: 'user-1' },
+    action: null,
+  });
   mockedInvalidateProfileCache.mockResolvedValue(undefined);
   mockedCancelPendingOutreachJobs.mockResolvedValue(0);
   mockedEnqueueAiCreateInboxItem.mockResolvedValue(undefined);
@@ -399,10 +427,10 @@ describe('classifyInboundReply', () => {
     });
 
     expect(result.update_stage_to).toBeNull();
-    expect(mockedMoveLeadToStageByName).not.toHaveBeenCalled();
+    expect(mockedProposeAgentAction).not.toHaveBeenCalled();
   });
 
-  it('handles stage movement when update_stage_to is present', async () => {
+  it('proposes a typed stage movement action when update_stage_to is present', async () => {
     const output = makeAiOutput({ update_stage_to: 'Qualified' });
     mockOpenAICompletion(output);
 
@@ -412,13 +440,25 @@ describe('classifyInboundReply', () => {
       messageText: 'Yes, qualify me.',
     });
 
-    expect(mockedMoveLeadToStageByName).toHaveBeenCalledWith(leadId, 'Qualified');
+    expect(mockedFindStageByName).toHaveBeenCalledWith('Qualified');
+    expect(mockedProposeAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'ai_reply',
+        actionName: 'pipeline.move_lead',
+        actor: expect.objectContaining({ id: 'user-1', role: 'sales' }),
+        assignTo: 'user-1',
+        confidence: 92,
+        autonomyLevel: 'autopilot',
+        aiMinConfidence: 70,
+        args: { leadId, stageId: 'stage-qualified' },
+      }),
+    );
   });
 
-  it('continues when stage movement fails', async () => {
+  it('continues when stage movement proposal fails', async () => {
     const output = makeAiOutput({ update_stage_to: 'Qualified' });
     mockOpenAICompletion(output);
-    mockedMoveLeadToStageByName.mockRejectedValue(new Error('stage not found'));
+    mockedProposeAgentAction.mockRejectedValue(new Error('policy unavailable'));
 
     const result = await classifyInboundReply({
       leadId,
@@ -427,7 +467,11 @@ describe('classifyInboundReply', () => {
     });
 
     expect(result.intent_class).toBe('interested');
-    expect(mockedMoveLeadToStageByName).toHaveBeenCalled();
+    expect(mockedProposeAgentAction).toHaveBeenCalled();
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'ai reply: stage move proposal failed',
+      expect.objectContaining({ leadId, stage: 'Qualified', error: 'policy unavailable' }),
+    );
   });
 
   it('persists objection and buying signal when provided', async () => {
@@ -558,13 +602,11 @@ describe('getReplyHistory', () => {
     });
   });
 
-  it('filters by leadId, campaignId, and classification', async () => {
+  it('passes leadId, campaignId, and classification through to the repository as SQL filters', async () => {
     const rows = [
       { id: 'd1', lead_id: leadId, campaign_id: campaignId, decision: 'interested' },
-      { id: 'd2', lead_id: 'other-lead', campaign_id: campaignId, decision: 'interested' },
-      { id: 'd3', lead_id: leadId, campaign_id: 'other-campaign', decision: 'objection' },
     ] as unknown as AiDecisionLogRow[];
-    mockedListDecisionLogs.mockResolvedValue({ rows, total: 3 });
+    mockedListDecisionLogs.mockResolvedValue({ rows, total: 1 });
 
     const result = await getReplyHistory({
       leadId,
@@ -574,9 +616,15 @@ describe('getReplyHistory', () => {
       offset: 0,
     });
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toEqual(rows[0]);
-    expect(result.total).toBe(3);
+    expect(mockedListDecisionLogs).toHaveBeenCalledWith({
+      decisionType: 'reply_classify',
+      leadId,
+      campaignId,
+      decision: 'interested',
+      limit: 10,
+      offset: 0,
+    });
+    expect(result).toEqual({ items: rows, total: 1 });
   });
 
   it('returns empty items when repository has no rows', async () => {

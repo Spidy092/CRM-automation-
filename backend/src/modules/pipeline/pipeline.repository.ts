@@ -141,6 +141,14 @@ export async function findStageById(id: string): Promise<PipelineStage | null> {
   return result.rows[0] || null;
 }
 
+export async function findStageByName(name: string): Promise<PipelineStage | null> {
+  const result = await pool.query<PipelineStage>(
+    'SELECT * FROM pipeline_stages WHERE LOWER(name) = LOWER($1) ORDER BY created_at ASC LIMIT 1',
+    [name],
+  );
+  return result.rows[0] || null;
+}
+
 export async function moveLeadToStage(leadId: string, stageId: string): Promise<void> {
   await pool.query('UPDATE leads SET pipeline_stage_id = $1 WHERE id = $2', [stageId, leadId]);
 }

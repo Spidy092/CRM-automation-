@@ -14,8 +14,10 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
+import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import type { CampaignStatus } from '@/api/campaigns';
-import { Plus, Play, Pause, Trash2, BarChart3 } from 'lucide-react';
+import { Plus, Play, Pause, Trash2, BarChart3, Edit, Sparkles } from 'lucide-react';
 
 const statusTones: Record<CampaignStatus, StatusTone> = {
   draft: 'gray',
@@ -36,23 +38,43 @@ export function CampaignsPage() {
   const pauseCampaign = usePauseCampaign();
   const resumeCampaign = useResumeCampaign();
   const deleteCampaign = useDeleteCampaign();
+  const { showToast } = useToast();
 
   const handleLaunch = async (id: string) => {
-    await launchCampaign.mutateAsync(id);
-    setPreviewCampaignId(null);
+    try {
+      await launchCampaign.mutateAsync(id);
+      showToast('Campaign launched.', 'success');
+      setPreviewCampaignId(null);
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to launch campaign.'), 'error');
+    }
   };
 
   const handlePause = async (id: string) => {
-    await pauseCampaign.mutateAsync(id);
+    try {
+      await pauseCampaign.mutateAsync(id);
+      showToast('Campaign paused.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to pause campaign.'), 'error');
+    }
   };
 
   const handleResume = async (id: string) => {
-    await resumeCampaign.mutateAsync(id);
+    try {
+      await resumeCampaign.mutateAsync(id);
+      showToast('Campaign resumed.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to resume campaign.'), 'error');
+    }
   };
 
   const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this campaign?')) {
+    if (!window.confirm('Are you sure you want to delete this campaign?')) return;
+    try {
       await deleteCampaign.mutateAsync(id);
+      showToast('Campaign deleted.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to delete campaign.'), 'error');
     }
   };
 
@@ -135,7 +157,7 @@ export function CampaignsPage() {
                   <Button variant="outline" onClick={() => setPreviewCampaignId(null)}>Cancel</Button>
                   <Button
                     onClick={() => handleLaunch(previewCampaignId)}
-                    disabled={launchCampaign.isPending || preview.eligibleLeads.length === 0}
+                    disabled={launchCampaign.isPending}
                   >
                     <Play className="mr-2 h-4 w-4" />
                     Launch {preview.eligibleLeads.length}
@@ -216,6 +238,22 @@ export function CampaignsPage() {
                         Stats
                       </Link>
                     </Button>
+                    {(campaign.status === 'draft' || campaign.status === 'paused') && (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link to={`/campaigns/${campaign.id}/edit`}>
+                          <Edit className="mr-1 h-3 w-3" />
+                          Edit
+                        </Link>
+                      </Button>
+                    )}
+                    {campaign.ai_personalization_enabled && (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link to={`/campaigns/${campaign.id}/brief`}>
+                          <Sparkles className="mr-1 h-3 w-3 text-purple-500" />
+                          AI Brief
+                        </Link>
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"

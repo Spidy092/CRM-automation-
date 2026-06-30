@@ -1,7 +1,11 @@
 import * as cheerio from 'cheerio';
+import OpenAI from 'openai';
+import { z } from 'zod';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
+import { normalizePhone } from '../../shared/utils/phone';
+import { getAiConfig } from '../ai-settings/ai-settings.service';
 import {
   ScraperConfigInput,
   ScraperConfigRow,
@@ -674,6 +678,191 @@ async function scrapeYouTube(_config: Record<string, unknown>): Promise<{
 
 // ── Web Scraper (Cheerio) ──────────────────────────────────────────────────
 
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const ASSET_EMAIL_RE = /\.(png|jpe?g|gif|svg|webp|css|js|woff2?)$/i;
+
+/**
+ * Selector-free extraction. Scans the fetched HTML for emails (from text +
+ * mailto: links) and phone numbers (from tel: links, falling back to text),
+ * and uses the page title / og:site_name as the business name. Produces one
+ * lead per discovered email (a contact page often lists several), or a single
+ * phone-only lead when no email is present. Returns [] when nothing is found.
+ *
+ * Note: operates on the fetched HTML only — it does not run JavaScript, so
+ * JS-rendered pages will yield little. That limitation is shared by the
+ * selector path and is surfaced to the user in the UI.
+ */
+function smartExtract(html: string, pageUrl: string): ScrapedLead[] {
+  const $ = cheerio.load(html);
+
+  const title =
+    ($('meta[property="og:site_name"]').attr('content') || $('title').first().text() || '').trim();
+
+  let origin = '';
+  let hostname = '';
+  try {
+    const u = new URL(pageUrl);
+    origin = u.origin;
+    hostname = u.hostname.replace(/^www\./, '');
+  } catch {
+    // pageUrl may be malformed in tests; fall back to empty.
+  }
+  const businessName = title || hostname || 'Unknown Business';
+
+  const emails = new Set<string>();
+  $('a[href^="mailto:"]').each((_i, el) => {
+    const addr = ($(el).attr('href') || '').replace(/^mailto:/i, '').split('?')[0].trim().toLowerCase();
+    if (addr && !ASSET_EMAIL_RE.test(addr)) emails.add(addr);
+  });
+  // Strip code that often contains junk before scanning visible text.
+  $('script, style, noscript, svg').remove();
+  const bodyHtml = $('body').html() ?? html;
+  for (const m of bodyHtml.matchAll(EMAIL_RE)) {
+    const addr = m[0].toLowerCase();
+    if (!ASSET_EMAIL_RE.test(addr) && !addr.includes('@sentry') && !addr.endsWith('example.com')) {
+      emails.add(addr);
+    }
+  }
+
+  const phones = new Set<string>();
+  $('a[href^="tel:"]').each((_i, el) => {
+    const p = normalizePhone(($(el).attr('href') || '').replace(/^tel:/i, ''));
+    if (p) phones.add(p);
+  });
+  // Only mine free text for phones when no tel: links exist (text matching is
+  // noisy and produces false positives like dates / ids).
+  if (phones.size === 0) {
+    const text = $('body').text();
+    for (const m of text.matchAll(/\+?\d[\d\s().-]{7,}\d/g)) {
+      const p = normalizePhone(m[0]);
+      if (p) phones.add(p);
+    }
+  }
+
+  const emailList = [...emails];
+  const phoneList = [...phones];
+  const leads: ScrapedLead[] = [];
+
+  if (emailList.length > 0) {
+    for (const email of emailList) {
+      leads.push({
+        business_name: businessName,
+        email,
+        phone: phoneList[0],
+        website: origin || undefined,
+        location: '',
+        source_platform: 'web_scrape',
+      });
+    }
+  } else if (phoneList.length > 0) {
+    leads.push({
+      business_name: businessName,
+      phone: phoneList[0],
+      website: origin || undefined,
+      location: '',
+      source_platform: 'web_scrape',
+    });
+  }
+
+  return leads;
+}
+
+const SELECTOR_DETECT_MAX_TOKENS = 600;
+const SELECTOR_DETECT_SYSTEM_PROMPT = [
+  'You are a web-scraping assistant. Given the HTML of a page that lists businesses or contacts,',
+  'return CSS selectors that extract lead fields. Respond with ONLY a JSON object of the shape:',
+  '{ "containerSelector": string, "selectors": { "business_name"?: string, "phone"?: string, "email"?: string, "website"?: string, "location"?: string } }.',
+  'containerSelector must match the repeating element wrapping ONE record (e.g. ".listing-card").',
+  'Each value in selectors is a CSS selector evaluated WITHIN a container. Omit fields not present.',
+  'Prefer stable class/attribute selectors. Do not invent selectors that are not in the HTML.',
+].join(' ');
+
+const detectSelectorsResponseSchema = z.object({
+  containerSelector: z.string().default(''),
+  selectors: z.record(z.string(), z.string()).default({}),
+});
+
+/**
+ * AI-assisted selector detection (Option B). Fetches the page, sends a trimmed
+ * copy of the HTML to the configured LLM (MiMo / OpenAI / any OpenAI-compatible
+ * provider), and returns suggested container + field selectors for the user to
+ * review. Requires the AI engine to be enabled in AI Settings.
+ */
+export async function detectSelectors(
+  url: string,
+): Promise<{ containerSelector: string; selectors: Record<string, string> }> {
+  const aiConfig = await getAiConfig();
+  if (!aiConfig) {
+    throw new AppError(
+      'AI engine is not configured. Enable it and set an API key in AI Settings to use auto-detect.',
+      400,
+    );
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new AppError(`Could not fetch the page for analysis (HTTP ${response.status}).`, 400);
+  }
+  const html = await response.text();
+  const $ = cheerio.load(html);
+  $('script, style, noscript, svg').remove();
+  // Cap the HTML sent to the model to keep token usage and latency bounded.
+  const trimmedHtml = ($('body').html() ?? html).slice(0, 12000);
+
+  const client = new OpenAI({
+    apiKey: aiConfig.apiKey,
+    baseURL: aiConfig.baseUrl || undefined,
+  });
+
+  const startedAt = Date.now();
+  let completion;
+  try {
+    completion = await client.chat.completions.create({
+      model: aiConfig.model,
+      max_tokens: SELECTOR_DETECT_MAX_TOKENS,
+      temperature: 0,
+      messages: [
+        { role: 'system', content: SELECTOR_DETECT_SYSTEM_PROMPT },
+        { role: 'user', content: `URL: ${url}\nHTML:\n${trimmedHtml}` },
+      ],
+    });
+  } catch (err) {
+    logger.error('scraper detectSelectors: OpenAI call failed', {
+      url,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new AppError('AI auto-detect failed. Check the AI Settings credentials and try again.', 502);
+  }
+
+  logger.info('scraper detectSelectors: completed', {
+    url,
+    model: aiConfig.model,
+    tokens_used: completion.usage?.total_tokens ?? null,
+    latency_ms: Date.now() - startedAt,
+  });
+
+  const raw = completion.choices[0]?.message?.content ?? '';
+  // Strip code fences / prose and isolate the JSON object before parsing.
+  const jsonStart = raw.indexOf('{');
+  const jsonEnd = raw.lastIndexOf('}');
+  if (jsonStart === -1 || jsonEnd === -1) {
+    throw new AppError('AI returned an unexpected response. Please try again or use Custom selectors.', 502);
+  }
+
+  let parsed: { containerSelector: string; selectors: Record<string, string> };
+  try {
+    parsed = detectSelectorsResponseSchema.parse(JSON.parse(raw.slice(jsonStart, jsonEnd + 1)));
+  } catch (err) {
+    logger.warn('scraper detectSelectors: malformed AI JSON', {
+      url,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new AppError('AI returned malformed selectors. Please try again or use Custom selectors.', 502);
+  }
+
+  return parsed;
+}
+
 async function scrapeWeb(_config: Record<string, unknown>): Promise<{
   recordsFound: number;
   recordsImported: number;
@@ -686,9 +875,12 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
   const selectors = _config.selectors as Record<string, string> | undefined;
   const maxPages = Number(_config.maxPages) || 1;
   const headers = _config.headers as Record<string, string> | undefined;
+  // 'smart' mode is opt-in: a config without an explicit mode keeps the
+  // original selector-required behaviour (backward compatible).
+  const mode = _config.mode === 'smart' ? 'smart' : 'selectors';
 
   if (!url) throw new AppError('URL is required for web scraping', 400);
-  if (!selectors || Object.keys(selectors).length === 0) {
+  if (mode === 'selectors' && (!selectors || Object.keys(selectors).length === 0)) {
     throw new AppError('CSS selectors are required for web scraping', 400);
   }
 
@@ -711,39 +903,45 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
     const html = await response.text();
     const $ = cheerio.load(html);
 
-    const firstSelector = Object.values(selectors)[0];
-    if (!firstSelector) continue;
+    if (mode === 'smart') {
+      // Selector-free extraction: pull emails/phones from the page and use the
+      // page title as the business name. Best for single contact/about pages.
+      allLeads.push(...smartExtract(html, pageUrl));
+    } else {
+      const firstSelector = Object.values(selectors!)[0];
+      if (!firstSelector) continue;
 
-    const items: Record<string, string>[] = [];
-    const elements = $(firstSelector);
+      const items: Record<string, string>[] = [];
+      const elements = $(firstSelector);
 
-    if (elements.length > 0) {
-      const fieldKeys = Object.keys(selectors);
-      const containerSelector = _config.containerSelector as string | undefined;
-      const containers = containerSelector ? $(containerSelector) : elements.parent().parent();
+      if (elements.length > 0) {
+        const fieldKeys = Object.keys(selectors!);
+        const containerSelector = _config.containerSelector as string | undefined;
+        const containers = containerSelector ? $(containerSelector) : elements.parent().parent();
 
-      containers.each((_i, container) => {
-        const entry: Record<string, string> = {};
-        for (const key of fieldKeys) {
-          const sel = selectors[key];
-          const el = $(container).find(sel).first();
-          entry[key] = el.text().trim();
-        }
-        if (entry.business_name || entry.phone) {
-          items.push(entry);
-        }
-      });
-    }
+        containers.each((_i, container) => {
+          const entry: Record<string, string> = {};
+          for (const key of fieldKeys) {
+            const sel = selectors![key];
+            const el = $(container).find(sel).first();
+            entry[key] = el.text().trim();
+          }
+          if (entry.business_name || entry.phone) {
+            items.push(entry);
+          }
+        });
+      }
 
-    for (const item of items) {
-      allLeads.push({
-        business_name: item.business_name || 'Unknown Business',
-        phone: item.phone || undefined,
-        email: item.email || undefined,
-        website: item.website || undefined,
-        location: item.location || '',
-        source_platform: 'web_scrape',
-      });
+      for (const item of items) {
+        allLeads.push({
+          business_name: item.business_name || 'Unknown Business',
+          phone: item.phone || undefined,
+          email: item.email || undefined,
+          website: item.website || undefined,
+          location: item.location || '',
+          source_platform: 'web_scrape',
+        });
+      }
     }
 
     if (page < maxPages && _config.paginationSelector) {

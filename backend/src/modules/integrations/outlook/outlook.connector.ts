@@ -154,23 +154,31 @@ export async function sendEmail(input: SendEmailInput): Promise<OutlookResult> {
     'Content-Type': 'application/json',
   });
 
-  let res = await loggedFetch(url, { method: 'POST', headers: headers(creds.accessToken), body }, {
-    channel: 'sendgrid',
-    leadId: input.leadId,
-    campaignId: input.campaignId,
-    context: { provider: 'outlook', to: input.to },
-  });
+  let res = await loggedFetch(
+    url,
+    { method: 'POST', headers: headers(creds.accessToken), body },
+    {
+      channel: 'sendgrid',
+      leadId: input.leadId,
+      campaignId: input.campaignId,
+      context: { provider: 'outlook', to: input.to },
+    },
+  );
 
   // Retry once on 401 with a refreshed token
   if (!res.ok && res.status === 401) {
     try {
       const freshToken = await refreshAccessToken(creds);
-      res = await loggedFetch(url, { method: 'POST', headers: headers(freshToken), body }, {
-        channel: 'sendgrid',
-        leadId: input.leadId,
-        campaignId: input.campaignId,
-        context: { provider: 'outlook', to: input.to, tokenRefreshed: true },
-      });
+      res = await loggedFetch(
+        url,
+        { method: 'POST', headers: headers(freshToken), body },
+        {
+          channel: 'sendgrid',
+          leadId: input.leadId,
+          campaignId: input.campaignId,
+          context: { provider: 'outlook', to: input.to, tokenRefreshed: true },
+        },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'token refresh failed';
       return { ok: false, error: message, retryable: false, latencyMs: Date.now() - start };
@@ -207,4 +215,21 @@ export async function sendEmail(input: SendEmailInput): Promise<OutlookResult> {
   });
 
   return { ok: true, latencyMs };
+}
+
+export async function testConnection(
+  creds: OutlookCredentials,
+): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    // A successful token refresh confirms the OAuth credentials are valid and active
+    await refreshAccessToken(creds);
+    return { ok: true, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown Outlook error',
+      latencyMs: Date.now() - start,
+    };
+  }
 }

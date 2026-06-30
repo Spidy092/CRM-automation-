@@ -1,10 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { classifyReplySchema, replyHistoryQuerySchema } from './ai-reply.schema';
-import {
-  classifyInboundReply,
-  getReplyHistory,
-  triggerClassification,
-} from './ai-reply.service';
+import { classifyInboundReply, getReplyHistory, triggerClassification } from './ai-reply.service';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { successResponse } from '../../shared/utils/response';
 import { wrap } from '../../shared/utils/asyncHandler';

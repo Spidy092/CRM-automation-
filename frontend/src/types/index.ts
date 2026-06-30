@@ -129,7 +129,7 @@ export interface CustomFieldDefinition {
   label: string;
   field_key: string;
   field_type: CustomFieldType;
-  options: Record<string, unknown> | null;
+  options: string[] | null;
   is_required: boolean;
   is_active: boolean;
   created_by: string;

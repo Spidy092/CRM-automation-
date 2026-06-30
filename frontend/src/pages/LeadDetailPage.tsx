@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useLead, useLeadActivity, usePauseLead, useDeleteLead } from '@/api/leads';
+import { useLead, useLeadActivity, usePauseLead, useDeleteLead, useEnrichLead } from '@/api/leads';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -69,6 +69,7 @@ export function LeadDetailPage() {
   const { data: activity = [], isLoading: activityLoading } = useLeadActivity(id!, 50);
   const pauseLead = usePauseLead();
   const deleteLead = useDeleteLead();
+  const enrichLead = useEnrichLead();
 
   const handlePause = async () => {
     if (!lead) return;
@@ -160,7 +161,7 @@ export function LeadDetailPage() {
           { label: 'Lead score', value: lead.lead_score, tone: lead.lead_score >= 70 ? 'success' : lead.lead_score >= 40 ? 'warning' : 'default' },
           { label: 'Status', value: lead.status.replace('_', ' ') },
           { label: 'Classification', value: lead.classification ?? '—' },
-          { label: 'Source', value: lead.source_platform.replace(/_/g, ' ') },
+          { label: 'Source', value: lead.source_platform?.replace(/_/g, ' ') ?? '—' },
         ]}
       />
 
@@ -173,7 +174,31 @@ export function LeadDetailPage() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <Row icon={<User className="h-4 w-4" />} label="Name" value={lead.contact_name} />
-              <Row icon={<span className="text-xs">✉</span>} label="Email" value={lead.email} />
+              <Row 
+                icon={<span className="text-xs">✉</span>} 
+                label="Email" 
+                value={
+                  <div className="flex items-center space-x-2">
+                    <span>{lead.email}</span>
+                    {lead.website && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-6 px-2 text-xs text-blue-600 hover:text-blue-700 bg-blue-50"
+                        disabled={enrichLead.isPending}
+                        onClick={() => {
+                          enrichLead.mutate(lead.id, {
+                            onSuccess: () => showToast('Lead data enriched!', 'success'),
+                            onError: (err: any) => showToast(err.response?.data?.error || 'Failed to enrich data', 'error'),
+                          });
+                        }}
+                      >
+                        {enrichLead.isPending ? 'Enriching...' : <><Sparkles className="h-3 w-3 mr-1" /> Enrich</>}
+                      </Button>
+                    )}
+                  </div>
+                } 
+              />
               <Row icon={<span className="text-xs">📱</span>} label="Phone" value={lead.phone} />
               {lead.website && (
                 <Row
@@ -214,7 +239,7 @@ export function LeadDetailPage() {
           </Card>
 
           {/* Tags */}
-          {lead.tags.length > 0 && (
+          {(lead.tags?.length ?? 0) > 0 && (
             <Card>
               <CardHeader>
                 <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">

@@ -162,11 +162,7 @@ export async function exportReportHandler(
  * resolved file path is checked to be inside the exports/ directory to
  * prevent directory traversal attacks.
  */
-export async function downloadExportHandler(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
+export function downloadExportHandler(req: Request, res: Response, next: NextFunction): void {
   try {
     const { jobId } = req.params;
 

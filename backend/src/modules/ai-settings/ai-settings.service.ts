@@ -95,8 +95,7 @@ export async function updateAiSettings(
   if (input.temperature !== undefined) repoInput.temperature = input.temperature;
   if (input.system_prompt_override !== undefined)
     repoInput.system_prompt_override = input.system_prompt_override;
-  if (input.cache_ttl_seconds !== undefined)
-    repoInput.cache_ttl_seconds = input.cache_ttl_seconds;
+  if (input.cache_ttl_seconds !== undefined) repoInput.cache_ttl_seconds = input.cache_ttl_seconds;
 
   // Encrypt the API key if provided; null = clear the key
   if (input.api_key !== undefined) {

@@ -98,9 +98,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SmtpResult> {
     });
 
     const info = await transporter.sendMail({
-      from: creds.fromName
-        ? `"${creds.fromName}" <${creds.fromEmail}>`
-        : creds.fromEmail,
+      from: creds.fromName ? `"${creds.fromName}" <${creds.fromEmail}>` : creds.fromEmail,
       to: input.to,
       subject: input.subject,
       text: input.textBody ?? input.htmlBody.replace(/<[^>]*>/g, ''),
@@ -130,5 +128,27 @@ export async function sendEmail(input: SendEmailInput): Promise<SmtpResult> {
       latency_ms: latencyMs,
     });
     return { ok: false, error: message, retryable: true, latencyMs };
+  }
+}
+
+export async function testConnection(
+  creds: SmtpCredentials,
+): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    const transporter = nodemailer.createTransport({
+      host: creds.host,
+      port: creds.port,
+      secure: creds.secure,
+      auth: { user: creds.user, pass: creds.pass },
+    });
+    await transporter.verify();
+    return { ok: true, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown SMTP error',
+      latencyMs: Date.now() - start,
+    };
   }
 }

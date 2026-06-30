@@ -19,7 +19,10 @@ export type AIDomainEvent =
         received_at?: string;
       };
     }
-  | { type: 'lead.stage.changed'; payload: { lead_id: string; from_stage: string; to_stage: string } }
+  | {
+      type: 'lead.stage.changed';
+      payload: { lead_id: string; from_stage: string; to_stage: string };
+    }
   | { type: 'outreach.bounced'; payload: { lead_id: string; channel: string } }
   | { type: 'outreach.opened'; payload: { lead_id: string; campaign_id: string } }
   | { type: 'outreach.clicked'; payload: { lead_id: string; campaign_id: string; link: string } }

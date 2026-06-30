@@ -26,10 +26,20 @@ export const youtubeConfigSchema = z.object({
 
 export const webScrapeConfigSchema = z.object({
   url: z.string().url('Must be a valid URL'),
-  selectors: z.record(z.string(), z.string()),
+  // 'smart' = selector-free extraction (regex emails/phones, page title as name).
+  // 'selectors' = explicit CSS selector extraction (the original behaviour).
+  mode: z.enum(['smart', 'selectors']).optional().default('smart'),
+  // Only required in 'selectors' mode — enforced at run time in scrapeWeb().
+  selectors: z.record(z.string(), z.string()).optional(),
+  containerSelector: z.string().optional(),
   paginationSelector: z.string().optional(),
   maxPages: z.number().int().positive().max(10).optional().default(1),
   headers: z.record(z.string(), z.string()).optional(),
+});
+
+// Body for the AI "auto-detect selectors" endpoint.
+export const detectSelectorsSchema = z.object({
+  url: z.string().url('Must be a valid URL'),
 });
 
 export const createScraperConfigSchema = z.object({

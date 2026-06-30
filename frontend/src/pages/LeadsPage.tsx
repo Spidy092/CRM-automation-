@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useInfiniteLeads, useDeleteLead, usePauseLead, useBulkPauseLeads } from '@/api/leads';
+import { useCampaigns, useAddLeadsToCampaign } from '@/api/campaigns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -9,6 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import type { Lead, LeadStatus } from '@/types';
 import {
   Plus,
@@ -45,6 +47,9 @@ export function LeadsPage() {
   const deleteLead = useDeleteLead();
   const pauseLead = usePauseLead();
   const bulkPause = useBulkPauseLeads();
+  const { data: campaigns } = useCampaigns();
+  const addLeadsToCampaign = useAddLeadsToCampaign();
+  const [selectedCampaign, setSelectedCampaign] = useState('');
   const { showToast } = useToast();
 
   const leads = data?.pages.flatMap((p) => p.items) ?? [];
@@ -97,6 +102,19 @@ export function LeadsPage() {
       setSelected(new Set());
     } catch {
       showToast('Bulk action failed.', 'error');
+    }
+  };
+
+  const handleAddToCampaign = async () => {
+    if (!selectedCampaign) return;
+    const ids = Array.from(selected);
+    try {
+      await addLeadsToCampaign.mutateAsync({ campaignId: selectedCampaign, leadIds: ids });
+      showToast(`${ids.length} leads added to campaign.`, 'success');
+      setSelected(new Set());
+      setSelectedCampaign('');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to add leads to campaign.'), 'error');
     }
   };
 
@@ -180,6 +198,29 @@ export function LeadsPage() {
                 >
                   <Play className="mr-1.5 h-3.5 w-3.5" />
                   Resume all
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 ml-4 border-l border-blue-200 pl-4">
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-3 py-1 text-xs"
+                  value={selectedCampaign}
+                  onChange={(e) => setSelectedCampaign(e.target.value)}
+                >
+                  <option value="">Select campaign...</option>
+                  {campaigns?.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-8"
+                  disabled={!selectedCampaign || addLeadsToCampaign.isPending}
+                  onClick={handleAddToCampaign}
+                >
+                  Add
                 </Button>
               </div>
               <Button

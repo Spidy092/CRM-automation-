@@ -1,12 +1,19 @@
 import { Worker, type ConnectionOptions, type Job } from 'bullmq';
-import { getBullConnection, AI_INBOX_QUEUE, AI_CREATE_INBOX_ITEM, type AiCreateInboxItemJob } from './queue';
+import {
+  getBullConnection,
+  AI_INBOX_QUEUE,
+  AI_CREATE_INBOX_ITEM,
+  type AiCreateInboxItemJob,
+} from './queue';
 import { logger } from '../shared/utils/logger';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { createItem, runExpirySweep } from '../modules/ai-inbox/ai-inbox.service';
 
-export async function handleAiInboxJob(job: Job<AiCreateInboxItemJob>): Promise<{ itemId?: string; swept?: number }> {
+export async function handleAiInboxJob(
+  job: Job<AiCreateInboxItemJob>,
+): Promise<{ itemId?: string; swept?: number }> {
   const start = Date.now();
 
   // ── Expiry sweep (repeatable cron job — empty payload) ──────────────
@@ -21,15 +28,26 @@ export async function handleAiInboxJob(job: Job<AiCreateInboxItemJob>): Promise<
   }
 
   // ── Create inbox item ───────────────────────────────────────────────
-  const { assignedTo, leadId, campaignId, itemType, title, summary,
-          urgencyScore, aiDraftResponse, aiDraftConfidence, expiresInHours } = job.data;
+  const {
+    assignedTo,
+    leadId,
+    campaignId,
+    itemType,
+    title,
+    summary,
+    urgencyScore,
+    aiDraftResponse,
+    aiDraftConfidence,
+    expiresInHours,
+  } = job.data;
   const baseMeta = { jobId: job.id, jobName: job.name, itemType, leadId, assignedTo };
 
   logger.info('ai inbox job started', baseMeta);
 
-  const expiresAt = expiresInHours && expiresInHours > 0
-    ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
-    : undefined;
+  const expiresAt =
+    expiresInHours && expiresInHours > 0
+      ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
+      : undefined;
 
   const item = await createItem({
     assigned_to: assignedTo,
@@ -53,27 +71,23 @@ export async function handleAiInboxJob(job: Job<AiCreateInboxItemJob>): Promise<
 }
 
 export function startAiInboxWorker(): Worker {
-  const worker = new Worker(
-    AI_INBOX_QUEUE,
-    handleAiInboxJob,
-    {
-      connection: getBullConnection() as unknown as ConnectionOptions,
-      concurrency: 20,
-    },
-  );
-
-
-  worker.on('ready', async () => {
-    logger.info('ai inbox worker ready', { queue: AI_INBOX_QUEUE });
-    // Schedule repeatable expiry sweep every 30 minutes
-    const { aiInboxQueue } = await import('./queue');
-    await aiInboxQueue.add(
-      'ai:expiry-sweep',
-      {},
-      { repeat: { every: 30 * 60 * 1000 }, jobId: 'ai:expiry-sweep:cron' },
-    );
+  const worker = new Worker(AI_INBOX_QUEUE, handleAiInboxJob, {
+    connection: getBullConnection() as unknown as ConnectionOptions,
+    concurrency: 20,
   });
 
+  worker.on('ready', () => {
+    logger.info('ai inbox worker ready', { queue: AI_INBOX_QUEUE });
+    // Schedule repeatable expiry sweep every 30 minutes
+    void (async () => {
+      const { aiInboxQueue } = await import('./queue');
+      await aiInboxQueue.add(
+        'ai:expiry-sweep',
+        {},
+        { repeat: { every: 30 * 60 * 1000 }, jobId: 'ai:expiry-sweep:cron' },
+      );
+    })();
+  });
 
   worker.on('failed', (job, err) => {
     const id = job?.id ?? 'unknown';

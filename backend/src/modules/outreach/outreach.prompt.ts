@@ -149,11 +149,11 @@ export async function personalizeMessage(
     return { message, tokensUsed: 0, latencyMs, cacheHit: false };
   }
 
-  const client = new OpenAI({ 
+  const client = new OpenAI({
     apiKey,
     baseURL: aiConfig.baseUrl || undefined,
   });
-  
+
   const ctx = buildPromptContext(lead);
   const system = aiConfig.systemPromptOverride || buildSystemPrompt();
   const user = buildUserPrompt(template.body, ctx);

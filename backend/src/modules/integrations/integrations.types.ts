@@ -43,3 +43,18 @@ export interface IntegrationTestResult {
   message: string;
   tested_at: string;
 }
+
+export interface IntegrationBulkTestResult {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  results: Array<{
+    id: string;
+    name: string;
+    ok: boolean;
+    status: string;
+    message: string;
+    tested_at: string;
+  }>;
+}

@@ -70,13 +70,13 @@ export function initNotificationSubscriber(): void {
   subscriber
     .subscribe(REDIS_CHANNEL)
     .then(() => logger.info('notification subscriber ready', { channel: REDIS_CHANNEL }))
-    .catch((err) =>
+    .catch((err: Error) =>
       logger.warn('notification subscriber subscribe failed', { error: err.message }),
     );
 
-  subscriber.on('message', (_channel, message) => {
+  subscriber.on('message', (_channel: string, message: unknown) => {
     try {
-      const { userId, notification } = JSON.parse(message) as RedisMessage;
+      const { userId, notification } = JSON.parse(message as string) as RedisMessage;
       localEmitter.emit(`user:${userId}`, notification);
     } catch {
       // ignore malformed messages
@@ -84,10 +84,7 @@ export function initNotificationSubscriber(): void {
   });
 }
 
-export function subscribeUser(
-  userId: string,
-  handler: (n: AppNotification) => void,
-): () => void {
+export function subscribeUser(userId: string, handler: (n: AppNotification) => void): () => void {
   const channel = `user:${userId}`;
   localEmitter.on(channel, handler);
   return () => localEmitter.off(channel, handler);

@@ -105,3 +105,42 @@ export async function sendSms(input: SendSmsInput): Promise<ConnectorResult<Send
     latencyMs: res.latencyMs,
   };
 }
+
+export async function testConnection(
+  creds: TwilioCredentials,
+): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}.json`;
+    const basic = Buffer.from(`${creds.accountSid}:${creds.authToken}`).toString('base64');
+
+    const res = await fetch(url, {
+      headers: {
+        authorization: `Basic ${basic}`,
+      },
+    });
+
+    if (res.ok) {
+      return { ok: true, latencyMs: Date.now() - start };
+    }
+
+    // Attempt to parse error
+    let errorMessage = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { message?: string };
+      if (body.message) {
+        errorMessage = body.message;
+      }
+    } catch {
+      // Ignore JSON parse error
+    }
+
+    return { ok: false, error: errorMessage, latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown Twilio error',
+      latencyMs: Date.now() - start,
+    };
+  }
+}

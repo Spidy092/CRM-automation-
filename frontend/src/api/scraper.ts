@@ -111,6 +111,19 @@ export function useTriggerScrape() {
   });
 }
 
+/* ─── AI Auto-detect Selectors ─── */
+
+export function useDetectSelectors() {
+  return useMutation({
+    mutationFn: async (url: string) => {
+      const response = await apiClient.post<
+        ApiResponse<{ containerSelector: string; selectors: Record<string, string> }>
+      >('/scraper/detect-selectors', { url });
+      return response.data.data;
+    },
+  });
+}
+
 /* ─── Scraper Logs ─── */
 
 export function useScraperLogs(configId: string, limit = 25) {

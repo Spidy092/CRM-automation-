@@ -226,3 +226,18 @@ export function useBulkPauseLeads() {
     },
   });
 }
+
+export function useEnrichLead() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiClient.post<ApiResponse<Lead>>(`/leads/${id}/enrich`);
+      return response.data.data;
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['leads', id] });
+    },
+  });
+}

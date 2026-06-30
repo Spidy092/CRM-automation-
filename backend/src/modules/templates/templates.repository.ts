@@ -123,11 +123,11 @@ export async function setApprovalStatus(
     `UPDATE templates
      SET approval_status = $1,
          approved_by = $2,
-         approved_at = CASE WHEN $1 = 'approved' THEN NOW() ELSE NULL END,
+         approved_at = CASE WHEN $5 THEN NOW() ELSE NULL END,
          rejection_reason = $3
      WHERE id = $4
      RETURNING ${COLS}`,
-    [status, approvedBy, rejectionReason, id],
+    [status, approvedBy, rejectionReason, id, status === 'approved'],
   );
   if (!row) throw new AppError('Template not found', 404);
   return row;

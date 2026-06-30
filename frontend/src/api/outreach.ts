@@ -93,8 +93,11 @@ export function useSequences() {
     queryKey: ['sequences'],
     queryFn: async () => {
       const response =
-        await apiClient.get<ApiResponse<PaginatedResponse<Sequence>>>('/outreach/sequences');
-      return response.data.data;
+        await apiClient.get<ApiResponse<Sequence[]>>('/outreach/sequences');
+      return {
+        items: response.data.data,
+        meta: response.data.meta as PaginatedResponse<Sequence>['meta'] ?? { limit: 25, hasMore: false },
+      } as PaginatedResponse<Sequence>;
     },
   });
 }

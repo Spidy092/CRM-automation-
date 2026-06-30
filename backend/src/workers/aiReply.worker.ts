@@ -1,5 +1,10 @@
 import { Worker, type ConnectionOptions, type Job } from 'bullmq';
-import { getBullConnection, AI_REPLY_QUEUE, AI_CLASSIFY_REPLY, type AiClassifyReplyJob } from './queue';
+import {
+  getBullConnection,
+  AI_REPLY_QUEUE,
+  AI_CLASSIFY_REPLY,
+  type AiClassifyReplyJob,
+} from './queue';
 import { logger } from '../shared/utils/logger';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
@@ -41,20 +46,16 @@ export async function handleAiReplyJob(job: Job<AiClassifyReplyJob>): Promise<{
 }
 
 export function startAiReplyWorker(): Worker {
-  const worker = new Worker(
-    AI_REPLY_QUEUE,
-    handleAiReplyJob,
-    {
-      connection: getBullConnection() as unknown as ConnectionOptions,
-      concurrency: 10,
-    },
-  );
+  const worker = new Worker(AI_REPLY_QUEUE, handleAiReplyJob, {
+    connection: getBullConnection() as unknown as ConnectionOptions,
+    concurrency: 10,
+  });
 
   worker.on('ready', () => logger.info('ai reply worker ready', { queue: AI_REPLY_QUEUE }));
 
   worker.on('failed', (job, err) => {
     const id = job?.id ?? 'unknown';
-    const leadId = (job?.data as AiClassifyReplyJob | undefined)?.leadId ?? 'unknown';
+    const leadId = job?.data?.leadId ?? 'unknown';
     incJobsFailed({ name: AI_CLASSIFY_REPLY, queue: AI_REPLY_QUEUE });
     logger.error('ai reply job failed', { id, leadId, error: err.message });
     Sentry.captureException(err, { extra: { jobId: id, leadId } });

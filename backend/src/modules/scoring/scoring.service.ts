@@ -155,14 +155,16 @@ function evaluateCondition(
   // Numeric threshold: {"gte": N} — compare lead[factor] against N
   if ('gte' in condition) {
     const value = leadRecord[factor];
-    return value !== null && value !== undefined && Number(value) >= Number(condition.gte);
+    return value !== null && value !== undefined && value !== '' && !Number.isNaN(Number(value)) && Number(value) >= Number(condition.gte);
   }
 
   // Field existence: {"exists": "fieldName"} — check lead[fieldName] is truthy
   if ('exists' in condition) {
     const field = String(condition.exists);
     const val = leadRecord[field];
-    return val !== null && val !== undefined && val !== '';
+    if (val === null || val === undefined || val === '') return false;
+    if (typeof val === 'object' && Object.keys(val).length === 0) return false;
+    return true;
   }
 
   // Industry list match: {"industries": [...]}
@@ -180,7 +182,7 @@ function evaluateCondition(
   // Source list match: {"source": [...]}
   if ('source' in condition) {
     const sources = condition.source as string[];
-    return Array.isArray(sources) && sources.includes(String(lead.source ?? ''));
+    return Array.isArray(sources) && sources.includes(String(leadRecord['source_platform'] ?? ''));
   }
 
   // Prior engagement: {"replied": true}

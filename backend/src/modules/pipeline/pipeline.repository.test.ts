@@ -11,6 +11,7 @@ import {
   deleteStage,
   findStagesByPipeline,
   findStageById,
+  findStageByName,
   moveLeadToStage,
   findDefaultPipeline,
 } from './pipeline.repository';
@@ -192,6 +193,25 @@ describe('pipeline.repository', () => {
     it('returns null when missing', async () => {
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
       await expect(findStageById('missing')).resolves.toBeNull();
+    });
+  });
+
+  describe('findStageByName', () => {
+    it('returns row by case-insensitive stage name', async () => {
+      const row = { id: 's1', name: 'Qualified' };
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([row]));
+
+      await expect(findStageByName('qualified')).resolves.toEqual(row);
+
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('LOWER(name) = LOWER($1)'),
+        ['qualified'],
+      );
+    });
+
+    it('returns null when no stage name matches', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+      await expect(findStageByName('missing')).resolves.toBeNull();
     });
   });
 

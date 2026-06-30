@@ -21,7 +21,6 @@ interface WebhookResult {
   details?: string;
 }
 
-
 async function publishLeadReplyReceived(
   leadId: string,
   channel: 'whatsapp' | 'sms' | 'email',
@@ -89,7 +88,7 @@ export async function handleWhatsAppMessage(
   const phoneNumberId = metadata?.phone_number_id as string;
   const wamId = (msg.id as string | undefined) ?? 'unknown';
   const textBody =
-    (msg.text as Record<string, unknown> | undefined)?.body as string | undefined ??
+    ((msg.text as Record<string, unknown> | undefined)?.body as string | undefined) ??
     (msg.interactive as Record<string, unknown> | undefined)?.button_reply?.toString() ??
     '';
 

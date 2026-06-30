@@ -17,6 +17,8 @@
 8. [Database Schema](#8-database-schema)
 9. [Integrations](#9-integrations)
 10. [AI Features](#10-ai-features)
+    - [AI Copilot Usage Guide](AI_COPILOT_USAGE.md)
+    - [AI Copilot Agent Gaps and Improvement Plan](AI_COPILOT_AGENT_GAPS.md)
 11. [User Roles & Permissions](#11-user-roles--permissions)
 12. [Background Jobs (BullMQ)](#12-background-jobs-bullmq)
 13. [Webhooks](#13-webhooks)
@@ -843,6 +845,8 @@ leads ──────< pipeline_stages (via current_stage_id)
 
 ## 10. AI Features
 
+For setup and day-to-day usage of the floating Copilot, AI provider API key, and AI Inbox approval flow, see [AI Copilot Usage Guide](AI_COPILOT_USAGE.md).
+
 ### How AI Personalization Works
 
 1. **Lead is created/imported** → BullMQ triggers `ai:research-lead` job
@@ -1157,6 +1161,70 @@ curl http://localhost:3000/health
 curl http://localhost:3000/metrics
 # Returns Prometheus-format metrics
 ```
+
+---
+
+## 18. Phase 1 Completion Status (verified 2026-06-27)
+
+### Overall: ~95% Complete
+
+| Area | Status | Details |
+|---|---|---|
+| Backend modules | ✅ 100% | All 14 Phase 1 modules fully implemented |
+| Backend tests | ✅ 95% | 1581 passed, 3 failed. Coverage: 86.2% stmts, 72.4% branches, 82.5% funcs |
+| Frontend pages | ✅ 100% | 30 pages, all routed |
+| Frontend tests | ✅ 90% | 42 passed, 1 failed |
+| DevOps / CI-CD | ✅ 85% | Docker, Nginx, GitHub Actions CI all exist |
+
+### What's Left (Phase 1 gaps)
+
+**Backend — 3 failing tests (compile errors, not logic bugs):**
+
+| File | Issue |
+|---|---|
+| `reports/reports.routes.test.ts` | `wrap(downloadExportHandler)` returns `void` instead of `Promise<unknown>` |
+| `integrations/oauth/oauth.routes.test.ts` | `asyncHandler` return type mismatch |
+| `integrations/integrations.routes.test.ts` | Cascade from oauth route error |
+
+**Backend — Low coverage files:**
+
+| File | Stmts | What it is |
+|---|---|---|
+| `scraper.worker.ts` | 0% | No test file |
+| `httpMetrics.ts` | 0% | No test file |
+| `notifications.routes.ts` | 0% | No test file |
+| `rateLimiter.ts` | 0% | No test file |
+| `upload.ts` | 0% | No test file |
+| `oauth.service.ts` | 28.7% | Needs more test scenarios |
+| `dlq.ts` | 30.4% | Test infrastructure |
+| `users.repository.ts` | 42.9% | Needs more test scenarios |
+| `shared/middleware/` | 65.2% | Needs more test coverage |
+| `shared/utils/` | 77.2% | Close to target |
+
+**Frontend — 1 failing test:**
+
+| File | Issue |
+|---|---|
+| `integrations.test.tsx` | `apiClient.put is not a function` (mock setup issue) |
+
+**Frontend — Missing test files (8 API clients):**
+
+- `aiCampaignBrain.ts`, `aiDecisions.ts`, `aiInbox.ts`, `aiIntelligence.ts`, `aiSettings.ts`, `customFields.ts`, `outreach.ts`, `templates.ts`
+
+**Frontend — Missing component test:**
+
+- `LeadTimeline.tsx`
+
+### To Reach 100% Phase 1
+
+1. Fix 3 backend compile errors in test files
+2. Fix 1 frontend test mock (`integrations.test.tsx`)
+3. Add tests for `scraper.worker.ts`, `httpMetrics.ts`, `notifications.routes.ts`, `rateLimiter.ts`, `upload.ts`
+4. Add more test scenarios for `oauth.service.ts`, `users.repository.ts`
+5. Add tests for `shared/middleware/` (auth, RBAC, errorHandler)
+6. Add 8 missing frontend API client tests
+7. Add `LeadTimeline.tsx` component test
+8. Verify Sentry end-to-end with real DSN
 
 ---
 

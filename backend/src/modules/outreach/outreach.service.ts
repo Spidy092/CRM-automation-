@@ -264,7 +264,10 @@ async function enqueueNextStepAfterTask(task: TaskRow): Promise<void> {
   });
 }
 
-function destinationForChannel(lead: { email: string; phone: string }, channel: MessageChannel): string {
+function destinationForChannel(
+  lead: { email: string; phone: string },
+  channel: MessageChannel,
+): string {
   if (channel === 'email') return lead.email;
   return lead.phone;
 }
@@ -308,7 +311,11 @@ export async function sendManualOutreach(
     action: 'outreach.manual_send_enqueued',
     entityType: 'lead',
     entityId: input.leadId,
-    newValue: { campaignId: input.campaignId, channel: input.channel, templateId: input.templateId },
+    newValue: {
+      campaignId: input.campaignId,
+      channel: input.channel,
+      templateId: input.templateId,
+    },
     ipAddress: actor.ipAddress ?? null,
   });
 

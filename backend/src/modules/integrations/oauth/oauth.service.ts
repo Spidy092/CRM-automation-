@@ -140,9 +140,7 @@ export async function exchangeCodeForTokens(
     throw new AppError(`Integration "${provider}" not found`, 404);
   }
 
-  const existingCredentials = await parseExistingCredentials(
-    integration.encrypted_credentials,
-  );
+  const existingCredentials = await parseExistingCredentials(integration.encrypted_credentials);
   const credentials = {
     ...existingCredentials,
     accessToken: tokenResponse.access_token,
@@ -150,7 +148,7 @@ export async function exchangeCodeForTokens(
     accessTokenExpiresAt: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
   };
 
-  const encrypted = await encryptJson(credentials);
+  const encrypted = encryptJson(credentials);
   await updateIntegration(integration.id, {
     encryptedCredentials: encrypted,
     updatedBy: stateData.userId,
@@ -176,9 +174,7 @@ export async function refreshAccessToken(
     throw new AppError(`Integration "${provider}" has no credentials`, 400);
   }
 
-  const credentials = (await decryptJson(
-    integration.encrypted_credentials,
-  )) as Record<string, unknown>;
+  const credentials = decryptJson<Record<string, unknown>>(integration.encrypted_credentials);
 
   let tokenResponse: OAuthTokenResponse;
 
@@ -203,7 +199,7 @@ export async function refreshAccessToken(
     accessTokenExpiresAt: new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString(),
   };
 
-  const encrypted = await encryptJson(updatedCredentials);
+  const encrypted = encryptJson(updatedCredentials);
   await updateIntegration(integrationId, {
     encryptedCredentials: encrypted,
     updatedBy: 'system',
@@ -305,7 +301,7 @@ async function parseExistingCredentials(
     return {};
   }
   try {
-    return (await decryptJson(encryptedCredentials)) as Record<string, unknown>;
+    return await decryptJson(encryptedCredentials);
   } catch {
     return {};
   }

@@ -12,8 +12,9 @@ const router = Router();
  */
 function authenticateSSE(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
-  const rawToken =
-    authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string | undefined);
+  const rawToken = authHeader?.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : (req.query.token as string | undefined);
 
   if (!rawToken) {
     res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -27,7 +28,9 @@ function authenticateSSE(req: Request, res: Response, next: NextFunction): void 
   }
 
   try {
-    const payload = jwt.verify(rawToken, publicKey, { algorithms: ['RS256'] }) as AuthenticatedUser & {
+    const payload = jwt.verify(rawToken, publicKey, {
+      algorithms: ['RS256'],
+    }) as AuthenticatedUser & {
       iat: number;
       exp: number;
     };
