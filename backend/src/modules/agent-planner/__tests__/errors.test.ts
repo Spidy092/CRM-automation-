@@ -27,5 +27,6 @@ describe('errors', () => {
     expect(mapCodeToHttp('step_failed')).toBe(409);
     expect(mapCodeToHttp('recovery_exhausted')).toBe(500);
     expect(mapCodeToHttp('approval_timeout')).toBe(409);
+    expect(mapCodeToHttp('plan_cancelled')).toBe(200);
   });
 });
