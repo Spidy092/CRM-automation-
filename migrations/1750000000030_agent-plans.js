@@ -72,17 +72,24 @@ exports.up = function (pgm) {
 
 /** @param {import('node-pg-migrate').MigrationBuilder} pgm */
 exports.down = function (pgm) {
-  pgm.dropIndex('ai_inbox_items', 'agent_plan_id');
+  // Reverse step 5: ai_inbox_items indexes + columns
   pgm.dropIndex('ai_inbox_items', 'agent_plan_step_id');
+  pgm.dropIndex('ai_inbox_items', 'agent_plan_id');
   pgm.dropColumns('ai_inbox_items', ['agent_plan_id', 'agent_plan_step_id']);
-  pgm.dropIndex('agent_actions', 'agent_plan_id');
+
+  // Reverse step 4: agent_actions indexes + columns
   pgm.dropIndex('agent_actions', 'agent_plan_step_id');
+  pgm.dropIndex('agent_actions', 'agent_plan_id');
   pgm.dropColumns('agent_actions', ['agent_plan_id', 'agent_plan_step_id']);
+
+  // Reverse step 3: agent_plans and agent_plan_steps indexes
   pgm.dropIndex('agent_plan_steps', 'plan_id');
-  pgm.dropTable('agent_plan_steps');
-  pgm.dropIndex('agent_plans', 'status');
-  pgm.dropIndex('agent_plans', ['status', 'created_at']);
-  pgm.dropIndex('agent_plans', 'requested_by');
   pgm.dropIndex('agent_plans', 'conversation_id');
+  pgm.dropIndex('agent_plans', 'requested_by');
+  pgm.dropIndex('agent_plans', ['status', 'created_at']);
+  pgm.dropIndex('agent_plans', 'status');
+
+  // Reverse step 1: tables (constraints drop automatically with tables)
+  pgm.dropTable('agent_plan_steps');
   pgm.dropTable('agent_plans');
 };
