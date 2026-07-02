@@ -1,4 +1,11 @@
-export type ScraperSourceType = 'google_places' | 'facebook' | 'youtube' | 'web_scrape';
+export type ScraperSourceType =
+  | 'google_places'
+  | 'facebook'
+  | 'youtube'
+  | 'web_scrape'
+  | 'meta_lead_forms'
+  | 'google_ads_lead_forms'
+  | 'linkedin_lead_forms';
 
 export type ScraperLogStatus = 'running' | 'completed' | 'failed' | 'partially_completed';
 

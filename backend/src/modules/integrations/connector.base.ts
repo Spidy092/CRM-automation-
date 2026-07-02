@@ -19,7 +19,7 @@
 
 import { logger } from '../../shared/utils/logger';
 
-export type ConnectorChannel = 'whatsapp' | 'twilio' | 'sendgrid' | 'google_ads' | 'facebook';
+export type ConnectorChannel = 'whatsapp' | 'twilio' | 'sendgrid' | 'google_ads' | 'facebook' | 'openwa';
 
 export interface ConnectorSuccess<T = unknown> {
   ok: true;
