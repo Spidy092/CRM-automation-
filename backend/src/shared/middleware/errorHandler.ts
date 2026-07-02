@@ -30,6 +30,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   // Also check isAppError to survive ts-node-dev module reloads
   if (err instanceof AppError || (err && typeof err === 'object' && 'isAppError' in err)) {
     const appErr = err as AppError;
+    console.error('AppError caught in errorHandler:', appErr.stack);
     if (appErr.statusCode >= 500) Sentry.captureException(appErr);
     sendError(res, appErr.message, appErr.statusCode);
     return;

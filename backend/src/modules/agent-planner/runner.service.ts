@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/node';
 import { logger } from '../../shared/utils/logger';
-import { proposeAgentAction } from '../agent/agent.service';
+import { proposeAgentAction, linkPlanToAction } from '../agent/agent.service';
 import type { AgentActor } from '../agent/agent.types';
 import {
   findPlanById,
@@ -88,13 +88,7 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
       if (proposal.policy.outcome === 'require_approval') {
         const actionId = proposal.action?.id;
         if (actionId) {
-          const { pool } = await import('../../shared/utils/db');
-          await pool.query(
-            `UPDATE agent_actions
-             SET agent_plan_id = $1, agent_plan_step_id = $2
-             WHERE id = $3`,
-            [planId, step.id, actionId],
-          );
+          await linkPlanToAction(actionId, planId, step.id);
           await updatePlanStepStatus(step.id, 'pending_approval', { agentActionId: actionId });
         }
         throw new StepAwaitingApproval(planId, step.step_index);

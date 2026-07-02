@@ -43,6 +43,10 @@ const fakeItem: AiInboxItem = {
   actioned_at: null,
   created_at: '2026-06-26T10:00:00.000Z',
   updated_at: '2026-06-26T10:00:00.000Z',
+  agent_action_id: null,
+  agent_plan_id: null,
+  agent_plan_step_id: null,
+  action_result: null,
 };
 
 describe('ai-inbox.controller', () => {
@@ -130,7 +134,13 @@ describe('ai-inbox.controller', () => {
 
       await actionInboxItem(req, res, mockNext);
 
-      expect(mockedService.actionItem).toHaveBeenCalledWith('item-1', 'u-1', 'approve', undefined);
+      expect(mockedService.actionItem).toHaveBeenCalledWith(
+        'item-1',
+        expect.objectContaining({ id: 'u-1', role: 'sales' }),
+        'approve',
+        undefined,
+        undefined,
+      );
       expect(res.json).toHaveBeenCalledWith({
         success: true,
         data: approved,
@@ -156,14 +166,15 @@ describe('ai-inbox.controller', () => {
 
       expect(mockedService.actionItem).toHaveBeenCalledWith(
         'item-1',
-        'u-1',
+        expect.objectContaining({ id: 'u-1', role: 'sales' }),
         'snooze',
         '2026-07-01T10:00:00.000Z',
+        undefined,
       );
     });
 
     it('returns a 404 AppError when the service reports not found', async () => {
-      const error = new Error('Inbox item not found: item-1');
+      const error = new AppError('Inbox item not found: item-1', 404);
       mockedService.actionItem.mockRejectedValue(error);
 
       const req = mockReq({}, { action: 'approve' }, { id: 'item-1' });

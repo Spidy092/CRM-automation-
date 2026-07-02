@@ -456,7 +456,7 @@ function getConversationId(): string {
 
 function renderCopilotText(content: string): ReactNode[] {
   const cleaned = content
-    .replace(/[👋✨🚀✅❌⚠️📌]/gu, '')
+    .replace(/👋|✨|🚀|✅|❌|⚠️|📌/gu, '')
     .replace(/^[ \t]*[-*][ \t]+/gm, '')
     .trim();
 

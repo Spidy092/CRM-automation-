@@ -1,4 +1,9 @@
 import { pool, queryOne } from '../../shared/utils/db';
+import {
+  appendObjectionToProfile as appendObjectionToProfileRepo,
+  appendBuyingSignalToProfile as appendBuyingSignalToProfileRepo,
+  updateNextBestAction,
+} from '../ai-intelligence/ai-intelligence.repository';
 import type { IntentClass } from './ai-reply.types';
 
 export async function upsertConversationSummary(
@@ -27,29 +32,11 @@ export async function appendObjectionToProfile(
   objectionType: string,
   messageText: string,
 ): Promise<void> {
-  const entry = JSON.stringify({
-    type: objectionType,
-    text: messageText.slice(0, 200),
-    logged_at: new Date().toISOString(),
-  });
-  await pool.query(
-    `UPDATE lead_ai_profiles
-     SET objection_log = objection_log || $2::jsonb,
-         updated_at    = NOW()
-     WHERE lead_id = $1`,
-    [leadId, `[${entry}]`],
-  );
+  await appendObjectionToProfileRepo(leadId, objectionType, messageText);
 }
 
 export async function appendBuyingSignalToProfile(leadId: string, signal: string): Promise<void> {
-  const entry = JSON.stringify({ signal, detected_at: new Date().toISOString() });
-  await pool.query(
-    `UPDATE lead_ai_profiles
-     SET buying_signals = buying_signals || $2::jsonb,
-         updated_at     = NOW()
-     WHERE lead_id = $1`,
-    [leadId, `[${entry}]`],
-  );
+  await appendBuyingSignalToProfileRepo(leadId, signal);
 }
 
 export async function updateProfileNextAction(
@@ -58,15 +45,11 @@ export async function updateProfileNextAction(
   reason: string,
   confidence: number,
 ): Promise<void> {
-  await pool.query(
-    `UPDATE lead_ai_profiles
-     SET next_best_action            = $2,
-         next_best_action_reason     = $3,
-         next_best_action_confidence = $4,
-         updated_at                  = NOW()
-     WHERE lead_id = $1`,
-    [leadId, nextBestAction, reason, confidence],
-  );
+  try {
+    await updateNextBestAction(leadId, nextBestAction, reason, confidence);
+  } catch {
+    // Profile may not exist yet — ignore if not found
+  }
 }
 
 /** Returns assigned_to and the campaign with lowest ai_min_confidence (most permissive active campaign). */

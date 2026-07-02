@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { logger } from '../../shared/utils/logger';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { insertDecisionLog } from '../ai-intelligence/ai-intelligence.repository';
+import { logDecisionLogFailure } from '../ai-intelligence/ai-intelligence.service';
 import { AgentActor } from '../agent/agent.types';
 import {
   createPlan,
@@ -15,6 +16,7 @@ import { PlannerError } from './errors';
 import { buildPlanIdempotencyKey } from './idempotency';
 import { buildPlannerSystemPrompt, planJsonSchema } from './planner.prompt';
 import { incPlanCreated, incPlanError } from './metrics';
+import { COST_BY_RISK_TIER } from './plan.types';
 import type { AutonomyLevel, PlanRow, PlanSource, PlanStepRow } from './plan.types';
 
 export async function createPlanFromGoal(input: {
@@ -60,6 +62,7 @@ export async function createPlanFromGoal(input: {
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      logger.info('planner: calling OpenAI', { model: aiConfig.model, maxTokens: 16_000, attempt });
       const completion = await client.chat.completions.create({
         model: aiConfig.model,
         max_tokens: 16_000,
@@ -74,6 +77,12 @@ export async function createPlanFromGoal(input: {
         ],
       });
       const rawContent = completion.choices[0]?.message?.content ?? null;
+      logger.info('planner: OpenAI response', {
+        hasContent: Boolean(rawContent),
+        contentLength: rawContent?.length ?? 0,
+        finishReason: completion.choices[0]?.finish_reason,
+        usage: completion.usage,
+      });
       if (!rawContent) {
         lastParseError = 'OpenAI returned empty content';
         continue;
@@ -82,17 +91,19 @@ export async function createPlanFromGoal(input: {
       try {
         parsedJson = JSON.parse(rawContent);
       } catch {
-        lastParseError = 'OpenAI returned malformed JSON';
+        lastParseError = `OpenAI returned malformed JSON: ${rawContent.slice(0, 200)}`;
+        logger.warn('planner: JSON parse failed', { rawContent: rawContent.slice(0, 500) });
         continue;
       }
 
       break;
     } catch (err) {
-      logger.error('planner: OpenAI call failed', { attempt, error: (err as Error).message });
-      lastParseError = 'OpenAI call failed';
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.error('planner: OpenAI call failed', { attempt, error: errMsg, stack: (err as Error).stack });
+      lastParseError = `OpenAI call failed: ${errMsg}`;
       if (attempt === 1) {
         incPlanError({ code: 'planner_malformed' });
-        throw new PlannerError('planner_malformed', 'OpenAI call failed after retry');
+        throw new PlannerError('planner_malformed', `OpenAI call failed after retry: ${errMsg}`);
       }
     }
   }
@@ -118,7 +129,13 @@ export async function createPlanFromGoal(input: {
       decision: 'invalid_plan',
       model_used: aiConfig.model,
       human_approval_required: false,
-    }).catch(() => null);
+    }).catch((err) =>
+      logDecisionLogFailure({
+        decisionType: 'agent_action',
+        phase: 'failure',
+        err,
+      }),
+    );
     throw new PlannerError('invalid_plan', validated.error.message, parsedJson);
   }
 
@@ -168,17 +185,16 @@ export async function createPlanFromGoal(input: {
     decision: 'proposed',
     model_used: aiConfig.model,
     human_approval_required: false,
-  }).catch(() => null);
+  }).catch((err) =>
+    logDecisionLogFailure({
+      decisionType: 'agent_action',
+      phase: 'success',
+      err,
+    }),
+  );
 
   return { plan, steps };
 }
-
-const COST_BY_RISK_TIER: Record<string, number> = {
-  read: 0.1,
-  low_risk_write: 1,
-  sensitive_write: 5,
-  customer_facing_write: 10,
-};
 
 export async function getPlanForPreview(planId: string): Promise<{
   plan: PlanRow;

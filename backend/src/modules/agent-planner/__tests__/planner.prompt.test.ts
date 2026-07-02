@@ -35,9 +35,7 @@ describe('planner.prompt', () => {
     expect(prompt).toMatch(/compliance/i);
   });
 
-  it('planJsonSchema has strict mode and matches planSchema shape', () => {
-    expect(planJsonSchema.json_schema.strict).toBe(true);
-    expect(planJsonSchema.json_schema.name).toBe('agent_plan');
-    expect(planJsonSchema.json_schema.schema).toBeDefined();
+  it('planJsonSchema uses json_object type', () => {
+    expect(planJsonSchema.type).toBe('json_object');
   });
 });

@@ -46,7 +46,11 @@ jest.mock('../leads/leads.repository');
 jest.mock('../ai-intelligence/ai-intelligence.repository');
 jest.mock('../ai-intelligence/ai-intelligence.service');
 jest.mock('../../shared/utils/metrics');
-jest.mock('../../workers/queue');
+jest.mock('../../workers/queue', () => ({
+  cancelPendingOutreachJobs: jest.fn(),
+  enqueueAiClassifyReply: jest.fn(),
+  enqueueAiCreateInboxItem: jest.fn(),
+}));
 jest.mock('./ai-reply.repository');
 jest.mock('../users/users.repository');
 jest.mock('../pipeline/pipeline.repository');

@@ -14,6 +14,8 @@ jest.mock('../../../shared/middleware/rbac', () => ({
   authorize: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
 }));
 
+const PLAN_UUID = '019f079c-f429-762a-89ab-d143218efd4e';
+
 describe('plan routes', () => {
   let app: express.Express;
 
@@ -29,7 +31,7 @@ describe('plan routes', () => {
   it('GET /chat/plans/:id returns the plan with steps', async () => {
     jest.spyOn(plannerService, 'getPlanForPreview').mockResolvedValue({
       plan: {
-        id: 'plan-1',
+        id: PLAN_UUID,
         goal: 'x',
         status: 'proposed',
         autonomy_level: 'supervised',
@@ -55,25 +57,30 @@ describe('plan routes', () => {
       requiresApproval: true,
     });
 
-    const res = await request(app).get('/chat/plans/plan-1');
+    const res = await request(app).get(`/chat/plans/${PLAN_UUID}`);
     expect(res.status).toBe(200);
     expect(res.body.data.estimatedCostCents).toBe(5);
   });
 
   it('GET /chat/plans/:id returns 404 when plan missing', async () => {
     jest.spyOn(plannerService, 'getPlanForPreview').mockResolvedValue(null);
-    const res = await request(app).get('/chat/plans/missing');
+    const res = await request(app).get(`/chat/plans/${PLAN_UUID}`);
     expect(res.status).toBe(404);
+  });
+
+  it('GET /chat/plans/:id returns 400 for invalid UUID', async () => {
+    const res = await request(app).get('/chat/plans/not-a-uuid');
+    expect(res.status).toBe(400);
   });
 
   it('POST /chat/plans/:id/approve triggers executePlan', async () => {
     jest
       .spyOn(runnerService, 'executePlan')
-      .mockResolvedValue({ planId: 'plan-1', status: 'running', errorMessage: null });
-    const res = await request(app).post('/chat/plans/plan-1/approve').send({});
+      .mockResolvedValue({ planId: PLAN_UUID, status: 'running', errorMessage: null });
+    const res = await request(app).post(`/chat/plans/${PLAN_UUID}/approve`).send({});
     expect(res.status).toBe(200);
     expect(runnerService.executePlan).toHaveBeenCalledWith(
-      'plan-1',
+      PLAN_UUID,
       expect.objectContaining({ id: 'user-1' }),
     );
   });
@@ -81,9 +88,9 @@ describe('plan routes', () => {
   it('POST /chat/plans/:id/cancel triggers cancelPlan', async () => {
     jest
       .spyOn(runnerService, 'cancelPlan')
-      .mockResolvedValue({ planId: 'plan-1', status: 'cancelled', errorMessage: null });
-    const res = await request(app).post('/chat/plans/plan-1/cancel').send({});
+      .mockResolvedValue({ planId: PLAN_UUID, status: 'cancelled', errorMessage: null });
+    const res = await request(app).post(`/chat/plans/${PLAN_UUID}/cancel`).send({});
     expect(res.status).toBe(200);
-    expect(runnerService.cancelPlan).toHaveBeenCalledWith('plan-1');
+    expect(runnerService.cancelPlan).toHaveBeenCalledWith(PLAN_UUID);
   });
 });

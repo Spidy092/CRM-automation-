@@ -34,6 +34,12 @@ function getEncryptionKey(): Buffer | null {
 function encrypt(plaintext: string): string {
   const key = getEncryptionKey();
   if (!key) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new AppError(
+        'ENCRYPTION_KEY must be set in production — refusing to store API key as plaintext',
+        500,
+      );
+    }
     logger.warn(
       'ENCRYPTION_KEY not set — storing AI API key as plaintext. Set ENCRYPTION_KEY in production.',
     );

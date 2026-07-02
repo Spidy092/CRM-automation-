@@ -24,7 +24,9 @@ jest.mock('../ai-settings/ai-settings.service');
 jest.mock('../ai-intelligence/ai-intelligence.repository');
 jest.mock('../../shared/utils/logger');
 jest.mock('../../shared/utils/metrics');
-jest.mock('../../workers/queue');
+jest.mock('../../workers/queue', () => ({
+  enqueueAiCreateInboxItem: jest.fn(),
+}));
 jest.mock('openai', () => ({
   __esModule: true,
   default: jest.fn(),

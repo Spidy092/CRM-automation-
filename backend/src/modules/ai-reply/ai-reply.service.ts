@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import OpenAI from 'openai';
+import * as Sentry from '@sentry/node';
 import { logger } from '../../shared/utils/logger';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { findLeadById } from '../leads/leads.repository';
@@ -10,6 +11,7 @@ import {
 } from '../ai-intelligence/ai-intelligence.repository';
 import { incAiTokens, incAiReplyClassified } from '../../shared/utils/metrics';
 import { invalidateProfileCache } from '../ai-intelligence/ai-intelligence.service';
+import { logDecisionLogFailure } from '../ai-intelligence/ai-intelligence.service';
 import { cancelPendingOutreachJobs, enqueueAiCreateInboxItem } from '../../workers/queue';
 import { findUserById } from '../users/users.repository';
 import { findStageByName } from '../pipeline/pipeline.repository';
@@ -176,6 +178,10 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
       latency_ms: latencyMs,
       error: err instanceof Error ? err.message : String(err),
     });
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { module: 'ai-reply', phase: 'classify' },
+      extra: { leadId, channel },
+    });
     await insertDecisionLog({
       lead_id: leadId,
       campaign_id: context?.campaignId ?? null,
@@ -184,7 +190,15 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
       decision: 'failed',
       latency_ms: latencyMs,
       model_used: aiConfig.model,
-    }).catch(() => null);
+    }).catch((err) =>
+      logDecisionLogFailure({
+        leadId,
+        campaignId: context?.campaignId ?? null,
+        decisionType: 'reply_classify',
+        phase: 'failure',
+        err,
+      }),
+    );
     return buildFallbackClassification(messageText);
   }
 
@@ -232,7 +246,15 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
     latency_ms: latencyMs,
     model_used: aiConfig.model,
     autonomy_level: context?.autonomyLevel ?? null,
-  }).catch(() => null);
+  }).catch((err) =>
+    logDecisionLogFailure({
+      leadId,
+      campaignId: context?.campaignId ?? null,
+      decisionType: 'reply_classify',
+      phase: 'success',
+      err,
+    }),
+  );
 
   // ── Routing decision ──────────────────────────────────────────────────
   const requiresHumanReview = shouldRouteToInbox(raw, context);
@@ -431,7 +453,8 @@ function buildReplySystemPrompt(): string {
     '- buying_signal: string or null — quote the specific buying signal if detected\n' +
     '- chain_of_thought: your structured reasoning (Context → Intent Options → Reasoning → Decision → Confidence)\n' +
     '- should_stop_sequence: boolean — true ONLY for opt_out or explicitly angry stop requests\n\n' +
-    'Rules: If opt_out → should_stop_sequence must be true. Draft response must not reference internal system details.'
+    'Rules: If opt_out → should_stop_sequence must be true. Draft response must not reference internal system details. ' +
+    'Never include or echo back personally identifiable information (phone numbers, email addresses, Social Security numbers, etc.) from the inbound message in your draft response.'
   );
 }
 

@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import OpenAI from 'openai';
+import * as Sentry from '@sentry/node';
 import { logger } from '../../shared/utils/logger';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { insertDecisionLog } from '../ai-intelligence/ai-intelligence.repository';
+import { logDecisionLogFailure } from '../ai-intelligence/ai-intelligence.service';
 import { incAiTokens } from '../../shared/utils/metrics';
 import { enqueueAiCreateInboxItem } from '../../workers/queue';
 import {
@@ -133,6 +135,10 @@ export async function generateCampaignBrief(
       latency_ms: latencyMs,
       error: err instanceof Error ? err.message : String(err),
     });
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { module: 'ai-campaign-brain', phase: 'generate' },
+      extra: { campaignId },
+    });
     await insertDecisionLog({
       lead_id: null,
       campaign_id: campaignId,
@@ -141,7 +147,14 @@ export async function generateCampaignBrief(
       decision: 'failed',
       latency_ms: latencyMs,
       model_used: aiConfig.model,
-    }).catch(() => null);
+    }).catch((err) =>
+      logDecisionLogFailure({
+        campaignId,
+        decisionType: 'campaign_brief',
+        phase: 'failure',
+        err,
+      }),
+    );
     throw err;
   }
 
@@ -189,7 +202,14 @@ export async function generateCampaignBrief(
     tokens_used: tokensUsed,
     latency_ms: latencyMs,
     model_used: aiConfig.model,
-  }).catch(() => null);
+  }).catch((err) =>
+    logDecisionLogFailure({
+      campaignId,
+      decisionType: 'campaign_brief',
+      phase: 'success',
+      err,
+    }),
+  );
 
   logger.info('ai campaign brain: brief generated', {
     campaignId,

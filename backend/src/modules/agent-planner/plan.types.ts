@@ -89,3 +89,11 @@ export interface CreatePlanStepInput {
   dependsOn: number[];
   rationale: string;
 }
+
+/** Estimated cost in cents for each risk tier — used by budget tracker and preview. */
+export const COST_BY_RISK_TIER: Record<string, number> = {
+  read: 0.1,
+  low_risk_write: 1,
+  sensitive_write: 5,
+  customer_facing_write: 10,
+};

@@ -36,7 +36,7 @@ const NEXT_ACTION_MAX_TOKENS = 400;
  * nullification (`.catch(() => null)`) hid a real audit-trail gap; this
  * helper makes the gap visible without breaking the success path.
  */
-function logDecisionLogFailure(context: {
+export function logDecisionLogFailure(context: {
   leadId?: string | null;
   campaignId?: string | null;
   decisionType: string;
@@ -503,3 +503,7 @@ function buildNextActionUserPrompt(
     `Extra context: ${extraContext ? JSON.stringify(extraContext) : 'none'}`
   );
 }
+
+// ── Re-exports for cross-module use (ai-reply module) ────────────────────
+
+export { appendObjectionToProfile, appendBuyingSignalToProfile } from './ai-intelligence.repository';

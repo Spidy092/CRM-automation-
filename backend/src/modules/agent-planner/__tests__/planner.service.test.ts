@@ -113,7 +113,7 @@ describe('planner.service.createPlanFromGoal', () => {
     expect(result.plan.status).toBe('proposed');
     expect(openAiCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        response_format: expect.objectContaining({ type: 'json_schema' }),
+        response_format: expect.objectContaining({ type: 'json_object' }),
       }),
     );
   });

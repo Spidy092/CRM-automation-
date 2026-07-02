@@ -1,5 +1,10 @@
 import { pool, queryOne } from '../../shared/utils/db';
 import {
+  appendObjectionToProfile as appendObjectionToProfileRepo,
+  appendBuyingSignalToProfile as appendBuyingSignalToProfileRepo,
+  updateNextBestAction,
+} from '../ai-intelligence/ai-intelligence.repository';
+import {
   upsertConversationSummary,
   appendObjectionToProfile,
   appendBuyingSignalToProfile,
@@ -10,6 +15,12 @@ import {
 jest.mock('../../shared/utils/db', () => ({
   pool: { query: jest.fn() },
   queryOne: jest.fn(),
+}));
+
+jest.mock('../ai-intelligence/ai-intelligence.repository', () => ({
+  appendObjectionToProfile: jest.fn(),
+  appendBuyingSignalToProfile: jest.fn(),
+  updateNextBestAction: jest.fn(),
 }));
 
 const mockedQueryOne = queryOne as jest.MockedFunction<typeof queryOne>;
@@ -41,63 +52,31 @@ describe('upsertConversationSummary', () => {
 
 describe('appendObjectionToProfile', () => {
   it('appends a JSONB objection entry to the profile', async () => {
-    mockedPoolQuery.mockResolvedValue({ rowCount: 1 });
+    (appendObjectionToProfileRepo as jest.Mock).mockResolvedValue(undefined);
 
     await appendObjectionToProfile(leadId, 'price', 'It is too expensive.');
 
-    const sql = mockedPoolQuery.mock.calls[0][0] as string;
-    const params = mockedPoolQuery.mock.calls[0][1] as unknown[];
-    expect(sql).toContain('UPDATE lead_ai_profiles');
-    expect(sql).toContain('objection_log = objection_log || $2::jsonb');
-    expect(params[0]).toBe(leadId);
-    expect(typeof params[1]).toBe('string');
-    expect((params[1] as string).startsWith('[{'));
-    expect((params[1] as string)).toContain('"type":"price"');
-    expect((params[1] as string)).toContain('"text":"It is too expensive."');
-  });
-
-  it('truncates message text to 200 characters', async () => {
-    mockedPoolQuery.mockResolvedValue({ rowCount: 1 });
-    const longText = 'a'.repeat(500);
-
-    await appendObjectionToProfile(leadId, 'timing', longText);
-
-    const params = mockedPoolQuery.mock.calls[0][1] as unknown[];
-    const entry = JSON.parse((params[1] as string).slice(1, -1));
-    expect(entry.text.length).toBe(200);
+    expect(appendObjectionToProfileRepo).toHaveBeenCalledWith(leadId, 'price', 'It is too expensive.');
   });
 });
 
 describe('appendBuyingSignalToProfile', () => {
   it('appends a JSONB buying signal entry to the profile', async () => {
-    mockedPoolQuery.mockResolvedValue({ rowCount: 1 });
+    (appendBuyingSignalToProfileRepo as jest.Mock).mockResolvedValue(undefined);
 
     await appendBuyingSignalToProfile(leadId, 'asked for pricing');
 
-    const sql = mockedPoolQuery.mock.calls[0][0] as string;
-    const params = mockedPoolQuery.mock.calls[0][1] as unknown[];
-    expect(sql).toContain('UPDATE lead_ai_profiles');
-    expect(sql).toContain('buying_signals = buying_signals || $2::jsonb');
-    expect(params[0]).toBe(leadId);
-    const entry = JSON.parse((params[1] as string).slice(1, -1));
-    expect(entry.signal).toBe('asked for pricing');
-    expect(entry).toHaveProperty('detected_at');
+    expect(appendBuyingSignalToProfileRepo).toHaveBeenCalledWith(leadId, 'asked for pricing');
   });
 });
 
 describe('updateProfileNextAction', () => {
   it('updates next best action fields on the profile', async () => {
-    mockedPoolQuery.mockResolvedValue({ rowCount: 1 });
+    (updateNextBestAction as jest.Mock).mockResolvedValue({} as any);
 
     await updateProfileNextAction(leadId, 'schedule_call', 'Lead wants a demo', 92);
 
-    const sql = mockedPoolQuery.mock.calls[0][0] as string;
-    const params = mockedPoolQuery.mock.calls[0][1] as unknown[];
-    expect(sql).toContain('UPDATE lead_ai_profiles');
-    expect(sql).toContain('next_best_action            = $2');
-    expect(sql).toContain('next_best_action_reason     = $3');
-    expect(sql).toContain('next_best_action_confidence = $4');
-    expect(params).toEqual([leadId, 'schedule_call', 'Lead wants a demo', 92]);
+    expect(updateNextBestAction).toHaveBeenCalledWith(leadId, 'schedule_call', 'Lead wants a demo', 92);
   });
 });
 

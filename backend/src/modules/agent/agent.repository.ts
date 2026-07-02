@@ -95,6 +95,19 @@ export async function updateAgentActionStatus(
   return parseRow(row);
 }
 
+export async function linkPlanToAction(
+  actionId: string,
+  planId: string,
+  planStepId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE agent_actions
+     SET agent_plan_id = $1, agent_plan_step_id = $2
+     WHERE id = $3`,
+    [planId, planStepId, actionId],
+  );
+}
+
 export async function claimAgentActionForExecution(id: string): Promise<AgentActionRow | null> {
   const result = await pool.query<AgentActionRow>(
     `UPDATE agent_actions

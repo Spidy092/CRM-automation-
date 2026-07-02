@@ -36,6 +36,10 @@ const makeItem = (overrides: Partial<AiInboxItem> = {}): AiInboxItem => ({
   actioned_at: null,
   created_at: '2026-06-26T10:00:00.000Z',
   updated_at: '2026-06-26T10:00:00.000Z',
+  agent_action_id: null,
+  agent_plan_id: null,
+  agent_plan_step_id: null,
+  action_result: null,
   ...overrides,
 });
 

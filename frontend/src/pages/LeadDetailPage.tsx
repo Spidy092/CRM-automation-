@@ -189,7 +189,10 @@ export function LeadDetailPage() {
                         onClick={() => {
                           enrichLead.mutate(lead.id, {
                             onSuccess: () => showToast('Lead data enriched!', 'success'),
-                            onError: (err: any) => showToast(err.response?.data?.error || 'Failed to enrich data', 'error'),
+                            onError: (err) => {
+                              const axiosError = err as { response?: { data?: { error?: string } } };
+                              showToast(axiosError.response?.data?.error || 'Failed to enrich data', 'error');
+                            },
                           });
                         }}
                       >

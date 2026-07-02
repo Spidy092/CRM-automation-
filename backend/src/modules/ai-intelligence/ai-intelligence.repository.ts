@@ -97,6 +97,41 @@ export async function updateNextBestAction(
   return res.rows[0];
 }
 
+// ── Profile Mutation Helpers (called by ai-reply module) ─────────────────
+
+export async function appendObjectionToProfile(
+  leadId: string,
+  objectionType: string,
+  messageText: string,
+): Promise<void> {
+  const entry = JSON.stringify({
+    type: objectionType,
+    text: messageText.slice(0, 200),
+    logged_at: new Date().toISOString(),
+  });
+  await pool.query(
+    `UPDATE lead_ai_profiles
+     SET objection_log = objection_log || $2::jsonb,
+         updated_at    = NOW()
+     WHERE lead_id = $1`,
+    [leadId, `[${entry}]`],
+  );
+}
+
+export async function appendBuyingSignalToProfile(
+  leadId: string,
+  signal: string,
+): Promise<void> {
+  const entry = JSON.stringify({ signal, detected_at: new Date().toISOString() });
+  await pool.query(
+    `UPDATE lead_ai_profiles
+     SET buying_signals = buying_signals || $2::jsonb,
+         updated_at     = NOW()
+     WHERE lead_id = $1`,
+    [leadId, `[${entry}]`],
+  );
+}
+
 // ── AI Decision Log ──────────────────────────────────────────────────────
 
 export async function listDecisionLogsByLead(

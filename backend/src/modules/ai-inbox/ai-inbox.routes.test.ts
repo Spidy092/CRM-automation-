@@ -2,6 +2,7 @@ import request from 'supertest';
 import express from 'express';
 import aiInboxRoutes from './ai-inbox.routes';
 import * as service from './ai-inbox.service';
+import { AppError } from '../../shared/middleware/errorHandler';
 import { errorHandler } from '../../shared/middleware/errorHandler';
 import type { AiInboxItem } from './ai-inbox.types';
 
@@ -52,6 +53,10 @@ const fakeItem: AiInboxItem = {
   actioned_at: null,
   created_at: '2026-06-26T10:00:00.000Z',
   updated_at: '2026-06-26T10:00:00.000Z',
+  agent_action_id: null,
+  agent_plan_id: null,
+  agent_plan_step_id: null,
+  action_result: null,
 };
 
 describe('AI Inbox Routes', () => {
@@ -90,11 +95,17 @@ describe('AI Inbox Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.id).toBe('i1');
-      expect(mockedService.actionItem).toHaveBeenCalledWith('item-1', 'u-1', 'approve', undefined);
+      expect(mockedService.actionItem).toHaveBeenCalledWith(
+        'item-1',
+        expect.objectContaining({ id: 'u-1', role: 'admin' }),
+        'approve',
+        undefined,
+        undefined,
+      );
     });
 
     it('returns 404 when the service throws not found', async () => {
-      mockedService.actionItem.mockRejectedValue(new Error('Inbox item not found: item-1'));
+      mockedService.actionItem.mockRejectedValue(new AppError('Inbox item not found: item-1', 404));
 
       const res = await request(app).patch('/ai-inbox/item-1/action').send({ action: 'approve' });
 

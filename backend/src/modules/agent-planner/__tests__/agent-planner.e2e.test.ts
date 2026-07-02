@@ -49,7 +49,7 @@ app.use('/chat/plans', planRoutes);
 app.use('/ai-inbox', aiInboxRoutes);
 app.use(errorHandler);
 
-const planId = 'plan-1';
+const planId = '019f079c-f429-762a-89ab-d143218efd4e';
 
 const fakeInboxItem: AiInboxItem = {
   id: 'inbox-1',

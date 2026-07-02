@@ -1,5 +1,4 @@
-import { pool } from '../../../shared/utils/db';
-import { proposeAgentAction } from '../../agent/agent.service';
+import { proposeAgentAction, linkPlanToAction } from '../../agent/agent.service';
 import {
   findPlanById,
   findPlanStepsByPlan,
@@ -13,7 +12,6 @@ import type { PlanRow, PlanStepRow } from '../plan.types';
 
 jest.mock('../plan.repository');
 jest.mock('../../agent/agent.service');
-jest.mock('../../../shared/utils/db');
 jest.mock('../metrics');
 
 const mockedFindPlanById = findPlanById as jest.MockedFunction<typeof findPlanById>;
@@ -22,7 +20,7 @@ const mockedUpdatePlanStatus = updatePlanStatus as jest.MockedFunction<typeof up
 const mockedUpdatePlanStepStatus = updatePlanStepStatus as jest.MockedFunction<typeof updatePlanStepStatus>;
 const mockedClaimPlanForRecovery = claimPlanForRecovery as jest.MockedFunction<typeof claimPlanForRecovery>;
 const mockedProposeAgentAction = proposeAgentAction as jest.MockedFunction<typeof proposeAgentAction>;
-const mockedPoolQuery = pool.query as jest.Mock;
+const mockedLinkPlanToAction = linkPlanToAction as jest.MockedFunction<typeof linkPlanToAction>;
 
 const actor = { id: 'user-1', role: 'admin', email: null, name: null, ipAddress: null };
 
@@ -74,7 +72,6 @@ function baseStep(overrides: Partial<PlanStepRow> = {}): PlanStepRow {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockedPoolQuery.mockResolvedValue({ rows: [] } as any);
 });
 
 describe('executePlan', () => {
@@ -131,10 +128,7 @@ describe('executePlan', () => {
     const result = await executePlan('plan-1', actor as any);
 
     expect(result).toEqual({ planId: 'plan-1', status: 'paused_for_approval', errorMessage: null });
-    expect(mockedPoolQuery).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE agent_actions'),
-      ['plan-1', 'step-0', 'action-2'],
-    );
+    expect(mockedLinkPlanToAction).toHaveBeenCalledWith('action-2', 'plan-1', 'step-0');
     expect(mockedUpdatePlanStepStatus).toHaveBeenCalledWith(
       'step-0',
       'pending_approval',
