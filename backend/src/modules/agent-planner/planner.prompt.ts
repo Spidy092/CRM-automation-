@@ -50,7 +50,9 @@ Rules:
 
 export const planJsonSchema = {
   type: 'json_schema' as const,
-  strict: true,
-  name: 'agent_plan',
-  schema: schemaToJsonSchema(planSchema),
+  json_schema: {
+    name: 'agent_plan',
+    strict: true,
+    schema: schemaToJsonSchema(planSchema),
+  },
 };

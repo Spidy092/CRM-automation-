@@ -51,7 +51,8 @@ function isPlanContinuation(message: string): boolean {
   return /\b(next|continue|more|show more|next page|yes do it|approve that|do it)\b/.test(lower);
 }
 
-function answerPageAwareness(input: {
+// eslint-disable-next-line @typescript-eslint/require-await
+async function answerPageAwareness(input: {
   message: string;
   conversationId: string;
   pageContext?: ChatPageContext;

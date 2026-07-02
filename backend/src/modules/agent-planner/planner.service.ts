@@ -62,7 +62,7 @@ export async function createPlanFromGoal(input: {
     try {
       const completion = await client.chat.completions.create({
         model: aiConfig.model,
-        max_tokens: aiConfig.maxTokens,
+        max_tokens: 16_000,
         temperature: aiConfig.temperature,
         response_format: planJsonSchema,
         messages: [
