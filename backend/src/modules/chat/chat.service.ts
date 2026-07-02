@@ -1,4 +1,5 @@
 import { redis } from '../../shared/utils/redis';
+import { logger } from '../../shared/utils/logger';
 import { getAgentActionDefinition } from '../agent/agent.actions';
 import { proposeAgentAction } from '../agent/agent.service';
 import type { AgentActionName, AgentActor } from '../agent/agent.types';
@@ -177,7 +178,15 @@ export async function sendChatMessage(input: {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown planner error';
-    const reply = `Planner error: ${msg}`;
+    logger.warn('planner: failed to create plan', { error: msg, message: input.message });
+    const reply = [
+      'I could not turn that into a valid action plan.',
+      'Try asking for one specific action, like:',
+      '- "show my leads"',
+      '- "list campaigns"',
+      '- "show dashboard"',
+      '- "run scraper"',
+    ].join('\n');
     await persistTurn(input.conversationId, history, input.message, reply);
     return { conversationId: input.conversationId, reply };
   }
