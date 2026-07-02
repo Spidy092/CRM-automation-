@@ -21,10 +21,20 @@ vi.mock('@/api/chat', () => ({
   })),
 }));
 
+vi.mock('@/api/agentPlans', () => ({
+  usePlan: vi.fn(() => ({ data: null, isLoading: false })),
+  useApprovePlan: vi.fn(() => ({ mutateAsync: vi.fn() })),
+  useCancelPlan: vi.fn(() => ({ mutateAsync: vi.fn() })),
+}));
+
 import { useChatHistory, useSendChatMessage } from '@/api/chat';
+import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
 
 const useChatHistoryMock = useChatHistory as unknown as ReturnType<typeof vi.fn>;
 const useSendChatMessageMock = useSendChatMessage as unknown as ReturnType<typeof vi.fn>;
+const usePlanMock = usePlan as unknown as ReturnType<typeof vi.fn>;
+const useApprovePlanMock = useApprovePlan as unknown as ReturnType<typeof vi.fn>;
+const useCancelPlanMock = useCancelPlan as unknown as ReturnType<typeof vi.fn>;
 
 describe('ChatWidget', () => {
   beforeEach(() => {
@@ -44,6 +54,9 @@ describe('ChatWidget', () => {
       isError: false,
       reset: vi.fn(),
     });
+    usePlanMock.mockReturnValue({ data: null, isLoading: false });
+    useApprovePlanMock.mockReturnValue({ mutateAsync: vi.fn() });
+    useCancelPlanMock.mockReturnValue({ mutateAsync: vi.fn() });
   });
 
   it('renders the Open copilot toggle button', () => {
@@ -156,6 +169,39 @@ describe('ChatWidget', () => {
 
     expect(await screen.findByText('Approval created')).toBeInTheDocument();
     expect(await screen.findByText(/lead\.pause is waiting in AI Inbox\./)).toBeInTheDocument();
+  });
+
+  it('renders PlanPreview when the response creates a plan', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValueOnce({
+      conversationId: 'conv-1',
+      reply: 'I planned: find hot leads. 2 steps. Approve to run.',
+      action: {
+        name: 'plan.create',
+        policy: { outcome: 'require_approval', reason: 'plan requires approval' },
+        result: { planId: 'plan-123', steps: [] },
+      },
+    });
+
+    usePlanMock.mockReturnValue({
+      data: {
+        plan: { id: 'plan-123', goal: 'find hot leads', status: 'proposed', autonomy_level: 'supervised', confidence: null, created_at: '' },
+        steps: [{ id: 's1', step_index: 0, action_name: 'lead.list', action_args: {}, risk_tier: 'read', depends_on: [], rationale: 'get leads', status: 'pending' }],
+        estimatedCostCents: 5,
+        requiresApproval: true,
+      },
+      isLoading: false,
+    });
+
+    renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+
+    const input = screen.getByPlaceholderText(/ask copilot/i);
+    await user.type(input, 'find hot leads');
+    await user.click(screen.getByRole('button', { name: '' }));
+
+    expect(await screen.findByText(/find hot leads/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Approve plan/i)).toBeInTheDocument();
   });
 
   it('closes the widget when the Close copilot button is clicked', async () => {

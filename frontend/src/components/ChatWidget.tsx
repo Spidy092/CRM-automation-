@@ -10,6 +10,8 @@ import {
   type ChatResponse,
   type ChatVisibleRecord,
 } from '@/api/chat';
+import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
+import { PlanPreview } from './PlanPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -486,6 +488,11 @@ export function ChatWidget() {
   const history = useChatHistory(conversationId);
   const sendMessage = useSendChatMessage();
 
+  const planId = (lastResponse?.action?.result as { planId?: string } | undefined)?.planId;
+  const planQuery = usePlan(planId ?? '');
+  const approvePlan = useApprovePlan();
+  const cancelPlan = useCancelPlan();
+
   const turns = history.data ?? [];
 
   const submit = async (event: FormEvent) => {
@@ -546,6 +553,13 @@ export function ChatWidget() {
                   </div>
                   <p className="mt-1">{lastResponse.action.name} is waiting in AI Inbox.</p>
                 </div>
+              )}
+              {planId && planQuery.data && (
+                <PlanPreview
+                  preview={planQuery.data}
+                  onApprove={async () => { await approvePlan.mutateAsync(planId); }}
+                  onCancel={async () => { await cancelPlan.mutateAsync(planId); }}
+                />
               )}
               {sendMessage.isPending && <p className="text-sm text-slate-500">Working...</p>}
               {sendMessage.isError && (
