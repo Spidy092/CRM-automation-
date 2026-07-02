@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { topoSortIntoWaves } from '../runner.topo';
 import type { PlanStepRow } from '../plan.types';
 

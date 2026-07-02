@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { AppError } from '../../../shared/middleware/errorHandler';
 import { PlannerError, RunnerError, mapCodeToHttp } from '../errors';
 

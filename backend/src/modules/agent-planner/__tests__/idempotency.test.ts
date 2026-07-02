@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { buildPlanIdempotencyKey, stableJson } from '../idempotency';
 
 describe('idempotency', () => {

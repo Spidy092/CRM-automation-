@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { getPlanForPreview } from '../planner.service';
 import { findPlanById, findPlanStepsByPlan } from '../plan.repository';
 import type { PlanStepRow } from '../plan.types';

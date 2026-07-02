@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { runRecoverySweep, startAgentPlanRecoveryWorker, scheduleAgentPlanRecovery } from '../recovery.worker';
 import { findStaleRunningPlans, updatePlanStatus } from '../plan.repository';
 import { getBullConnection } from '../../../workers/queue';

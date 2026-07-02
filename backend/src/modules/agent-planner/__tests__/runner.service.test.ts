@@ -1,3 +1,10 @@
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
+
 import { proposeAgentAction, linkPlanToAction } from '../../agent/agent.service';
 import {
   findPlanById,

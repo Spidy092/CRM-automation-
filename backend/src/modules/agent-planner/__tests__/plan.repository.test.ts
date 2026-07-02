@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { pool, queryOne } from '../../../shared/utils/db';
 import {
   createPlan,

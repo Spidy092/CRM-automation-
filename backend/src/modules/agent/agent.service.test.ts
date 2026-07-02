@@ -65,6 +65,8 @@ describe('proposeAgentAction', () => {
       created_at: actionRow.created_at,
       updated_at: actionRow.updated_at,
       agent_action_id: actionRow.id,
+      agent_plan_id: null,
+      agent_plan_step_id: null,
       action_result: null,
     });
   });

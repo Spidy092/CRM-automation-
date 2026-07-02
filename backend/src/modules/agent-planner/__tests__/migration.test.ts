@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 // @ts-ignore - JS migration has no .d.ts; we only read its exported functions
 import migration from '../../../../../migrations/1750000000030_agent-plans';
 

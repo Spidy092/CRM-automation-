@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { createBudgetTracker } from '../runner.budget';
 import { RunnerError } from '../errors';
 import type { PlanRow, PlanStepRow } from '../plan.types';

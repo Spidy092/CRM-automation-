@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { buildPlannerSystemPrompt, planJsonSchema } from '../planner.prompt';
 import type { AgentActor } from '../../agent/agent.types';
 

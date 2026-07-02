@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import { planSchema } from '../plan.schema';
 
 describe('planSchema', () => {

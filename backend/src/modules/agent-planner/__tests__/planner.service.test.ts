@@ -1,3 +1,5 @@
+jest.mock('../../../workers/queue');
+
 import OpenAI from 'openai';
 import { createPlanFromGoal } from '../planner.service';
 import { findPlanByIdempotencyKey, createPlan, createPlanStep, findPlanStepsByPlan } from '../plan.repository';
