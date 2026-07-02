@@ -280,3 +280,75 @@ npm run build
 - [ ] Open Copilot from the bottom-right chat button.
 - [ ] Ask: `Show dashboard metrics`.
 - [ ] Ask a write request and confirm it appears in **AI Inbox**.
+
+---
+
+## 12. Agent Planner (Multi-Step Plans)
+
+The Agent Planner is an optional Copilot mode that breaks open-ended goals into multi-step execution plans. It is available only when the `AGENT_PLANNER_ENABLED` feature flag is on.
+
+### 12.1 Enabling the Planner
+
+1. Open the backend environment configuration (for example `.env` or `.env.prod`).
+2. Set:
+   ```env
+   AGENT_PLANNER_ENABLED=true
+   ```
+3. Make sure the AI engine is enabled and a provider key is configured in **Settings -> AI**.
+4. Restart the backend service.
+
+When the flag is off, Copilot continues to handle requests with the single-action chat flow described in the previous sections.
+
+### 12.2 Starting a Plan from Chat
+
+1. Open the Copilot chat widget.
+2. Type an open-ended goal, for example:
+   ```text
+   Find leads in the Midwest, add them to the Summer Campaign, and start a manual email sequence.
+   ```
+3. The planner generates a preview that includes:
+   - the DAG of planned steps,
+   - estimated step count, cost, and runtime,
+   - any steps that require approval.
+4. Choose one of:
+   - **Approve** — enqueue the plan and start execution,
+   - **Cancel** — discard the plan and return to chat.
+
+### 12.3 Plan Lifecycle Statuses
+
+A plan can be in one of the following statuses:
+
+| Status | Meaning |
+|---|---|
+| `pending_approval` | Plan preview created, waiting for user approval. |
+| `approved` | User approved the plan; ready to run. |
+| `running` | Steps are being executed. |
+| `paused` | Execution stopped, usually waiting for an approval gate or a retry. |
+| `completed` | All steps finished successfully. |
+| `failed` | One or more steps failed and recovery was not possible. |
+| `cancelled` | User cancelled the plan before or during execution. |
+
+### 12.4 Approval Flow
+
+Steps that perform CRM writes are marked `require_approval` and create items in the AI Inbox:
+
+1. Open **AI Inbox** from the left navigation.
+2. Review each planner approval item. It shows the plan title, step description, and affected records.
+3. Approve or reject individual steps.
+4. Use the bulk actions to approve or reject multiple planner items at once.
+5. Once all required approvals are granted, the runner automatically resumes the plan.
+6. If a step is rejected, the plan stops and Copilot reports the cancellation.
+
+Paused plans can also be resumed manually from the plan detail view when the underlying issue is resolved.
+
+### 12.5 Fallbacks
+
+If the planner fails to generate a plan, or if execution times out, Copilot falls back to a plain-text response. It does not execute partial plans silently. You can still ask for the same goal again or break it into smaller single-action requests.
+
+### 12.6 Limitations (v1 MVP)
+
+The initial planner release has the following guardrails:
+
+- **No fully autonomous writes** — all customer-facing or sensitive writes require approval.
+- **Action catalog only** — only actions listed in `AGENT_ACTIONS` can appear in a plan. The planner cannot invent new CRM operations.
+- **Hard caps** — a single plan is limited to **8 steps**, **$0.50 estimated cost**, and **5 minutes** of runtime. Plans that exceed any cap are rejected before execution.

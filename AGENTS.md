@@ -42,12 +42,47 @@
   - `src/webhooks/` — Inbound webhook handlers
   - `src/shared/` — Utilities, middleware, validators
   - `migrations/` — Database migrations (append-only, never edit)
+  - `backend/src/modules/agent-planner/` — AI Copilot multi-step plan generation, DAG execution, approval gating, and recovery worker
 - **Do not edit without explicit approval:**
   - `migrations/` — run-once files, append new files only
   - `.env` / `.env.*` — never read, log, or expose
   - `docker-compose.prod.yml` — DevOps approval required
   - `src/shared/middleware/auth.ts` — security-critical, requires security review
   - `src/shared/middleware/rbac.ts` — security-critical, requires security review
+
+---
+
+## AI Copilot Agent Planner Module
+
+**Purpose:** The `agent-planner` module turns open-ended Copilot goals into multi-step execution plans. It generates a directed acyclic graph (DAG) of CRM actions, executes the steps with budget guards, pauses at `require_approval` gates, and uses a recovery worker to retry or escalate failed steps.
+
+**Backend path:** `backend/src/modules/agent-planner/`
+
+**Key files:**
+- `planner.service.ts` — plan generation from a natural-language goal
+- `runner.service.ts` — DAG execution engine and step orchestration
+- `plan.controller.ts` — HTTP routes for plan preview, approval, and status
+- `plan.routes.ts` — route wiring and RBAC
+- `plan.repository.ts` — plan persistence and step state storage
+- `plan.schema.ts` — Zod schemas for plan requests and updates
+- `plan.types.ts` — shared plan and step type definitions
+- `runner.topo.ts` — DAG topological sorting and dependency validation
+- `runner.budget.ts` — step, cost, and time budgeting guards
+- `recovery.worker.ts` — BullMQ recovery processor for failed/paused plans
+
+**Integration points:**
+- The chat service delegates open-ended goals to the planner when `AGENT_PLANNER_ENABLED` is active.
+- The `ai-inbox` module surfaces `require_approval` steps as inbox items so reps can bulk-approve or reject them.
+- Approved steps resume through the runner service; rejected or failed steps halt the plan and surface an error to the user.
+
+**Rollout:**
+- Behind the `AGENT_PLANNER_ENABLED` feature flag (default off).
+- When the planner or a subagent call fails/times out, the chat bot falls back to a plain-text response and does not execute partial plans.
+
+**Security / privacy:**
+- Idempotent plan keys hash PII before lookup/caching.
+- Compliance-critical actions (for example `ai.inbox.action`) are excluded from planner DAGs and still require direct API approval.
+- All planned actions are validated against the `AGENT_ACTIONS` catalog, RBAC, and policy gates before execution.
 
 ---
 
