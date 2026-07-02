@@ -1,5 +1,7 @@
 import { logger } from '../../shared/utils/logger';
 import { executeAgentAction, rejectAgentAction } from '../agent/agent.service';
+import { continuePlanIfReady } from '../agent-planner/runner.service';
+import * as planRepository from '../agent-planner/plan.repository';
 import { incAiInboxItem } from '../../shared/utils/metrics';
 import {
   createItem,
@@ -12,12 +14,16 @@ import type { AiInboxItem } from './ai-inbox.types';
 
 jest.mock('./ai-inbox.repository');
 jest.mock('../agent/agent.service');
+jest.mock('../agent-planner/runner.service');
+jest.mock('../agent-planner/plan.repository');
 jest.mock('../../shared/utils/metrics');
 jest.mock('../../shared/utils/logger');
 
 const mockedRepo = repository as jest.Mocked<typeof repository>;
 const mockedExecuteAgentAction = executeAgentAction as jest.MockedFunction<typeof executeAgentAction>;
 const mockedRejectAgentAction = rejectAgentAction as jest.MockedFunction<typeof rejectAgentAction>;
+const mockedContinuePlan = continuePlanIfReady as jest.MockedFunction<typeof continuePlanIfReady>;
+const mockedPlanRepo = planRepository as jest.Mocked<typeof planRepository>;
 
 const baseItem: AiInboxItem = {
   id: 'inbox-1',
@@ -38,6 +44,8 @@ const baseItem: AiInboxItem = {
   created_at: '2026-06-26T10:00:00.000Z',
   updated_at: '2026-06-26T10:00:00.000Z',
   agent_action_id: null,
+  agent_plan_id: null,
+  agent_plan_step_id: null,
   action_result: null,
 };
 
@@ -218,6 +226,56 @@ describe('actionItem', () => {
     await expect(actionItem('inbox-1', { id: 'user-1', role: 'admin' }, 'approve')).rejects.toThrow(
       'Failed to action inbox item: inbox-1',
     );
+  });
+
+  it('resumes the runner when approving an inbox item linked to a plan', async () => {
+    const linkedItem: AiInboxItem = {
+      ...baseItem,
+      agent_action_id: 'action-1',
+      agent_plan_id: 'plan-1',
+      agent_plan_step_id: 'step-1',
+    };
+    const approvedItem = { ...linkedItem, status: 'actioned' as const, actioned_by: 'user-1' };
+    mockedRepo.findInboxItemById.mockResolvedValue(linkedItem);
+    mockedRepo.actionInboxItem.mockResolvedValue(approvedItem);
+    mockedExecuteAgentAction.mockResolvedValue({
+      id: 'action-1',
+      source: 'chat',
+      action_name: 'lead.pause',
+      action_args: {},
+      risk_tier: 'sensitive_write',
+      status: 'succeeded',
+      requested_by: 'requester-1',
+      requester_role: 'sales',
+      requester_email: null,
+      requester_name: null,
+      approved_by: 'user-1',
+      lead_id: 'lead-1',
+      campaign_id: null,
+      confidence: null,
+      autonomy_level: null,
+      idempotency_key: 'agent:key',
+      result: { ok: true },
+      error_message: null,
+      source_message: null,
+      expires_at: null,
+      executed_at: '2026-06-29T00:00:00.000Z',
+      created_at: baseItem.created_at,
+      updated_at: baseItem.updated_at,
+    });
+    mockedPlanRepo.findPlanStepById.mockResolvedValue({ id: 'step-1' } as any);
+    mockedPlanRepo.updatePlanStepStatus.mockResolvedValue({ id: 'step-1' } as any);
+    mockedContinuePlan.mockResolvedValue({ planId: 'plan-1', status: 'succeeded', errorMessage: null });
+
+    await actionItem('inbox-1', { id: 'user-1', role: 'admin' }, 'approve');
+
+    expect(mockedPlanRepo.findPlanStepById).toHaveBeenCalledWith('step-1');
+    expect(mockedPlanRepo.updatePlanStepStatus).toHaveBeenCalledWith(
+      'step-1',
+      'succeeded',
+      expect.objectContaining({ agentActionId: 'action-1' }),
+    );
+    expect(mockedContinuePlan).toHaveBeenCalledWith('plan-1');
   });
 });
 

@@ -3,6 +3,8 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { incAiInboxItem } from '../../shared/utils/metrics';
 import { executeAgentAction, rejectAgentAction } from '../agent/agent.service';
 import type { AgentActor } from '../agent/agent.types';
+import { continuePlanIfReady } from '../agent-planner/runner.service';
+import { findPlanStepById, updatePlanStepStatus } from '../agent-planner/plan.repository';
 import {
   createInboxItem,
   findInboxItems,
@@ -88,6 +90,26 @@ export async function actionItem(
       result: executed.result,
     });
     if (!updated) throw new AppError(`Failed to update inbox action result: ${id}`, 500);
+
+    // If this inbox item is linked to a plan, update the plan step status and resume the runner
+    if (existing.agent_plan_id) {
+      if (existing.agent_plan_step_id) {
+        const step = await findPlanStepById(existing.agent_plan_step_id);
+        if (step) {
+          await updatePlanStepStatus(step.id, 'succeeded', {
+            result: (executed.result as Record<string, unknown> | undefined) ?? null,
+            agentActionId: executed.id,
+            completedAt: new Date().toISOString(),
+          });
+        }
+      }
+      await continuePlanIfReady(existing.agent_plan_id).catch((err) =>
+        logger.error('ai inbox: failed to resume plan after approval', {
+          planId: existing.agent_plan_id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
 
   incAiInboxItem(updated.item_type, action);

@@ -27,6 +27,8 @@ export interface AiInboxItem {
   created_at: string;
   updated_at: string;
   agent_action_id: string | null;
+  agent_plan_id: string | null;
+  agent_plan_step_id: string | null;
   action_result: Record<string, unknown> | null;
 }
 
@@ -42,6 +44,8 @@ export interface CreateInboxItemInput {
   ai_draft_confidence?: number;
   expires_at?: string;
   agent_action_id?: string;
+  agent_plan_id?: string;
+  agent_plan_step_id?: string;
 }
 
 export interface ActionInboxItemInput {

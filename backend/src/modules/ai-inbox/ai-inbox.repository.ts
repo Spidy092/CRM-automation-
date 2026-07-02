@@ -11,8 +11,8 @@ export async function createInboxItem(input: CreateInboxItemInput): Promise<AiIn
     `INSERT INTO ai_inbox_items
        (assigned_to, lead_id, campaign_id, item_type, title, summary,
         urgency_score, ai_draft_response, ai_draft_confidence, expires_at,
-        agent_action_id, status, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',NOW(),NOW())
+        agent_action_id, agent_plan_id, agent_plan_step_id, status, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',NOW(),NOW())
      RETURNING *`,
     [
       input.assigned_to,
@@ -26,6 +26,8 @@ export async function createInboxItem(input: CreateInboxItemInput): Promise<AiIn
       input.ai_draft_confidence ?? null,
       input.expires_at ?? null,
       input.agent_action_id ?? null,
+      input.agent_plan_id ?? null,
+      input.agent_plan_step_id ?? null,
     ],
   );
   if (!row) throw new Error('Failed to create inbox item');
@@ -85,12 +87,12 @@ export async function actionInboxItem(
     `UPDATE ai_inbox_items
      SET status       = $2,
          actioned_by  = $3,
-         actioned_at  = CASE WHEN $2::text = 'actioned' THEN NOW() ELSE actioned_at END,
+         actioned_at  = CASE WHEN $5 = 'actioned' THEN NOW() ELSE actioned_at END,
          snoozed_until = $4,
          updated_at   = NOW()
      WHERE id = $1
      RETURNING *`,
-    [id, input.status, input.actioned_by ?? null, input.snoozed_until ?? null],
+    [id, input.status, input.actioned_by ?? null, input.snoozed_until ?? null, input.status],
   );
 }
 
