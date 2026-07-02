@@ -4,6 +4,7 @@ import { proposeAgentAction } from '../agent/agent.service';
 import type { AgentActionName, AgentActor } from '../agent/agent.types';
 import type { AuthenticatedUser } from '../../shared/types';
 import { createPlanFromGoal, getPlanForPreview } from '../agent-planner/planner.service';
+import { isAgentPlannerEnabled } from './featureFlag';
 import type { ChatPageContext, ChatResponse, ChatTurn } from './chat.types';
 
 const CHAT_HISTORY_TTL_SECONDS = 60 * 60 * 2;
@@ -159,7 +160,13 @@ export async function sendChatMessage(input: {
     return trivial;
   }
 
-  // 4. Delegate to planner
+  // 4. Delegate to planner (only if feature flag is enabled)
+  if (!isAgentPlannerEnabled()) {
+    const reply = 'AI Copilot planner is currently disabled. Try a single-action request.';
+    await persistTurn(input.conversationId, history, input.message, reply);
+    return { conversationId: input.conversationId, reply };
+  }
+
   const planResult = await createPlanFromGoal({
     goal: input.message,
     actor: input.actor,
