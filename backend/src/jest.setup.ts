@@ -1,4 +1,4 @@
-jest.mock('./src/workers/queue', () => ({
+jest.mock('./workers/queue', () => ({
   Queue: jest.fn(),
   Worker: jest.fn(),
   getBullConnection: jest.fn(),
