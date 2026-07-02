@@ -40,6 +40,7 @@ import aiCampaignBrainRoutes from './modules/ai-campaign-brain/ai-campaign-brain
 import aiReplyRoutes from './modules/ai-reply/ai-reply.routes';
 import agentRoutes from './modules/agent/agent.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import { planRoutes } from './modules/agent-planner';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
 
 const app: Application = express();
@@ -130,6 +131,7 @@ app.use('/api/v1/ai-campaign-brain', authenticatedLimiter, aiCampaignBrainRoutes
 app.use('/api/v1/ai-reply', authenticate, aiReplyRoutes);
 app.use('/api/v1/agent', authenticatedLimiter, agentRoutes);
 app.use('/api/v1/chat', authenticatedLimiter, chatRoutes);
+app.use('/api/v1/chat/plans', authenticatedLimiter, planRoutes);
 
 // ── Public Webhooks (no auth, signature verification in handlers) ───────────
 app.use('/webhooks', webhooksRoutes);
