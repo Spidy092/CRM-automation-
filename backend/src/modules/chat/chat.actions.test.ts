@@ -2,10 +2,7 @@ import { AGENT_ACTIONS } from '../agent/agent.actions';
 import { buildChatTools, toolNameToActionName } from './chat.actions';
 
 jest.mock('../agent/agent.actions', () => {
-  const sampleDefinition = (
-    name: string,
-    description: string,
-  ) => ({
+  const sampleDefinition = (name: string, description: string) => ({
     name,
     description,
     riskTier: 'read' as const,

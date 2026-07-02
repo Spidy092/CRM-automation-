@@ -12,7 +12,7 @@ describe('ai-inbox schema', () => {
       (status) => {
         const result = listInboxSchema.parse({ status });
         expect(result.status).toBe(status);
-      }
+      },
     );
 
     it('rejects an invalid status value', () => {
@@ -74,13 +74,10 @@ describe('ai-inbox schema', () => {
   });
 
   describe('actionInboxSchema', () => {
-    it.each(['approve', 'reject', 'snooze'] as const)(
-      'accepts valid action "%s"',
-      (action) => {
-        const result = actionInboxSchema.parse({ action });
-        expect(result.action).toBe(action);
-      }
-    );
+    it.each(['approve', 'reject', 'snooze'] as const)('accepts valid action "%s"', (action) => {
+      const result = actionInboxSchema.parse({ action });
+      expect(result.action).toBe(action);
+    });
 
     it('rejects an invalid action value', () => {
       expect(() => actionInboxSchema.parse({ action: 'invalid_action' })).toThrow();
@@ -94,7 +91,7 @@ describe('ai-inbox schema', () => {
 
     it('rejects an invalid datetime string', () => {
       expect(() =>
-        actionInboxSchema.parse({ action: 'snooze', snoozed_until: 'not-a-datetime' })
+        actionInboxSchema.parse({ action: 'snooze', snoozed_until: 'not-a-datetime' }),
       ).toThrow();
     });
 

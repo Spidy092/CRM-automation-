@@ -38,11 +38,7 @@ export async function cancelPlanHandler(
   }
 }
 
-export async function continuePlan(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
+export async function continuePlan(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const result = await continuePlanIfReady(req.params.id);
     if (!result) {

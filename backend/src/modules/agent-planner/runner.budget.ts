@@ -37,7 +37,11 @@ export function createBudgetTracker(plan: PlanRow): BudgetTracker {
         throw new RunnerError('budget_exhausted', `Budget step_cap ${stepCap} reached`, plan.id);
       }
       if (costUsed >= costCap) {
-        throw new RunnerError('budget_exhausted', `Budget cost_cap ${costCap} cents reached`, plan.id);
+        throw new RunnerError(
+          'budget_exhausted',
+          `Budget cost_cap ${costCap} cents reached`,
+          plan.id,
+        );
       }
     },
     recordStepStart(): void {

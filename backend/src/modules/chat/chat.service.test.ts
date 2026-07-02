@@ -68,7 +68,11 @@ describe('chat.service.sendChatMessage (thin)', () => {
     mockedRedis.get.mockResolvedValueOnce(
       JSON.stringify([
         { role: 'user', content: 'show leads', createdAt: new Date().toISOString() },
-        { role: 'assistant', content: 'plan:11111111-1111-4111-8111-111111111111', createdAt: new Date().toISOString() },
+        {
+          role: 'assistant',
+          content: 'plan:11111111-1111-4111-8111-111111111111',
+          createdAt: new Date().toISOString(),
+        },
       ]),
     );
     mockedGetPlanForPreview.mockResolvedValue({
@@ -114,9 +118,7 @@ describe('chat.service.sendChatMessage (thin)', () => {
 describe('chat.service.getChatHistory', () => {
   it('returns array of turns', async () => {
     mockedRedis.get.mockResolvedValueOnce(
-      JSON.stringify([
-        { role: 'user', content: 'hi', createdAt: '2026-06-30T00:00:00Z' },
-      ]),
+      JSON.stringify([{ role: 'user', content: 'hi', createdAt: '2026-06-30T00:00:00Z' }]),
     );
     const turns = await getChatHistory('conv-1');
     expect(turns).toHaveLength(1);

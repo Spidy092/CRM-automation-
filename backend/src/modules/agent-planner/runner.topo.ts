@@ -19,7 +19,9 @@ export function topoSortIntoWaves(steps: PlanStepRow[]): PlanStepRow[][] {
   }
 
   const waves: PlanStepRow[][] = [];
-  let frontier = steps.filter((s) => (indegree.get(s.step_index) ?? 0) === 0).map((s) => s.step_index);
+  let frontier = steps
+    .filter((s) => (indegree.get(s.step_index) ?? 0) === 0)
+    .map((s) => s.step_index);
 
   while (frontier.length > 0) {
     waves.push(frontier.map((i) => byIndex.get(i)!));

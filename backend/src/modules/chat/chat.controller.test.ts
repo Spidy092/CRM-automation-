@@ -145,7 +145,9 @@ describe('chat.controller — sendMessage', () => {
     await sendMessage(req, res, mockNext);
 
     const call = mockedService.sendChatMessage.mock.calls[0][0];
-    expect(call.actor).toEqual(expect.objectContaining({ id: 'user-1', role: 'admin', ipAddress: '127.0.0.1' }));
+    expect(call.actor).toEqual(
+      expect.objectContaining({ id: 'user-1', role: 'admin', ipAddress: '127.0.0.1' }),
+    );
     expect(call.user).toEqual(expect.objectContaining({ id: 'user-1' }));
   });
 });

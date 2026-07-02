@@ -3,12 +3,7 @@ import { executeAgentAction, rejectAgentAction } from '../agent/agent.service';
 import { continuePlanIfReady } from '../agent-planner/runner.service';
 import * as planRepository from '../agent-planner/plan.repository';
 import { incAiInboxItem } from '../../shared/utils/metrics';
-import {
-  createItem,
-  listItems,
-  actionItem,
-  runExpirySweep,
-} from './ai-inbox.service';
+import { createItem, listItems, actionItem, runExpirySweep } from './ai-inbox.service';
 import * as repository from './ai-inbox.repository';
 import type { AiInboxItem } from './ai-inbox.types';
 
@@ -20,7 +15,9 @@ jest.mock('../../shared/utils/metrics');
 jest.mock('../../shared/utils/logger');
 
 const mockedRepo = repository as jest.Mocked<typeof repository>;
-const mockedExecuteAgentAction = executeAgentAction as jest.MockedFunction<typeof executeAgentAction>;
+const mockedExecuteAgentAction = executeAgentAction as jest.MockedFunction<
+  typeof executeAgentAction
+>;
 const mockedRejectAgentAction = rejectAgentAction as jest.MockedFunction<typeof rejectAgentAction>;
 const mockedContinuePlan = continuePlanIfReady as jest.MockedFunction<typeof continuePlanIfReady>;
 const mockedPlanRepo = planRepository as jest.Mocked<typeof planRepository>;
@@ -123,9 +120,9 @@ describe('actionItem', () => {
   it('throws when item does not exist (404 path)', async () => {
     mockedRepo.findInboxItemById.mockResolvedValue(null);
 
-    await expect(actionItem('missing-id', { id: 'user-1', role: 'admin' }, 'approve')).rejects.toThrow(
-      'Inbox item not found: missing-id',
-    );
+    await expect(
+      actionItem('missing-id', { id: 'user-1', role: 'admin' }, 'approve'),
+    ).rejects.toThrow('Inbox item not found: missing-id');
     expect(mockedRepo.actionInboxItem).not.toHaveBeenCalled();
   });
 
@@ -210,7 +207,12 @@ describe('actionItem', () => {
     };
     mockedRepo.actionInboxItem.mockResolvedValue(snoozedItem);
 
-    await actionItem('inbox-1', { id: 'user-1', role: 'admin' }, 'snooze', '2026-06-28T00:00:00.000Z');
+    await actionItem(
+      'inbox-1',
+      { id: 'user-1', role: 'admin' },
+      'snooze',
+      '2026-06-28T00:00:00.000Z',
+    );
 
     expect(mockedRepo.actionInboxItem).toHaveBeenCalledWith('inbox-1', {
       status: 'snoozed',
@@ -265,7 +267,11 @@ describe('actionItem', () => {
     });
     mockedPlanRepo.findPlanStepById.mockResolvedValue({ id: 'step-1' } as any);
     mockedPlanRepo.updatePlanStepStatus.mockResolvedValue({ id: 'step-1' } as any);
-    mockedContinuePlan.mockResolvedValue({ planId: 'plan-1', status: 'succeeded', errorMessage: null });
+    mockedContinuePlan.mockResolvedValue({
+      planId: 'plan-1',
+      status: 'succeeded',
+      errorMessage: null,
+    });
 
     await actionItem('inbox-1', { id: 'user-1', role: 'admin' }, 'approve');
 
@@ -304,7 +310,12 @@ describe('runExpirySweep', () => {
 
   it('does not record an action result when linked expiry execution fails', async () => {
     mockedRepo.expireGuardedItems.mockResolvedValue([
-      { id: 'inbox-1', lead_id: 'lead-1', ai_draft_response: 'Reply 1', agent_action_id: 'agent-1' },
+      {
+        id: 'inbox-1',
+        lead_id: 'lead-1',
+        ai_draft_response: 'Reply 1',
+        agent_action_id: 'agent-1',
+      },
     ]);
     mockedExecuteAgentAction.mockRejectedValue(new Error('Agent action is expired'));
 

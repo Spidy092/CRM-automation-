@@ -102,18 +102,14 @@ describe('Chat Routes', () => {
     });
 
     it('returns 400 when message is missing', async () => {
-      const res = await request(app)
-        .post('/chat')
-        .send({ conversationId: 'conv-1' });
+      const res = await request(app).post('/chat').send({ conversationId: 'conv-1' });
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
     });
 
     it('returns 400 when conversationId is empty', async () => {
-      const res = await request(app)
-        .post('/chat')
-        .send({ conversationId: '', message: 'hi' });
+      const res = await request(app).post('/chat').send({ conversationId: '', message: 'hi' });
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);

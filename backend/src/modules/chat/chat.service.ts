@@ -27,7 +27,11 @@ async function loadHistory(conversationId: string): Promise<ChatTurn[]> {
 
 async function saveHistory(conversationId: string, turns: ChatTurn[]): Promise<void> {
   await redis
-    .setex(historyKey(conversationId), CHAT_HISTORY_TTL_SECONDS, JSON.stringify(turns.slice(-CHAT_HISTORY_LIMIT)))
+    .setex(
+      historyKey(conversationId),
+      CHAT_HISTORY_TTL_SECONDS,
+      JSON.stringify(turns.slice(-CHAT_HISTORY_LIMIT)),
+    )
     .catch(() => null);
 }
 
@@ -47,7 +51,7 @@ function isPlanContinuation(message: string): boolean {
   return /\b(next|continue|more|show more|next page|yes do it|approve that|do it)\b/.test(lower);
 }
 
-async function answerPageAwareness(input: {
+function answerPageAwareness(input: {
   message: string;
   conversationId: string;
   pageContext?: ChatPageContext;
@@ -133,7 +137,7 @@ export async function sendChatMessage(input: {
           reply,
           action: {
             name: 'plan.resume' as unknown as AgentActionName,
-            policy: { outcome: 'execute_now', reason: 'continuation' } as any,
+            policy: { outcome: 'execute_now', reason: 'continuation' },
           },
         };
       }
@@ -161,10 +165,8 @@ export async function sendChatMessage(input: {
   const planResult = await createPlanFromGoal({
     goal: input.message,
     actor: input.actor,
-    autonomyLevel: ((input.user as unknown as { autonomyLevel?: string }).autonomyLevel ?? 'supervised') as
-      | 'supervised'
-      | 'guarded'
-      | 'autopilot',
+    autonomyLevel: ((input.user as unknown as { autonomyLevel?: string }).autonomyLevel ??
+      'supervised') as 'supervised' | 'guarded' | 'autopilot',
     source: 'chat',
     sourceMessage: input.message,
     conversationId: input.conversationId,
@@ -187,7 +189,7 @@ export async function sendChatMessage(input: {
         outcome: 'require_approval',
         reason: 'plan requires approval',
         assignTo: input.actor.id,
-      } as any,
+      },
       result: { planId: planResult.plan.id, steps: planResult.steps },
     },
   };

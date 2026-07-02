@@ -4,12 +4,20 @@ import { planSchema } from './plan.schema';
 import type { AutonomyLevel } from './plan.types';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-export function listActionsForPrompt(): string {
-  return Object.values(AGENT_ACTIONS)
-    .map((d) => `- ${d.name} [${d.riskTier}] (roles: ${d.allowedRoles.join('|')}): ${d.description}`)
-    .join('\n');
+function schemaToJsonSchema(schema: unknown): Record<string, unknown> {
+  // zod-to-json-schema cannot infer the deep ZodEffects type; cast internally.
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any,
+     @typescript-eslint/no-unsafe-argument */
+  return zodToJsonSchema(schema as any, { target: 'openApi3' });
 }
 
+export function listActionsForPrompt(): string {
+  return Object.values(AGENT_ACTIONS)
+    .map(
+      (d) => `- ${d.name} [${d.riskTier}] (roles: ${d.allowedRoles.join('|')}): ${d.description}`,
+    )
+    .join('\n');
+}
 
 export function buildPlannerSystemPrompt(ctx: {
   actor: AgentActor;
@@ -44,5 +52,5 @@ export const planJsonSchema = {
   type: 'json_schema' as const,
   strict: true,
   name: 'agent_plan',
-  schema: zodToJsonSchema(planSchema as any, { target: 'openApi3' }) as Record<string, unknown>,
+  schema: schemaToJsonSchema(planSchema),
 };

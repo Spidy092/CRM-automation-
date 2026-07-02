@@ -60,9 +60,7 @@ describe('chat.schema', () => {
       });
 
       it('rejects when message field is missing', () => {
-        expect(() =>
-          sendChatMessageSchema.parse({ conversationId: 'conv-1' }),
-        ).toThrow();
+        expect(() => sendChatMessageSchema.parse({ conversationId: 'conv-1' })).toThrow();
       });
     });
 
@@ -192,9 +190,7 @@ describe('chat.schema', () => {
             message: 'hi',
             pageContext: {
               route: '/',
-              visibleRecords: [
-                { type: 'not_a_valid_type', id: VALID_UUID, name: 'Item' },
-              ],
+              visibleRecords: [{ type: 'not_a_valid_type', id: VALID_UUID, name: 'Item' }],
             },
           }),
         ).toThrow();
@@ -254,9 +250,7 @@ describe('chat.schema', () => {
     });
 
     it('rejects conversationId longer than 120 chars', () => {
-      expect(() =>
-        chatHistoryParamsSchema.parse({ conversationId: 'a'.repeat(121) }),
-      ).toThrow();
+      expect(() => chatHistoryParamsSchema.parse({ conversationId: 'a'.repeat(121) })).toThrow();
     });
 
     it('accepts conversationId at exactly 120 chars', () => {

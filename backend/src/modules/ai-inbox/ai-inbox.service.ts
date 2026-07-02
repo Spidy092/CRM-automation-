@@ -83,7 +83,10 @@ export async function actionItem(
   if (!updated) throw new AppError(`Failed to action inbox item: ${id}`, 500);
 
   if (action === 'approve' && existing.agent_action_id) {
-    const executed = await executeAgentAction(existing.agent_action_id, { approvedBy: actor.id, actor });
+    const executed = await executeAgentAction(existing.agent_action_id, {
+      approvedBy: actor.id,
+      actor,
+    });
     updated = await setInboxActionResult(id, {
       agentActionId: executed.id,
       status: executed.status,

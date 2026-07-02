@@ -85,27 +85,18 @@ describe('AI Inbox Routes', () => {
       const approved: AiInboxItem = { ...fakeItem, status: 'actioned', actioned_by: 'u-1' };
       mockedService.actionItem.mockResolvedValue(approved);
 
-      const res = await request(app)
-        .patch('/ai-inbox/item-1/action')
-        .send({ action: 'approve' });
+      const res = await request(app).patch('/ai-inbox/item-1/action').send({ action: 'approve' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.id).toBe('i1');
-      expect(mockedService.actionItem).toHaveBeenCalledWith(
-        'item-1',
-        'u-1',
-        'approve',
-        undefined,
-      );
+      expect(mockedService.actionItem).toHaveBeenCalledWith('item-1', 'u-1', 'approve', undefined);
     });
 
     it('returns 404 when the service throws not found', async () => {
       mockedService.actionItem.mockRejectedValue(new Error('Inbox item not found: item-1'));
 
-      const res = await request(app)
-        .patch('/ai-inbox/item-1/action')
-        .send({ action: 'approve' });
+      const res = await request(app).patch('/ai-inbox/item-1/action').send({ action: 'approve' });
 
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);

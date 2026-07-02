@@ -8,7 +8,12 @@ jest.mock('./ai-inbox.service');
 
 const mockedService = service as jest.Mocked<typeof service>;
 
-function mockReq(query: any = {}, body: any = {}, params: any = {}, user: any = { id: 'u-1', role: 'sales' }): Request {
+function mockReq(
+  query: any = {},
+  body: any = {},
+  params: any = {},
+  user: any = { id: 'u-1', role: 'sales' },
+): Request {
   return { query, body, params, user } as unknown as Request;
 }
 
@@ -133,7 +138,11 @@ describe('ai-inbox.controller', () => {
     });
 
     it('snoozes an item with a snoozed_until timestamp', async () => {
-      const snoozed: AiInboxItem = { ...fakeItem, status: 'snoozed', snoozed_until: '2026-07-01T10:00:00.000Z' };
+      const snoozed: AiInboxItem = {
+        ...fakeItem,
+        status: 'snoozed',
+        snoozed_until: '2026-07-01T10:00:00.000Z',
+      };
       mockedService.actionItem.mockResolvedValue(snoozed);
 
       const req = mockReq(

@@ -15,7 +15,7 @@ import { PlannerError } from './errors';
 import { buildPlanIdempotencyKey } from './idempotency';
 import { buildPlannerSystemPrompt, planJsonSchema } from './planner.prompt';
 import { incPlanCreated, incPlanError } from './metrics';
-import type { AutonomyLevel, PlanRow, PlanSource, PlanStep, PlanStepRow } from './plan.types';
+import type { AutonomyLevel, PlanRow, PlanSource, PlanStepRow } from './plan.types';
 
 export async function createPlanFromGoal(input: {
   goal: string;
@@ -55,7 +55,7 @@ export async function createPlanFromGoal(input: {
     today: new Date().toISOString().slice(0, 10),
   });
 
-  let parsedJson: unknown | null = null;
+  let parsedJson: unknown = null;
   let lastParseError: string | null = null;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -64,7 +64,7 @@ export async function createPlanFromGoal(input: {
         model: aiConfig.model,
         max_tokens: aiConfig.maxTokens,
         temperature: aiConfig.temperature,
-        response_format: planJsonSchema as any,
+        response_format: planJsonSchema,
         messages: [
           { role: 'system', content: systemPrompt },
           {
@@ -109,7 +109,11 @@ export async function createPlanFromGoal(input: {
       lead_id: null,
       campaign_id: null,
       decision_type: 'agent_action',
-      input_context: { goal: input.goal, source: input.source, actorRole: input.actor?.role ?? null },
+      input_context: {
+        goal: input.goal,
+        source: input.source,
+        actorRole: input.actor?.role ?? null,
+      },
       chain_of_thought: validated.error.message,
       decision: 'invalid_plan',
       model_used: aiConfig.model,
@@ -126,7 +130,7 @@ export async function createPlanFromGoal(input: {
     source: input.source,
     requestedBy: input.actor?.id ?? null,
     sourceMessage: input.sourceMessage ?? null,
-    steps: validated.data.steps as PlanStep[],
+    steps: validated.data.steps,
     idempotencyKey,
     expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   });
@@ -158,7 +162,9 @@ export async function createPlanFromGoal(input: {
       actorRole: input.actor?.role ?? null,
       stepCount: steps.length,
     },
-    chain_of_thought: validated.data.steps.map((s) => `[${s.step_index}] ${s.action_name}: ${s.rationale}`).join('\n'),
+    chain_of_thought: validated.data.steps
+      .map((s) => `[${s.step_index}] ${s.action_name}: ${s.rationale}`)
+      .join('\n'),
     decision: 'proposed',
     model_used: aiConfig.model,
     human_approval_required: false,

@@ -75,7 +75,12 @@ export async function findPlanStepsByPlan(planId: string): Promise<PlanStepRow[]
 export async function updatePlanStatus(
   id: string,
   status: PlanStatus,
-  fields?: { errorMessage?: string | null; startedAt?: string | null; completedAt?: string | null; costUsedCents?: number },
+  fields?: {
+    errorMessage?: string | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
+    costUsedCents?: number;
+  },
 ): Promise<PlanRow> {
   const row = await queryOne<PlanRow>(
     `UPDATE agent_plans
@@ -103,7 +108,13 @@ export async function updatePlanStatus(
 export async function updatePlanStepStatus(
   id: string,
   status: PlanStepStatus,
-  fields?: { result?: Record<string, unknown> | null; errorMessage?: string | null; agentActionId?: string | null; startedAt?: string | null; completedAt?: string | null },
+  fields?: {
+    result?: Record<string, unknown> | null;
+    errorMessage?: string | null;
+    agentActionId?: string | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
+  },
 ): Promise<PlanStepRow> {
   const row = await queryOne<PlanStepRow>(
     `UPDATE agent_plan_steps

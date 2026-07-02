@@ -104,7 +104,11 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
         if (step.risk_tier === 'low_risk_write') {
           await updatePlanStepStatus(step.id, 'skipped', { errorMessage: proposal.policy.reason });
           budget.recordStepCost(step, 0);
-          incStepExecuted({ action: step.action_name, riskTier: step.risk_tier, outcome: 'skipped' });
+          incStepExecuted({
+            action: step.action_name,
+            riskTier: step.risk_tier,
+            outcome: 'skipped',
+          });
           observeStepDuration({ riskTier: step.risk_tier }, (Date.now() - stepStart) / 1000);
           return;
         }

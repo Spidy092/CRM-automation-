@@ -17,7 +17,9 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
       user,
       pageContext: parsed.data.pageContext,
     });
-    res.status(result.action?.policy.outcome === 'require_approval' ? 202 : 200).json(successResponse(result));
+    res
+      .status(result.action?.policy.outcome === 'require_approval' ? 202 : 200)
+      .json(successResponse(result));
   } catch (err) {
     next(err);
   }

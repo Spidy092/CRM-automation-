@@ -2,12 +2,7 @@ import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
 import { wrap as asyncHandler } from '../../shared/utils/asyncHandler';
-import {
-  getPlan,
-  approvePlan,
-  cancelPlanHandler,
-  continuePlan,
-} from './plan.controller';
+import { getPlan, approvePlan, cancelPlanHandler, continuePlan } from './plan.controller';
 
 const router = Router();
 

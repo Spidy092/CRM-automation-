@@ -121,7 +121,12 @@ export async function autoResolveItemsForLead(leadId: string): Promise<void> {
 
 /** Expire guarded-mode items: update status to 'actioned' so downstream can auto-send. */
 export async function expireGuardedItems(): Promise<
-  Array<{ id: string; lead_id: string | null; ai_draft_response: string | null; agent_action_id: string | null }>
+  Array<{
+    id: string;
+    lead_id: string | null;
+    ai_draft_response: string | null;
+    agent_action_id: string | null;
+  }>
 > {
   const result = await pool.query<{
     id: string;

@@ -23,7 +23,11 @@ export function incPlanFailed(labels: { autonomyLevel: AutonomyLevel; reason: st
   agentPlansFailedTotal.inc({ autonomy_level: labels.autonomyLevel, reason: labels.reason });
 }
 
-export function incStepExecuted(labels: { action: AgentActionName; riskTier: AgentRiskTier; outcome: string }): void {
+export function incStepExecuted(labels: {
+  action: AgentActionName;
+  riskTier: AgentRiskTier;
+  outcome: string;
+}): void {
   agentStepsExecutedTotal.inc({
     action: labels.action,
     risk_tier: labels.riskTier,
@@ -35,7 +39,10 @@ export function incPlanError(labels: { code: PlannerErrorCode | RunnerErrorCode 
   agentPlanErrorsTotal.inc({ code: labels.code });
 }
 
-export function observePlanDuration(labels: { autonomyLevel: AutonomyLevel }, seconds: number): void {
+export function observePlanDuration(
+  labels: { autonomyLevel: AutonomyLevel },
+  seconds: number,
+): void {
   agentPlanDurationSeconds.observe({ autonomy_level: labels.autonomyLevel }, seconds);
 }
 
