@@ -34,6 +34,7 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
   }
 
   if (
+    foundPlan.status !== 'proposed' &&
     foundPlan.status !== 'approved' &&
     foundPlan.status !== 'running' &&
     foundPlan.status !== 'paused_for_approval'
@@ -46,7 +47,7 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
     : Date.now();
 
   const plan =
-    foundPlan.status === 'approved'
+    foundPlan.status === 'proposed' || foundPlan.status === 'approved'
       ? await updatePlanStatus(planId, 'running', { startedAt: new Date().toISOString() })
       : foundPlan;
 

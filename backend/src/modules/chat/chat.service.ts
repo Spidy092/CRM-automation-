@@ -191,6 +191,29 @@ export async function sendChatMessage(input: {
     return { conversationId: input.conversationId, reply };
   }
 
+  // Check if all steps are read-only — if so, auto-execute without approval
+  const allReads = planResult.steps.every((s) => s.risk_tier === 'read');
+  if (allReads) {
+    const { executePlan } = await import('../agent-planner/runner.service');
+    await executePlan(planResult.plan.id, input.actor);
+
+    // Fetch the step results to show actual data
+    const { findPlanStepsByPlan } = await import('../agent-planner/plan.repository');
+    const steps = await findPlanStepsByPlan(planResult.plan.id);
+    const results = steps
+      .filter((s) => s.result)
+      .map((s) => s.result);
+
+    const resultSummary = results.length > 0
+      ? JSON.stringify(results[0], null, 2).slice(0, 2000)
+      : 'No data returned.';
+
+    const reply = `Done. Here are your results:\n\n${resultSummary}`;
+    await persistTurn(input.conversationId, history, input.message, reply);
+    return { conversationId: input.conversationId, reply };
+  }
+
+  // Write actions require approval
   const reply = `I planned: "${planResult.plan.goal}". ${planResult.steps.length} steps. Approve to run.`;
   await persistTurn(
     input.conversationId,

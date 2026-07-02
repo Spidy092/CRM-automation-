@@ -1,3 +1,10 @@
+jest.mock('../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
+
 import { sendChatMessage, getChatHistory } from './chat.service';
 import { redis } from '../../shared/utils/redis';
 import * as planner from '../agent-planner/planner.service';
@@ -28,8 +35,8 @@ describe('chat.service.sendChatMessage (thin)', () => {
 
   it('delegates multi-step requests to the planner', async () => {
     mockedCreatePlanFromGoal.mockResolvedValue({
-      plan: { id: 'plan-1', status: 'proposed', goal: 'find leads' } as any,
-      steps: [{ step_index: 0, action_name: 'lead.list', risk_tier: 'read' } as any],
+      plan: { id: '11111111-1111-4111-8111-111111111111', status: 'proposed', goal: 'find leads' } as any,
+      steps: [{ step_index: 0, action_name: 'lead.update', risk_tier: 'low_risk_write' } as any],
     });
 
     const result = await sendChatMessage({

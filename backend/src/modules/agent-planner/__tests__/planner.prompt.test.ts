@@ -1,4 +1,9 @@
-jest.mock('../../../workers/queue');
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
 
 import { buildPlannerSystemPrompt, planJsonSchema } from '../planner.prompt';
 import type { AgentActor } from '../../agent/agent.types';

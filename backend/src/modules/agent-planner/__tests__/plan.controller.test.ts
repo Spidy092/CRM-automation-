@@ -1,4 +1,9 @@
-jest.mock('../../../workers/queue');
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
 
 import request from 'supertest';
 import express from 'express';

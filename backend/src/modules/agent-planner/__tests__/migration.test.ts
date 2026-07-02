@@ -1,4 +1,9 @@
-jest.mock('../../../workers/queue');
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
 
 // @ts-ignore - JS migration has no .d.ts; we only read its exported functions
 import migration from '../../../../../migrations/1750000000030_agent-plans';

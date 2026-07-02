@@ -295,7 +295,7 @@ describe('evaluateCondition via calculateLeadScore (all condition types)', () =>
     phone: '+1',
     industry: 'SaaS',
     country: 'US',
-    source: 'google_ads',
+    source_platform: 'google_ads',
     replied_at: new Date('2026-06-01'),
     social_links: { linkedin: 'x' },
   };

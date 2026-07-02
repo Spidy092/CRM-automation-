@@ -1,11 +1,21 @@
-jest.mock('../../../workers/queue');
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
 
 import { runRecoverySweep, startAgentPlanRecoveryWorker, scheduleAgentPlanRecovery } from '../recovery.worker';
 import { findStaleRunningPlans, updatePlanStatus } from '../plan.repository';
 import { getBullConnection } from '../../../workers/queue';
 
 jest.mock('../plan.repository');
-jest.mock('../../../workers/queue');
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
 jest.mock('bullmq', () => ({
   Worker: jest.fn().mockImplementation(() => ({
     on: jest.fn(),

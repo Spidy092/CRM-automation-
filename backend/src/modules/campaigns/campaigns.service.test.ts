@@ -419,6 +419,7 @@ describe('launchCampaignById — AI brief approval requirement', () => {
     ...baseCampaign,
     autonomy_level: 'guarded' as const,
     ai_min_confidence: 70,
+    ai_personalization_enabled: true,
   };
 
   const approvedBrief = {

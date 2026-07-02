@@ -1,4 +1,9 @@
-jest.mock('../../../workers/queue');
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
 
 import OpenAI from 'openai';
 import { createPlanFromGoal } from '../planner.service';
