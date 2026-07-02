@@ -31,6 +31,8 @@ export interface AiInboxItem {
   updated_at: string;
   agent_action_id: string | null;
   action_result: Record<string, unknown> | null;
+  agent_plan_id: string | null;
+  agent_plan_step_id: string | null;
 }
 
 export interface InboxFilters {

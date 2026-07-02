@@ -6,10 +6,17 @@ import { AIInboxPage } from '../AIInboxPage';
 
 const mockUseInbox = vi.fn();
 const mockMutateAsync = vi.fn().mockResolvedValue({});
+const mockApprovePlan = vi.fn().mockResolvedValue({});
 
 vi.mock('@/api/aiInbox', () => ({
   useInbox: (...args: unknown[]) => mockUseInbox(...args),
   useActionInboxItem: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
+}));
+
+vi.mock('@/api/agentPlans', () => ({
+  useApprovePlan: () => ({ mutateAsync: mockApprovePlan, isPending: false }),
+  usePlan: () => ({ data: undefined, isLoading: false }),
+  useCancelPlan: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 const baseFakeItem = {
@@ -30,6 +37,8 @@ const baseFakeItem = {
   actioned_at: null,
   agent_action_id: null,
   action_result: null,
+  agent_plan_id: null,
+  agent_plan_step_id: null,
   created_at: '2026-06-26T10:00:00.000Z',
   updated_at: '2026-06-26T10:00:00.000Z',
 };
@@ -38,6 +47,8 @@ describe('AIInboxPage', () => {
   beforeEach(() => {
     mockMutateAsync.mockClear();
     mockMutateAsync.mockResolvedValue({});
+    mockApprovePlan.mockClear();
+    mockApprovePlan.mockResolvedValue({});
   });
 
   it('renders inbox items', () => {
@@ -214,5 +225,45 @@ describe('AIInboxPage', () => {
     await user.click(screen.getByRole('button', { name: /approve/i }));
 
     expect(await screen.findByText('Failed to update inbox item.')).toBeInTheDocument();
+  });
+
+  it('groups items by agent_plan_id and calls useApprovePlan when Approve all is clicked', async () => {
+    const user = userEvent.setup();
+    const planItems = [
+      {
+        ...baseFakeItem,
+        id: 'p1',
+        agent_plan_id: 'plan-abc',
+        agent_plan_step_id: 'step-1',
+        title: 'Step one',
+      },
+      {
+        ...baseFakeItem,
+        id: 'p2',
+        agent_plan_id: 'plan-abc',
+        agent_plan_step_id: 'step-2',
+        title: 'Step two',
+      },
+    ];
+    mockUseInbox.mockReturnValue({
+      data: { items: planItems, total: 2 },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithProviders(<AIInboxPage />);
+
+    expect(screen.getByText('Step one')).toBeInTheDocument();
+    expect(screen.getByText('Step two')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /approve all 2/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^approve$/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /approve all 2/i }));
+
+    await waitFor(() => {
+      expect(mockApprovePlan).toHaveBeenCalledWith('plan-abc');
+    });
+
+    expect(await screen.findByText('Plan approved and running.')).toBeInTheDocument();
   });
 });
