@@ -41,6 +41,7 @@ export class PlannerError extends AppError {
   ) {
     super(message, mapCodeToHttp(code));
     this.name = 'PlannerError';
+    Object.setPrototypeOf(this, PlannerError.prototype);
   }
 }
 
@@ -53,5 +54,6 @@ export class RunnerError extends AppError {
   ) {
     super(message, mapCodeToHttp(code));
     this.name = 'RunnerError';
+    Object.setPrototypeOf(this, RunnerError.prototype);
   }
 }
