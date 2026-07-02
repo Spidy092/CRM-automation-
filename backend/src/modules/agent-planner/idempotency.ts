@@ -43,9 +43,10 @@ export function buildApproveIdempotencyKey(input: {
   actorId: string;
   stepIndexes: number[];
 }): string {
+  const indexes = [...input.stepIndexes].sort((a, b) => a - b).join(',');
   const hash = crypto
     .createHash('sha256')
-    .update(`${input.planId}:${input.actorId}:${[...input.stepIndexes].sort((a, b) => a - b).join(',')}`)
+    .update(`${input.planId}:${input.actorId}:${indexes}`)
     .digest('hex');
   return `approve:${hash}`;
 }
