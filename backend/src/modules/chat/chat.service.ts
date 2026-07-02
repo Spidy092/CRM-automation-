@@ -163,16 +163,24 @@ export async function sendChatMessage(input: {
     return { conversationId: input.conversationId, reply };
   }
 
-  const planResult = await createPlanFromGoal({
-    goal: input.message,
-    actor: input.actor,
-    autonomyLevel: ((input.user as unknown as { autonomyLevel?: string }).autonomyLevel ??
-      'supervised') as 'supervised' | 'guarded' | 'autopilot',
-    source: 'chat',
-    sourceMessage: input.message,
-    conversationId: input.conversationId,
-    pageContext: input.pageContext,
-  });
+  let planResult: Awaited<ReturnType<typeof createPlanFromGoal>>;
+  try {
+    planResult = await createPlanFromGoal({
+      goal: input.message,
+      actor: input.actor,
+      autonomyLevel: ((input.user as unknown as { autonomyLevel?: string }).autonomyLevel ??
+        'supervised') as 'supervised' | 'guarded' | 'autopilot',
+      source: 'chat',
+      sourceMessage: input.message,
+      conversationId: input.conversationId,
+      pageContext: input.pageContext,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown planner error';
+    const reply = `Planner error: ${msg}`;
+    await persistTurn(input.conversationId, history, input.message, reply);
+    return { conversationId: input.conversationId, reply };
+  }
 
   const reply = `I planned: "${planResult.plan.goal}". ${planResult.steps.length} steps. Approve to run.`;
   await persistTurn(

@@ -36,8 +36,8 @@ describe('planner.prompt', () => {
   });
 
   it('planJsonSchema has strict mode and matches planSchema shape', () => {
-    expect(planJsonSchema.strict).toBe(true);
-    expect(planJsonSchema.name).toBe('agent_plan');
-    expect(planJsonSchema.schema).toBeDefined();
+    expect(planJsonSchema.json_schema.strict).toBe(true);
+    expect(planJsonSchema.json_schema.name).toBe('agent_plan');
+    expect(planJsonSchema.json_schema.schema).toBeDefined();
   });
 });

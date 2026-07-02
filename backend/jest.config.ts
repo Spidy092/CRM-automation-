@@ -24,6 +24,7 @@ const config: Config = {
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
   },
+  setupFilesAfterEnv: ['<rootDir>/../jest.setup.ts'],
 };
 
 export default config;
