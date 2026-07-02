@@ -44,5 +44,5 @@ export const planJsonSchema = {
   type: 'json_schema' as const,
   strict: true,
   name: 'agent_plan',
-  schema: zodToJsonSchema(planSchema, { target: 'openApi3' }),
+  schema: zodToJsonSchema(planSchema as any, { target: 'openApi3' }) as Record<string, unknown>,
 };

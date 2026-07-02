@@ -57,3 +57,26 @@ export class RunnerError extends AppError {
     Object.setPrototypeOf(this, RunnerError.prototype);
   }
 }
+
+export class StepAwaitingApproval extends AppError {
+  constructor(
+    public planId: string,
+    public stepIndex: number,
+  ) {
+    super('Step is awaiting human approval', 202);
+    this.name = 'StepAwaitingApproval';
+    Object.setPrototypeOf(this, StepAwaitingApproval.prototype);
+  }
+}
+
+export class StepRejected extends AppError {
+  constructor(
+    public planId: string,
+    public stepIndex: number,
+    public reason: string,
+  ) {
+    super(reason, 409);
+    this.name = 'StepRejected';
+    Object.setPrototypeOf(this, StepRejected.prototype);
+  }
+}

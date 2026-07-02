@@ -47,15 +47,6 @@ function isPlanContinuation(message: string): boolean {
   return /\b(next|continue|more|show more|next page|yes do it|approve that|do it)\b/.test(lower);
 }
 
-function isTrivialLookup(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    /^\s*(show|get|fetch)\s+(me\s+)?(the\s+)?dashboard/.test(lower) ||
-    /^\s*dashboard(\s+metrics)?\s*$/.test(lower) ||
-    /^\s*(list|show)\s+campaigns\s*$/.test(lower)
-  );
-}
-
 async function answerPageAwareness(input: {
   message: string;
   conversationId: string;

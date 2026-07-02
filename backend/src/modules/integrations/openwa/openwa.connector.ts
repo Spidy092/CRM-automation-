@@ -14,7 +14,6 @@ import { loggedFetch, type ConnectorResult, type ConnectorChannel } from '../con
 import {
   OpenWACredentials,
   OpenWASendResponse,
-  OpenWAHealthResponse,
   openWACredentialsSchema,
 } from './openwa.types';
 import {
@@ -198,9 +197,27 @@ export async function sendMessage(
 
   await jitter(config.jitterMinMs, config.jitterMaxMs);
 
+  let actualSessionId = credentials.sessionId;
   const baseUrl = credentials.baseUrl.replace(/\/+$/, '');
+
+  // If the user provided a session name instead of a UUID, resolve it first.
+  if (actualSessionId.length !== 36) {
+    const listUrl = `${baseUrl}/api/sessions`;
+    const resList = await loggedFetch<any[]>(
+      listUrl,
+      { method: 'GET', headers: { 'x-api-key': credentials.apiKey } },
+      { channel: OPENWA_CHANNEL }
+    );
+    if (resList.ok && Array.isArray(resList.data)) {
+      const match = resList.data.find((s) => s.name === actualSessionId);
+      if (match) {
+        actualSessionId = match.id;
+      }
+    }
+  }
+
   const url = `${baseUrl}/api/sessions/${encodeURIComponent(
-    credentials.sessionId,
+    actualSessionId,
   )}/messages/send-text`;
 
   const res = await loggedFetch<OpenWASendResponse>(
@@ -264,11 +281,13 @@ export async function healthCheck(input: {
 }): Promise<ConnectorResult<{ status: string }>> {
   const { credentials } = input;
   const baseUrl = credentials.baseUrl.replace(/\/+$/, '');
-  const url = `${baseUrl}/api/sessions/${encodeURIComponent(
-    credentials.sessionId,
-  )}`;
+  
+  // We fetch the list of all sessions instead of a single session.
+  // This supports cases where the user configures the integration using the session "name"
+  // rather than the UUID, which is common.
+  const url = `${baseUrl}/api/sessions`;
 
-  return loggedFetch<OpenWAHealthResponse>(
+  const res = await loggedFetch<any[]>(
     url,
     {
       method: 'GET',
@@ -276,6 +295,47 @@ export async function healthCheck(input: {
     },
     { channel: OPENWA_CHANNEL },
   );
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Invalid API key.',
+        latencyMs: res.latencyMs,
+        retryable: false,
+      };
+    }
+    return {
+      ok: false,
+      status: res.status,
+      error: res.error || 'OpenWA health check failed',
+      latencyMs: res.latencyMs,
+      retryable: false,
+    };
+  }
+
+  const sessions = Array.isArray(res.data) ? res.data : [];
+  const session = sessions.find(
+    (s) => s.id === credentials.sessionId || s.name === credentials.sessionId
+  );
+
+  if (!session) {
+    return {
+      ok: false,
+      status: 404,
+      error: `Session '${credentials.sessionId}' not found. Please verify the session name or ID in the OpenWA dashboard.`,
+      latencyMs: res.latencyMs,
+      retryable: false,
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    data: { status: session.status || 'CONNECTED' },
+    latencyMs: res.latencyMs,
+  };
 }
 
 /**

@@ -9,10 +9,10 @@ import {
   updatePlanStepStatus,
   claimPlanForRecovery,
 } from './plan.repository';
-import type { PlanRow, PlanStepRow, PlanStatus } from './plan.types';
+import type { PlanStepRow, PlanStatus } from './plan.types';
 import { RunnerError, StepAwaitingApproval, StepRejected } from './errors';
 import { topoSortIntoWaves } from './runner.topo';
-import { createBudgetTracker, type BudgetTracker } from './runner.budget';
+import { createBudgetTracker } from './runner.budget';
 import {
   incPlanSucceeded,
   incPlanFailed,

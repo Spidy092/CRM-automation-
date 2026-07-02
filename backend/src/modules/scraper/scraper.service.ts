@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
 import { z } from 'zod';
+import { fetchFormLeads, type FacebookLead } from '../integrations/facebook/facebook.connector';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
@@ -120,6 +121,51 @@ function validateApiKeyRefs(sourceType: string, config: Record<string, unknown>)
   if (sourceType === 'facebook') {
     assertEnvVarConfigured(config.accessTokenRef, 'accessTokenRef');
   }
+  if (sourceType === 'google_ads_lead_forms' && config.webhookSecretRef) {
+    assertEnvVarConfigured(config.webhookSecretRef, 'webhookSecretRef');
+  }
+}
+
+function getStringField(fields: Record<string, string>, names: string[]): string {
+  for (const name of names) {
+    const direct = fields[name];
+    if (direct) return direct;
+  }
+  return '';
+}
+
+function normalizeLeadFormFields(
+  fieldData: Array<{ name: string; values: string[] }>,
+): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const field of fieldData) {
+    const key = field.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const value = field.values.find((v) => v.trim().length > 0)?.trim() ?? '';
+    if (key && value) fields[key] = value;
+  }
+  return fields;
+}
+
+function leadFromFormFields(
+  fields: Record<string, string>,
+  fallbackName: string,
+  sourcePlatform: string,
+): ScrapedLead {
+  const contactName = getStringField(fields, ['full_name', 'name', 'contact_name', 'first_name']);
+  const businessName =
+    getStringField(fields, ['company_name', 'company', 'business_name', 'organization']) ||
+    contactName ||
+    fallbackName;
+
+  return {
+    business_name: businessName,
+    contact_name: contactName || businessName,
+    phone: getStringField(fields, ['phone_number', 'phone', 'mobile_phone', 'mobile']),
+    email: getStringField(fields, ['email', 'email_address', 'work_email']),
+    location: getStringField(fields, ['city', 'location', 'state', 'country']),
+    industry: getStringField(fields, ['industry']),
+    source_platform: sourcePlatform,
+  };
 }
 
 export async function createConfig(
@@ -201,7 +247,7 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
   const log = await insertScraperLog({ config_id: configId, status: 'running' });
 
   try {
-    const result = await executeScraper(config);
+    const result = await executeScraper(config, log.id);
     const status =
       result.recordsFailed > 0 && result.recordsFound > 0
         ? 'partially_completed'
@@ -263,7 +309,7 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
   }
 }
 
-async function executeScraper(config: ScraperConfigRow): Promise<{
+async function executeScraper(config: ScraperConfigRow, logId: string): Promise<{
   recordsFound: number;
   recordsImported: number;
   recordsFailed: number;
@@ -271,13 +317,19 @@ async function executeScraper(config: ScraperConfigRow): Promise<{
 }> {
   switch (config.source_type) {
     case 'google_places':
-      return scrapeGooglePlaces(config.config);
+      return scrapeGooglePlaces(config.config, logId);
     case 'facebook':
-      return scrapeFacebook(config.config);
+      return scrapeFacebook(config.config, logId);
     case 'youtube':
-      return scrapeYouTube(config.config);
+      return scrapeYouTube(config.config, logId);
     case 'web_scrape':
-      return scrapeWeb(config.config);
+      return scrapeWeb(config.config, logId);
+    case 'meta_lead_forms':
+      return scrapeMetaLeadForms(config.config, logId);
+    case 'google_ads_lead_forms':
+      return scrapeGoogleAdsLeadForms(config.config, logId);
+    case 'linkedin_lead_forms':
+      return scrapeLinkedInLeadForms(config.config, logId);
     default:
       throw new AppError(`Unknown scraper source type: ${String(config.source_type)}`, 500);
   }
@@ -355,7 +407,7 @@ async function geocodeLocation(location: string, apiKey: string): Promise<string
   return undefined;
 }
 
-async function scrapeGooglePlaces(_config: Record<string, unknown>): Promise<{
+async function scrapeGooglePlaces(_config: Record<string, unknown>, logId: string): Promise<{
   recordsFound: number;
   recordsImported: number;
   recordsFailed: number;
@@ -541,16 +593,103 @@ async function scrapeGooglePlaces(_config: Record<string, unknown>): Promise<{
     });
   }
 
-  const stats = await importLeads(leads);
+  const stats = await importLeads(leads, logId);
   return {
     ...stats,
     rawResponse: { total_results: rawResults.length },
   };
 }
 
+
+// ── Official Lead Form Sources ─────────────────────────────────────────────
+
+async function scrapeMetaLeadForms(_config: Record<string, unknown>, logId: string): Promise<{
+  recordsFound: number;
+  recordsImported: number;
+  recordsFailed: number;
+  rawResponse?: Record<string, unknown>;
+}> {
+  logger.info('scraper meta_lead_forms: starting Graph API lead pull');
+
+  const integrationId = String(_config.integrationId ?? '');
+  const formId = String(_config.formId ?? '');
+  const sinceHours = Number(_config.sinceHours) || 24;
+  const maxResults = Number(_config.maxResults) || 100;
+
+  if (!integrationId) throw new AppError('integrationId is required for Meta Lead Forms', 400);
+  if (!formId) throw new AppError('formId is required for Meta Lead Forms', 400);
+
+  const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
+  const response = await fetchFormLeads(integrationId, formId, since);
+  if (!response.ok) {
+    throw new AppError(`Meta Lead Forms API error: ${response.error}`, 502);
+  }
+
+  const leadRows = (response.data?.data ?? []).slice(0, maxResults) as FacebookLead[];
+  const leads = leadRows.map((row) =>
+    leadFromFormFields(
+      normalizeLeadFormFields(row.field_data),
+      `Meta Lead ${row.id}`,
+      'meta_lead_forms',
+    ),
+  );
+
+  const stats = await importLeads(leads, logId);
+  return {
+    ...stats,
+    rawResponse: { form_id: formId, since: since.toISOString(), fetched: leadRows.length },
+  };
+}
+
+async function scrapeGoogleAdsLeadForms(_config: Record<string, unknown>, _logId: string): Promise<{
+  recordsFound: number;
+  recordsImported: number;
+  recordsFailed: number;
+  rawResponse?: Record<string, unknown>;
+}> {
+  const webhookSecretRef = typeof _config.webhookSecretRef === 'string' ? _config.webhookSecretRef : null;
+  if (webhookSecretRef) assertEnvVarConfigured(webhookSecretRef, 'webhookSecretRef');
+  return {
+    recordsFound: 0,
+    recordsImported: 0,
+    recordsFailed: 0,
+    rawResponse: {
+      mode: 'webhook_only',
+      provider: 'google_ads',
+      message: 'Google Ads lead forms are ingested by POST /webhooks/google-ads.',
+    },
+  };
+}
+
+async function scrapeLinkedInLeadForms(_config: Record<string, unknown>, _logId: string): Promise<{
+  recordsFound: number;
+  recordsImported: number;
+  recordsFailed: number;
+  rawResponse?: Record<string, unknown>;
+}> {
+  const mode = _config.mode === 'manual_import' ? 'manual_import' : 'api';
+  if (mode === 'manual_import') {
+    return {
+      recordsFound: 0,
+      recordsImported: 0,
+      recordsFailed: 0,
+      rawResponse: {
+        mode,
+        provider: 'linkedin',
+        message: 'LinkedIn leads should be imported manually or through an approved API integration.',
+      },
+    };
+  }
+
+  throw new AppError(
+    'LinkedIn Lead Gen Forms API is not configured yet. LinkedIn scraping and bot-block bypass are not supported.',
+    400,
+  );
+}
+
 // ── Facebook Scraper ───────────────────────────────────────────────────────
 
-async function scrapeFacebook(_config: Record<string, unknown>): Promise<{
+async function scrapeFacebook(_config: Record<string, unknown>, logId: string): Promise<{
   recordsFound: number;
   recordsImported: number;
   recordsFailed: number;
@@ -615,7 +754,7 @@ async function scrapeFacebook(_config: Record<string, unknown>): Promise<{
     : { data: [] };
   const posts = (postsData.data as unknown[]) ?? [];
 
-  const stats = await importLeads(leads);
+  const stats = await importLeads(leads, logId);
   return {
     ...stats,
     rawResponse: { page_name: pageData.name, posts_count: posts.length },
@@ -624,7 +763,7 @@ async function scrapeFacebook(_config: Record<string, unknown>): Promise<{
 
 // ── YouTube Scraper ────────────────────────────────────────────────────────
 
-async function scrapeYouTube(_config: Record<string, unknown>): Promise<{
+async function scrapeYouTube(_config: Record<string, unknown>, _logId: string): Promise<{
   recordsFound: number;
   recordsImported: number;
   recordsFailed: number;
@@ -679,6 +818,8 @@ async function scrapeYouTube(_config: Record<string, unknown>): Promise<{
 // ── Web Scraper (Cheerio) ──────────────────────────────────────────────────
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const DEFAULT_CRAWLER_USER_AGENT = 'CRMLeadCrawler/1.0 (+https://crm.local/scraper; compliant)';
+const CAPTCHA_RE = /(captcha|recaptcha|hcaptcha|cf-challenge|access denied|verify you are human)/i;
 const ASSET_EMAIL_RE = /\.(png|jpe?g|gif|svg|webp|css|js|woff2?)$/i;
 
 /**
@@ -863,7 +1004,71 @@ export async function detectSelectors(
   return parsed;
 }
 
-async function scrapeWeb(_config: Record<string, unknown>): Promise<{
+
+function pathMatchesRobotsRule(pathname: string, rule: string): boolean {
+  if (!rule) return false;
+  if (rule === '/') return true;
+  return pathname.startsWith(rule);
+}
+
+async function assertRobotsAllowed(pageUrl: string, userAgent: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(pageUrl);
+  } catch {
+    throw new AppError('URL is required for web scraping', 400);
+  }
+
+  const robotsUrl = `${parsed.origin}/robots.txt`;
+  let response: Response;
+  try {
+    response = await fetch(robotsUrl, { headers: { 'User-Agent': userAgent } });
+  } catch (err) {
+    logger.warn('scraper web_scrape: robots.txt fetch failed, allowing crawl', {
+      robotsUrl,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!response.ok) return;
+
+  const text = await response.text();
+  const lines = text.split(/\r?\n/).map((line) => line.split('#')[0]?.trim() ?? '');
+  let applies = false;
+  const disallowed: string[] = [];
+
+  for (const line of lines) {
+    if (!line) continue;
+    const [rawKey, ...rawValue] = line.split(':');
+    const key = rawKey.trim().toLowerCase();
+    const value = rawValue.join(':').trim();
+    if (key === 'user-agent') {
+      const agent = value.toLowerCase();
+      applies = agent === '*' || userAgent.toLowerCase().includes(agent);
+      continue;
+    }
+    if (applies && key === 'disallow' && value) disallowed.push(value);
+  }
+
+  const blockedBy = disallowed.find((rule) => pathMatchesRobotsRule(parsed.pathname || '/', rule));
+  if (blockedBy) {
+    throw new AppError(`Robots.txt disallows crawling ${parsed.pathname || '/'} (rule: ${blockedBy})`, 403);
+  }
+}
+
+function assertNotBlockedResponse(response: Response, pageUrl: string): void {
+  if ([401, 403, 429].includes(response.status)) {
+    throw new AppError(`Target blocked the crawler for ${pageUrl} (HTTP ${response.status})`, response.status);
+  }
+}
+
+function assertNoCaptcha(html: string, pageUrl: string): void {
+  if (CAPTCHA_RE.test(html)) {
+    throw new AppError(`Target returned a CAPTCHA or bot-check page for ${pageUrl}`, 403);
+  }
+}
+
+async function scrapeWeb(_config: Record<string, unknown>, logId: string): Promise<{
   recordsFound: number;
   recordsImported: number;
   recordsFailed: number;
@@ -874,7 +1079,12 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
   const url = String(_config.url ?? '');
   const selectors = _config.selectors as Record<string, string> | undefined;
   const maxPages = Number(_config.maxPages) || 1;
-  const headers = _config.headers as Record<string, string> | undefined;
+  const userAgent =
+    typeof _config.userAgent === 'string' && _config.userAgent.trim()
+      ? _config.userAgent.trim()
+      : DEFAULT_CRAWLER_USER_AGENT;
+  const respectRobotsTxt = _config.respectRobotsTxt !== false;
+  const crawlDelayMs = Number(_config.crawlDelayMs) || 3000;
   // 'smart' mode is opt-in: a config without an explicit mode keeps the
   // original selector-required behaviour (backward compatible).
   const mode = _config.mode === 'smart' ? 'smart' : 'selectors';
@@ -884,15 +1094,18 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
     throw new AppError('CSS selectors are required for web scraping', 400);
   }
 
+  if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
+
   const allLeads: ScrapedLead[] = [];
-  const fetchOpts: Record<string, unknown> = {};
-  if (headers) fetchOpts.headers = headers;
+  let pagesFetched = 0;
+  const fetchOpts: RequestInit = { headers: { 'User-Agent': userAgent } };
 
   for (let page = 1; page <= maxPages; page++) {
     const pageUrl = page === 1 ? url : `${url}?page=${page}`;
     const response = await fetch(pageUrl, fetchOpts);
     // Fix: check HTTP status
     if (!response.ok) {
+      assertNotBlockedResponse(response as Response, pageUrl);
       logger.warn('scraper web_scrape: page fetch failed', {
         page,
         status: response.status,
@@ -900,7 +1113,10 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
       });
       break;
     }
+    assertNotBlockedResponse(response as Response, pageUrl);
     const html = await response.text();
+    assertNoCaptcha(html, pageUrl);
+    pagesFetched++;
     const $ = cheerio.load(html);
 
     if (mode === 'smart') {
@@ -950,16 +1166,17 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
     }
 
     if (page < maxPages) {
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, crawlDelayMs));
     }
   }
 
-  const stats = await importLeads(allLeads);
+  const stats = await importLeads(allLeads, logId);
   return {
     ...stats,
     rawResponse: {
       url,
-      pages_scraped: Math.min(maxPages, Math.ceil(allLeads.length / 10) || 1),
+      pages_scraped: pagesFetched,
+      robots_checked: respectRobotsTxt,
     },
   };
 }
@@ -968,6 +1185,7 @@ async function scrapeWeb(_config: Record<string, unknown>): Promise<{
 
 async function importLeads(
   leads: ScrapedLead[],
+  logId?: string
 ): Promise<{ recordsFound: number; recordsImported: number; recordsFailed: number }> {
   // Hoist dynamic import outside the loop — module is cached after the first call
   const { createLead } = await import('../leads/leads.service');
@@ -976,21 +1194,22 @@ async function importLeads(
   let failed = 0;
 
   for (const lead of leads) {
+    const phoneSeed = `${lead.phone ?? ''}|${lead.business_name}|${lead.location ?? ''}`;
+    const phone = lead.phone || generatePlaceholderPhone(phoneSeed);
+    const email =
+      lead.email ||
+      generatePlaceholderEmail(lead.business_name, lead.location, lead.source_platform);
+    
+    const { normalizePhone } = await import('../../shared/utils/phone');
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedEmail = email.trim().toLowerCase();
+
     try {
       const actor: {
         id: string;
         role: import('../../shared/types').UserRole;
         ipAddress?: string | null;
       } = { id: '00000000-0000-0000-0000-000000000000', role: 'admin' };
-
-      // Fix: replace the single shared +0000000000 placeholder with unique
-      // deterministic values so the phone-based dedup index doesn't falsely
-      // merge distinct businesses that have no known phone number.
-      const phoneSeed = `${lead.phone ?? ''}|${lead.business_name}|${lead.location ?? ''}`;
-      const phone = lead.phone || generatePlaceholderPhone(phoneSeed);
-      const email =
-        lead.email ||
-        generatePlaceholderEmail(lead.business_name, lead.location, lead.source_platform);
 
       await createLead(
         {
@@ -1006,7 +1225,7 @@ async function importLeads(
           source_platform: lead.source_platform,
           google_rating: lead.google_rating ?? null,
           review_count: lead.review_count ?? null,
-          tags: [lead.source_platform],
+          tags: [lead.source_platform, ...(logId ? [`scraper_log:${logId}`] : [])],
         },
         actor,
       );
@@ -1014,6 +1233,21 @@ async function importLeads(
     } catch (err) {
       // 409 means the lead already exists — count as imported (idempotent re-run)
       if (err instanceof AppError && err.statusCode === 409) {
+        if (logId) {
+          try {
+            const { findExistingForDedup, updateLead } = await import('../leads/leads.repository');
+            const existing = await findExistingForDedup(normalizedEmail, normalizedPhone, lead.source_platform);
+            if (existing) {
+              const updatedTags = Array.from(new Set([...(existing.tags || []), `scraper_log:${logId}`]));
+              await updateLead(existing.id, { tags: updatedTags });
+            }
+          } catch (updateErr) {
+            logger.warn('scraper failed to update existing lead tags', {
+              business_name: lead.business_name,
+              error: updateErr instanceof Error ? updateErr.message : String(updateErr),
+            });
+          }
+        }
         imported++;
       } else {
         failed++;

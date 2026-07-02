@@ -1,5 +1,13 @@
 import request from 'supertest';
 import express from 'express';
+
+jest.mock('../../../workers/queue', () => ({
+  Queue: jest.fn(),
+  Worker: jest.fn(),
+  getBullConnection: jest.fn(),
+  queues: {},
+}));
+
 import { errorHandler } from '../../../shared/middleware/errorHandler';
 import chatRoutes from '../../chat/chat.routes';
 import planRoutes from '../plan.routes';
