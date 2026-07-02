@@ -3,7 +3,13 @@ import { logger } from '../../shared/utils/logger';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { insertDecisionLog } from '../ai-intelligence/ai-intelligence.repository';
 import { AgentActor } from '../agent/agent.types';
-import { createPlan, createPlanStep, findPlanByIdempotencyKey, findPlanStepsByPlan } from './plan.repository';
+import {
+  createPlan,
+  createPlanStep,
+  findPlanById,
+  findPlanByIdempotencyKey,
+  findPlanStepsByPlan,
+} from './plan.repository';
 import { planSchema } from './plan.schema';
 import { PlannerError } from './errors';
 import { buildPlanIdempotencyKey } from './idempotency';
@@ -159,4 +165,31 @@ export async function createPlanFromGoal(input: {
   }).catch(() => null);
 
   return { plan, steps };
+}
+
+const COST_BY_RISK_TIER: Record<string, number> = {
+  read: 0.1,
+  low_risk_write: 1,
+  sensitive_write: 5,
+  customer_facing_write: 10,
+};
+
+export async function getPlanForPreview(planId: string): Promise<{
+  plan: PlanRow;
+  steps: PlanStepRow[];
+  estimatedCostCents: number;
+  requiresApproval: boolean;
+} | null> {
+  const plan = await findPlanById(planId);
+  if (!plan) return null;
+  const steps = await findPlanStepsByPlan(plan.id);
+  const estimatedCostCents = steps.reduce(
+    (sum, s) => sum + (COST_BY_RISK_TIER[s.risk_tier] ?? 0),
+    0,
+  );
+  const hasRiskyStep = steps.some(
+    (s) => s.risk_tier === 'sensitive_write' || s.risk_tier === 'customer_facing_write',
+  );
+  const requiresApproval = plan.autonomy_level === 'supervised' || hasRiskyStep;
+  return { plan, steps, estimatedCostCents, requiresApproval };
 }
