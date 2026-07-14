@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
-import { apiClient } from '@/api/client';
+import { apiClient, ensureAccessToken } from '@/api/client';
 import type { ApiResponse } from '@/api/client';
 import type { User } from '@/types';
 import { Layout } from '@/components/Layout';
@@ -15,10 +15,12 @@ import { LeadFormPage } from '@/pages/LeadFormPage';
 import { ImportLeadsPage } from '@/pages/ImportLeadsPage';
 import { CampaignsPage } from '@/pages/CampaignsPage';
 import { CampaignFormPage } from '@/pages/CampaignFormPage';
-import { PipelinePage } from '@/pages/PipelinePage';
+import { PipelineBoardPage } from '@/pages/PipelineBoardPage';
+import { PipelineManagePage } from '@/pages/PipelineManagePage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { UsersPage } from '@/pages/UsersPage';
 import { ReportsPage } from '@/pages/ReportsPage';
+import { TeamDashboardPage } from '@/pages/TeamDashboardPage';
 import { ScraperConfigPage } from '@/pages/ScraperConfigPage';
 import { ScoringPage } from '@/pages/ScoringPage';
 import { AssignmentsPage } from '@/pages/AssignmentsPage';
@@ -35,6 +37,15 @@ import { LeadAIProfilePage } from '@/pages/LeadAIProfilePage';
 import { CampaignBriefPage } from '@/pages/CampaignBriefPage';
 import { AIDecisionLogPage } from '@/pages/AIDecisionLogPage';
 import { CampaignDetailPage } from '@/pages/CampaignDetailPage';
+import { FormsPage } from '@/pages/FormsPage';
+import { FormBuilderPage } from '@/pages/FormBuilderPage';
+import { FormAnalyticsPage } from '@/pages/FormAnalyticsPage';
+import { ABTestPage } from '@/pages/ABTestPage';
+import { SchedulingPage } from '@/pages/SchedulingPage';
+import { PublicBookingPage } from '@/pages/PublicBookingPage';
+import { PublicFormPage } from '@/pages/PublicFormPage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ToastProvider } from '@/components/ui/Toast';
 
 const queryClient = new QueryClient({
@@ -48,13 +59,12 @@ const queryClient = new QueryClient({
 
 /**
  * AppInitializer — restores session from refreshToken on page load.
- * Calls GET /auth/me which requires a valid access token. If the access
- * token is missing (page refresh), the refresh interceptor in client.ts
- * automatically fetches a new one using the stored refreshToken before
- * this request proceeds.
+ * Refreshes the in-memory access token from the stored refresh token, then
+ * calls GET /auth/me to restore the current user. Access tokens still stay
+ * in memory only; refresh tokens remain the only persisted auth credential.
  */
 function AppInitializer({ children }: { children: React.ReactNode }) {
-  const { setUser, setAccessToken, setLoading, isLoading } = useAuthStore();
+  const { setUser, setLoading, isLoading } = useAuthStore();
 
   useEffect(() => {
     const hasRefreshToken = !!localStorage.getItem('refreshToken');
@@ -64,22 +74,14 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    apiClient
-      .get<ApiResponse<User>>('/auth/me')
+    ensureAccessToken()
+      .then(() => apiClient.get<ApiResponse<User>>('/auth/me'))
       .then((response) => {
         const user = response.data.data;
-        // The refresh interceptor has already set the in-memory access token
-        // if a token exchange was needed. We just need to mark the user as set.
         setUser({ id: user.id, name: user.name, email: user.email, role: user.role });
-        // Pull the token that was stored in the store by the interceptor
-        const storedToken = useAuthStore.getState().accessToken;
-        if (storedToken) {
-          setAccessToken(storedToken);
-        }
       })
       .catch(() => {
-        // Session could not be restored — clear stale refresh token
-        localStorage.removeItem('refreshToken');
+        setUser(null);
       })
       .finally(() => {
         setLoading(false);
@@ -113,6 +115,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <Router>
@@ -143,8 +146,10 @@ function App() {
                 <Route path="campaigns/:id/edit" element={<CampaignFormPage />} />
                 <Route path="campaigns/:id/brief" element={<CampaignBriefPage />} />
                 <Route path="admin/ai-decisions" element={<AIDecisionLogPage />} />
-                <Route path="pipelines" element={<PipelinePage />} />
+                <Route path="pipelines" element={<PipelineBoardPage />} />
+          <Route path="pipelines/manage" element={<PipelineManagePage />} />
                 <Route path="reports" element={<ReportsPage />} />
+                <Route path="team-dashboard" element={<TeamDashboardPage />} />
                 <Route path="scraper" element={<ScraperConfigPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="settings/users" element={<UsersPage />} />
@@ -158,12 +163,22 @@ function App() {
                 <Route path="templates/new" element={<TemplateFormPage />} />
                 <Route path="templates/:id/edit" element={<TemplateFormPage />} />
                 <Route path="settings/custom-fields" element={<CustomFieldsPage />} />
+                <Route path="forms" element={<FormsPage />} />
+                <Route path="forms/new" element={<FormBuilderPage />} />
+                <Route path="forms/:id/edit" element={<FormBuilderPage />} />
+                <Route path="forms/:id/analytics" element={<FormAnalyticsPage />} />
+                <Route path="ab-testing" element={<ABTestPage />} />
+                <Route path="scheduling" element={<SchedulingPage />} />
               </Route>
+              <Route path="/forms/:slug" element={<PublicFormPage />} />
+              <Route path="/book/:slug" element={<PublicBookingPage />} />
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AppInitializer>
         </Router>
       </ToastProvider>
     </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

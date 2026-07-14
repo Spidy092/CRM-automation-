@@ -35,6 +35,8 @@
   - `src/modules/templates/` — Template CRUD, approval workflow
   - `src/modules/integrations/` — WhatsApp, Twilio, SendGrid, Google Ads, Facebook
   - `src/modules/reports/` — Analytics, dashboards, exports
+  - `src/modules/team-metrics/` — Team dashboard, per-member aggregates, response-time tracking
+  - `src/modules/activities/` — Lead-scoped activity timeline, stage/assignment auto-logging
   - `src/modules/scraper/` — Google Business, Facebook, YouTube crawlers
   - `src/modules/ai-intelligence/` — *(Phase 2)* Lead AI profiles, memory, research agent, decision log
   - `src/modules/ai-reply/` — *(Phase 2)* Inbound reply classifier, intent detection, draft generator
@@ -70,6 +72,8 @@
 | Sprint 4 | Week 7–8 | Intelligence — AI Personalization, Scrapers, Dashboards, UAT | 🟢 ~90% | reports, scraper modules fully implemented with tests. AI settings module done. `outreach.prompt.ts` handles OpenAI personalization. DLQ routing implemented (`lib/dlq.ts`). Prometheus counters on all 5 workers. Sentry wired (`initSentry()` in `index.ts`). `docker-compose.prod.yml` + `.env.prod.example` created. Remaining: Sentry not verified with real DSN, backend test coverage below 70% target. |
 
 ### Phase 2 — AI Sales Operator (Weeks 9–16) — 🟡 ~10–15% Scaffolded
+
+> **Feature 3 (Team Dashboard + Response Time Tracking) and Feature 4 (Activity Timeline)** are implemented end-to-end in this branch: `GET /api/v1/team/metrics`, `GET/POST /api/v1/leads/:id/activities`, auto-logging of stage/assignment changes, and LeadDetailPage timeline UI. See `src/modules/team-metrics/` and `src/modules/activities/`.
 
 > **Full spec:** `docs/phase-2-ai-sales-operator.md` — read before implementing anything in Phase 2.
 

@@ -2,6 +2,7 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { clampLimit } from '../../shared/utils/pagination';
 import { enqueueReportExport } from '../../workers/queue';
+import { getOrComputeReport } from './reports.cache';
 import {
   findAvailableReports,
   findDashboardMetrics,
@@ -9,6 +10,8 @@ import {
   findOutreachReport,
   findPipelineReport,
   findSalesRepReport,
+  findCampaignAnalytics,
+  findIntegrationHealth,
 } from './reports.repository';
 import {
   ReportActor,
@@ -19,6 +22,9 @@ import {
   OutreachPerformanceRow,
   PipelineConversionRow,
   SalesRepPerformanceRow,
+  CampaignAnalyticsRow,
+  IntegrationHealthRow,
+  AnalyticsCacheKey,
   ExportJobInput,
   ExportJobResult,
   ReportStub,
@@ -105,6 +111,34 @@ export async function getSalesRepReport(
     items,
     meta: { limit, offset, total: rows.length },
   };
+}
+
+export async function getCampaignAnalyticsReport(
+  filters: ReportListFilters,
+  actor: ReportActor,
+): Promise<PaginatedResult<CampaignAnalyticsRow>> {
+  const limit = clampLimit(filters.limit);
+  const offset = filters.offset ?? 0;
+  const cacheKey: AnalyticsCacheKey = `campaigns:${actor.role}:${filters.startDate ?? 'all'}:${filters.endDate ?? 'all'}`;
+  const cached = await getOrComputeReport<CampaignAnalyticsRow[]>(cacheKey, () =>
+    findCampaignAnalytics(filters, actor.id, actor.role),
+  );
+  const rows = cached.data;
+  const items = rows.slice(offset, offset + limit);
+  return {
+    items,
+    meta: { limit, offset, total: rows.length },
+  };
+}
+
+export async function getIntegrationHealthReport(
+  actor: ReportActor,
+): Promise<IntegrationHealthRow[]> {
+  const cacheKey: AnalyticsCacheKey = `integrations:${actor.role}`;
+  const cached = await getOrComputeReport<IntegrationHealthRow[]>(cacheKey, () =>
+    findIntegrationHealth(),
+  );
+  return cached.data;
 }
 
 export async function enqueueExportJob(

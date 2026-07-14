@@ -4,6 +4,7 @@ import {
   findInboxItems,
   countInboxItems,
   findInboxItemById,
+  findPendingInboxItemByAgentActionId,
   actionInboxItem,
   autoResolveItemsForLead,
   expireGuardedItems,
@@ -179,6 +180,28 @@ describe('findInboxItemById', () => {
     mockedQueryOne.mockResolvedValue(null);
 
     const result = await findInboxItemById('missing');
+
+    expect(result).toBeNull();
+  });
+});
+
+describe('findPendingInboxItemByAgentActionId', () => {
+  it('returns the pending item when found', async () => {
+    const item = makeItem({ agent_action_id: 'action-1' });
+    mockedQueryOne.mockResolvedValue(item);
+
+    const result = await findPendingInboxItemByAgentActionId('action-1');
+
+    expect(result).toEqual(item);
+    expect(mockedQueryOne).toHaveBeenCalledWith(expect.stringContaining("status = 'pending'"), [
+      'action-1',
+    ]);
+  });
+
+  it('returns null when no pending item is linked', async () => {
+    mockedQueryOne.mockResolvedValue(null);
+
+    const result = await findPendingInboxItemByAgentActionId('action-missing');
 
     expect(result).toBeNull();
   });

@@ -155,7 +155,13 @@ function evaluateCondition(
   // Numeric threshold: {"gte": N} — compare lead[factor] against N
   if ('gte' in condition) {
     const value = leadRecord[factor];
-    return value !== null && value !== undefined && value !== '' && !Number.isNaN(Number(value)) && Number(value) >= Number(condition.gte);
+    return (
+      value !== null &&
+      value !== undefined &&
+      value !== '' &&
+      !Number.isNaN(Number(value)) &&
+      Number(value) >= Number(condition.gte)
+    );
   }
 
   // Field existence: {"exists": "fieldName"} — check lead[fieldName] is truthy

@@ -2,7 +2,7 @@ import type OpenAI from 'openai';
 import { AGENT_ACTIONS } from '../agent/agent.actions';
 import type { AgentActionName } from '../agent/agent.types';
 
-const actionParameters: Record<AgentActionName, Record<string, unknown>> = {
+export const actionParameters: Record<AgentActionName, Record<string, unknown>> = {
   'lead.list': {
     type: 'object',
     properties: {
@@ -44,6 +44,75 @@ const actionParameters: Record<AgentActionName, Record<string, unknown>> = {
     required: ['leadId', 'newUserId', 'reason'],
   },
   'report.dashboard': { type: 'object', properties: {} },
+  'template.list': {
+    type: 'object',
+    properties: {
+      limit: { type: 'number' },
+      channel: { type: 'string', enum: ['whatsapp', 'email', 'sms', 'phone_call'] },
+      approval_status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
+      search: { type: 'string' },
+    },
+  },
+  'template.create': {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      channel: { type: 'string', enum: ['whatsapp', 'email', 'sms', 'phone_call'] },
+      subject: { type: 'string', description: 'Email subject line (email channel only)' },
+      body: { type: 'string', description: 'Message body; may include {{variable}} placeholders' },
+      variables: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['name', 'channel', 'body'],
+  },
+  'sequence.create': {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      description: { type: 'string' },
+      is_active: { type: 'boolean' },
+      steps: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            stepNumber: { type: 'number' },
+            channel: { type: 'string', enum: ['whatsapp', 'email', 'sms', 'phone_call'] },
+            delayHours: { type: 'number' },
+            templateId: { type: 'string', description: 'UUID of an existing template' },
+          },
+          required: ['stepNumber', 'channel', 'delayHours', 'templateId'],
+        },
+      },
+    },
+    required: ['name', 'steps'],
+  },
+  'campaign.create': {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      tone: { type: 'string', enum: ['formal', 'professional', 'conversational'] },
+      target_industries: { type: 'array', items: { type: 'string' } },
+      target_countries: { type: 'array', items: { type: 'string' } },
+      sequence_id: { type: 'string', description: 'UUID of an existing sequence' },
+      pipeline_id: { type: 'string', description: 'UUID of an existing pipeline' },
+      ai_personalization_enabled: { type: 'boolean' },
+    },
+    required: ['name'],
+  },
+  'campaign.add_leads': {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'Campaign UUID' },
+      lead_ids: { type: 'array', items: { type: 'string' }, description: 'Lead UUIDs to add' },
+    },
+    required: ['id', 'lead_ids'],
+  },
+  'pipeline.list': { type: 'object', properties: {} },
+  'sequence.list': {
+    type: 'object',
+    properties: { limit: { type: 'number' }, offset: { type: 'number' } },
+  },
+  'scraper.list': { type: 'object', properties: {} },
   'scraper.run': {
     type: 'object',
     properties: { configId: { type: 'string' } },

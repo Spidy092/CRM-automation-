@@ -15,6 +15,7 @@ import {
   removeLead,
   getCampaignLeads,
   getStats,
+  retryLeadOutreachStep,
 } from './campaigns.service';
 import { createCampaignSchema, updateCampaignSchema, addLeadsSchema } from './campaigns.schema';
 
@@ -177,6 +178,19 @@ export async function listCampaignLeadsHandler(
   try {
     const leadIds = await getCampaignLeads(req.params.id);
     sendSuccess(res, leadIds);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function retryLeadOutreachStepHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const result = await retryLeadOutreachStep(req.params.id, req.params.leadId, actorFromReq(req));
+    sendSuccess(res, result);
   } catch (err) {
     next(err);
   }

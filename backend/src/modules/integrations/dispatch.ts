@@ -23,6 +23,16 @@ import * as twilio from './twilio/twilio.connector';
 import * as sendgrid from './sendgrid/sendgrid.connector';
 import * as smtp from './smtp/smtp.connector';
 import { OpenWACredentials } from './openwa/openwa.types';
+import { buildTrackingPixel, rewriteLinksForTracking } from '../tracking/tracking.utils';
+
+export interface DispatchAttachment {
+  filename: string;
+  mimeType: string;
+  /** Public URL — the only form WhatsApp Cloud API can use (it fetches the file itself). */
+  url: string;
+  /** Absolute local disk path — used by SMTP/SendGrid to read the file directly. */
+  storagePath: string;
+}
 
 export interface DispatchInput {
   leadId: string;
@@ -38,6 +48,12 @@ export interface DispatchInput {
   subject?: string;
   /** When true, skip the live API call and simulate success. */
   mockMode: boolean;
+  /** Outreach log ID — used for email open/click tracking. */
+  logId?: string;
+  /** Files attached to the template driving this send (email attachments /
+   *  WhatsApp media). Not supported for SMS (MMS) or the OpenWA fallback path
+   *  — see the 'whatsapp' case below for why. */
+  attachments?: DispatchAttachment[];
 }
 
 export interface DispatchOutcome {
@@ -70,50 +86,63 @@ export async function dispatchOutbound(input: DispatchInput): Promise<DispatchOu
   try {
     switch (input.channel) {
       case 'whatsapp': {
-        try {
-          const openwaIntegration = await loadOpenwaIntegrationIfEnabled();
-          if (openwaIntegration) {
-            const res = await openwa.sendMessage({
-              credentials: openwaIntegration.credentials,
-              leadId: input.leadId,
-              campaignId: input.campaignId,
-              to: input.destination,
-              body: input.body,
-              integrationId: openwaIntegration.integrationId,
-            });
-            if (res.ok) {
+        // OpenWA has no documented/verified media-send endpoint in this codebase
+        // (only /messages/send-text exists) — attachments only go out through
+        // the official Cloud API path below, never through OpenWA.
+        if (!input.attachments || input.attachments.length === 0) {
+          try {
+            const openwaIntegration = await loadOpenwaIntegrationIfEnabled();
+            if (openwaIntegration) {
+              const res = await openwa.sendMessage({
+                credentials: openwaIntegration.credentials,
+                leadId: input.leadId,
+                campaignId: input.campaignId,
+                to: input.destination,
+                body: input.body,
+                integrationId: openwaIntegration.integrationId,
+              });
+              if (res.ok) {
+                return {
+                  ok: true,
+                  externalId: res.data.messageId,
+                  latencyMs: res.latencyMs,
+                  retryable: false,
+                  channel: 'openwa',
+                };
+              }
               return {
-                ok: true,
-                externalId: res.data.messageId,
+                ok: false,
                 latencyMs: res.latencyMs,
-                retryable: false,
+                retryable: res.retryable === true,
+                error: res.error,
                 channel: 'openwa',
               };
             }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'OpenWA dispatch error';
             return {
               ok: false,
-              latencyMs: res.latencyMs,
-              retryable: res.retryable === true,
-              error: res.error,
+              latencyMs: Date.now() - startedAt,
+              retryable: false,
+              error: message,
               channel: 'openwa',
             };
           }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : 'OpenWA dispatch error';
-          return {
-            ok: false,
-            latencyMs: Date.now() - startedAt,
-            retryable: false,
-            error: message,
-            channel: 'openwa',
-          };
         }
 
+        const firstAttachment = input.attachments?.[0];
         const res = await whatsapp.sendMessage({
           leadId: input.leadId,
           campaignId: input.campaignId,
           to: input.destination,
           body: input.body,
+          media: firstAttachment
+            ? {
+                url: firstAttachment.url,
+                mimeType: firstAttachment.mimeType,
+                filename: firstAttachment.filename,
+              }
+            : undefined,
         });
         return mapOutcome(res, startedAt, 'whatsapp');
       }
@@ -127,14 +156,47 @@ export async function dispatchOutbound(input: DispatchInput): Promise<DispatchOu
         return mapOutcome(res, startedAt);
       }
       case 'email': {
+        // Inject email tracking: pixel + link rewriting
+        let emailBody = input.body;
+        const baseUrl = process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
+        if (input.logId) {
+          const pixel = buildTrackingPixel(input.logId, baseUrl);
+          // Inject pixel before </body> or at end of HTML
+          if (emailBody.toLowerCase().includes('</body>')) {
+            emailBody = emailBody.replace(/<\/body>/i, `${pixel}</body>`);
+          } else {
+            emailBody += pixel;
+          }
+          // Rewrite links through click tracker
+          const { rewritten } = rewriteLinksForTracking(emailBody, input.logId, baseUrl);
+          emailBody = rewritten;
+        }
+
         // Try SendGrid first; fall back to SMTP if SendGrid is not configured.
-        const sgRes = await sendgrid.sendEmail({
-          leadId: input.leadId,
-          campaignId: input.campaignId,
-          to: input.destination,
-          subject: input.subject ?? '(no subject)',
-          htmlBody: input.body,
-        });
+        let sgRes:
+          | { ok: true; externalId?: string; latencyMs: number }
+          | { ok: false; error: string; latencyMs: number };
+        try {
+          const r = await sendgrid.sendEmail({
+            leadId: input.leadId,
+            campaignId: input.campaignId,
+            to: input.destination,
+            subject: input.subject ?? '(no subject)',
+            htmlBody: emailBody,
+            attachments: input.attachments,
+          });
+          if (r.ok) {
+            sgRes = { ok: true, externalId: r.externalId, latencyMs: r.latencyMs };
+          } else {
+            sgRes = { ok: false, error: r.error, latencyMs: r.latencyMs };
+          }
+        } catch (err) {
+          sgRes = {
+            ok: false,
+            error: err instanceof Error ? err.message : 'unknown error',
+            latencyMs: Date.now() - startedAt,
+          };
+        }
         if (sgRes.ok) return mapOutcome(sgRes, startedAt);
 
         // SendGrid failed — check if it was a config issue, then try SMTP.
@@ -153,7 +215,8 @@ export async function dispatchOutbound(input: DispatchInput): Promise<DispatchOu
             campaignId: input.campaignId,
             to: input.destination,
             subject: input.subject ?? '(no subject)',
-            htmlBody: input.body,
+            htmlBody: emailBody,
+            attachments: input.attachments,
           });
           return mapOutcome(smtpRes, startedAt);
         }

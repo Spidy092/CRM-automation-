@@ -9,13 +9,10 @@
  *   Health check: GET  {baseUrl}/api/sessions/{sessionId}/health
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- TODO: refactor away from `any` casts (legacy debt) */
 import { AppError } from '../../../shared/middleware/errorHandler';
 import { loggedFetch, type ConnectorResult, type ConnectorChannel } from '../connector.base';
-import {
-  OpenWACredentials,
-  OpenWASendResponse,
-  openWACredentialsSchema,
-} from './openwa.types';
+import { OpenWACredentials, OpenWASendResponse, openWACredentialsSchema } from './openwa.types';
 import {
   buildAntiBanConfig,
   cooldown,
@@ -206,7 +203,7 @@ export async function sendMessage(
     const resList = await loggedFetch<any[]>(
       listUrl,
       { method: 'GET', headers: { 'x-api-key': credentials.apiKey } },
-      { channel: OPENWA_CHANNEL }
+      { channel: OPENWA_CHANNEL },
     );
     if (resList.ok && Array.isArray(resList.data)) {
       const match = resList.data.find((s) => s.name === actualSessionId);
@@ -216,9 +213,7 @@ export async function sendMessage(
     }
   }
 
-  const url = `${baseUrl}/api/sessions/${encodeURIComponent(
-    actualSessionId,
-  )}/messages/send-text`;
+  const url = `${baseUrl}/api/sessions/${encodeURIComponent(actualSessionId)}/messages/send-text`;
 
   const res = await loggedFetch<OpenWASendResponse>(
     url,
@@ -281,7 +276,7 @@ export async function healthCheck(input: {
 }): Promise<ConnectorResult<{ status: string }>> {
   const { credentials } = input;
   const baseUrl = credentials.baseUrl.replace(/\/+$/, '');
-  
+
   // We fetch the list of all sessions instead of a single session.
   // This supports cases where the user configures the integration using the session "name"
   // rather than the UUID, which is common.
@@ -317,7 +312,7 @@ export async function healthCheck(input: {
 
   const sessions = Array.isArray(res.data) ? res.data : [];
   const session = sessions.find(
-    (s) => s.id === credentials.sessionId || s.name === credentials.sessionId
+    (s) => s.id === credentials.sessionId || s.name === credentials.sessionId,
   );
 
   if (!session) {

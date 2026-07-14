@@ -8,6 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Save, UserCheck } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 
@@ -38,14 +41,12 @@ export function AssignmentsPage() {
   };
 
   if (isConfigLoading || isUsersLoading) {
-    return <div>Loading...</div>;
+    return <LoadingSpinner />;
   }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-900">Lead Assignments</h1>
-      </div>
+      <PageHeader title="Lead Assignments" eyebrow="Automation" />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Round Robin Config */}
@@ -63,7 +64,7 @@ export function AssignmentsPage() {
                 id="is_enabled"
                 checked={isEnabled ?? false}
                 onChange={(e) => setIsEnabled(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-slate-300"
               />
               <Label htmlFor="is_enabled">Enable Automatic Assignments</Label>
             </div>
@@ -117,9 +118,11 @@ export function AssignmentsPage() {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-slate-500 text-center py-4">
-                  No eligible users found for assignment.
-                </p>
+                <EmptyState
+                  icon={<UserCheck className="h-6 w-6" />}
+                  title="No eligible users"
+                  description="No eligible users found for assignment."
+                />
               )}
             </div>
           </CardContent>

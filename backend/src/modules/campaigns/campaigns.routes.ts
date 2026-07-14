@@ -17,6 +17,7 @@ import {
   removeLeadHandler,
   listCampaignLeadsHandler,
   getCampaignStatsHandler,
+  retryLeadOutreachStepHandler,
 } from './campaigns.controller';
 
 const router = Router();
@@ -46,5 +47,10 @@ router.delete(
 );
 router.get('/:id/leads', wrap(listCampaignLeadsHandler));
 router.get('/:id/stats', wrap(getCampaignStatsHandler));
+router.post(
+  '/:id/leads/:leadId/retry',
+  authorize('admin', 'manager', 'sales'),
+  wrap(retryLeadOutreachStepHandler),
+);
 
 export { router as campaignsRoutes };

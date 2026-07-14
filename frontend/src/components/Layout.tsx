@@ -11,6 +11,7 @@ import {
   X,
   GitBranch,
   BarChart3,
+  UsersRound,
   Search,
   ListOrdered,
   Plug,
@@ -20,6 +21,9 @@ import {
   Zap,
   Inbox,
   Brain,
+  FormInput,
+  FlaskConical,
+  CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/ui/NotificationBell';
@@ -35,7 +39,11 @@ const navigation = [
   { name: 'Campaigns', href: '/campaigns', icon: FileText, group: 'Automation' },
   { name: 'Sequences', href: '/outreach/sequences', icon: ListOrdered, group: 'Automation' },
   { name: 'Templates', href: '/templates', icon: MessageSquare, group: 'Automation' },
+  { name: 'A/B Testing', href: '/ab-testing', icon: FlaskConical, group: 'Automation' },
+  { name: 'Web Forms', href: '/forms', icon: FormInput, group: 'Automation' },
+  { name: 'Scheduling', href: '/scheduling', icon: CalendarDays, group: 'Automation' },
   { name: 'Reports', href: '/reports', icon: BarChart3, group: 'Intelligence' },
+  { name: 'Team Dashboard', href: '/team-dashboard', icon: UsersRound, group: 'Intelligence' },
   { name: 'Scrapers', href: '/scraper', icon: Search, group: 'Intelligence' },
   { name: 'Settings', href: '/settings', icon: Settings, group: 'Admin' },
   { name: 'Custom Fields', href: '/settings/custom-fields', icon: SlidersHorizontal, group: 'Admin' },
@@ -84,6 +92,7 @@ export function Layout() {
             </span>
           </Link>
           <button
+            type="button"
             className="rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:hidden"
             onClick={() => setSidebarOpen(false)}
             aria-label="Close sidebar"
@@ -136,6 +145,7 @@ export function Layout() {
                 <p className="truncate text-xs capitalize text-slate-500">{user?.role}</p>
               </div>
               <button
+                type="button"
                 onClick={logout}
                 aria-label="Sign out"
                 className="rounded-md p-2 text-slate-500 transition-colors hover:bg-white hover:text-red-600"
@@ -151,6 +161,7 @@ export function Layout() {
         <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur md:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
+              type="button"
               aria-label="Open sidebar"
               className="rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:hidden"
               onClick={() => setSidebarOpen(true)}

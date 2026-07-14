@@ -12,6 +12,7 @@ import {
 import type { PlanStepRow, PlanStatus } from './plan.types';
 import { RunnerError, StepAwaitingApproval, StepRejected } from './errors';
 import { topoSortIntoWaves } from './runner.topo';
+import { resolveStepArgs } from './plan.refs';
 import { createBudgetTracker } from './runner.budget';
 import {
   incPlanSucceeded,
@@ -66,6 +67,15 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
 
   const waves = topoSortIntoWaves(steps);
 
+  // Results of already-succeeded steps (e.g. after an approval resume) plus
+  // steps completed during this run, for $steps.N.path arg references.
+  const resultsByIndex = new Map<number, Record<string, unknown> | null>();
+  for (const step of steps) {
+    if (step.status === 'succeeded') {
+      resultsByIndex.set(step.step_index, step.result);
+    }
+  }
+
   async function runStep(step: PlanStepRow): Promise<void> {
     if (step.status !== 'pending' && step.status !== 'running') {
       return;
@@ -79,7 +89,7 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
       const proposal = await proposeAgentAction({
         source: plan.source,
         actionName: step.action_name,
-        args: step.action_args,
+        args: resolveStepArgs(step.action_args, resultsByIndex),
         actor,
         sourceMessage: plan.source_message ?? null,
         confidence: plan.confidence,
@@ -112,6 +122,7 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
       }
 
       const result = (proposal.action?.result ?? proposal.result ?? {}) as Record<string, unknown>;
+      resultsByIndex.set(step.step_index, result);
       await updatePlanStepStatus(step.id, 'succeeded', {
         result,
         agentActionId: proposal.action?.id ?? null,
@@ -136,20 +147,26 @@ export async function executePlan(planId: string, actor: AgentActor): Promise<Pl
   try {
     for (const wave of waves) {
       const executable = wave.filter((s) => s.status === 'pending' || s.status === 'running');
-      if (executable.length === 0) {
-        continue;
+
+      if (executable.length > 0) {
+        const results = await Promise.allSettled(executable.map((step) => runStep(step)));
+
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            if (result.reason instanceof StepAwaitingApproval) {
+              await updatePlanStatus(planId, 'paused_for_approval');
+              return { planId, status: 'paused_for_approval', errorMessage: null };
+            }
+            throw result.reason;
+          }
+        }
       }
 
-      const results = await Promise.allSettled(executable.map((step) => runStep(step)));
-
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          if (result.reason instanceof StepAwaitingApproval) {
-            await updatePlanStatus(planId, 'paused_for_approval');
-            return { planId, status: 'paused_for_approval', errorMessage: null };
-          }
-          throw result.reason;
-        }
+      // Steps still awaiting approval from an earlier run are not executable,
+      // but later waves may depend on their results — never advance past them.
+      if (wave.some((s) => s.status === 'pending_approval')) {
+        await updatePlanStatus(planId, 'paused_for_approval');
+        return { planId, status: 'paused_for_approval', errorMessage: null };
       }
     }
 

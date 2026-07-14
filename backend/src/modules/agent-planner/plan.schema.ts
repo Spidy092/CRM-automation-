@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { agentActionNameSchema } from '../agent/agent.schema';
 import { getAgentActionDefinition } from '../agent/agent.actions';
 import type { AgentRiskTier } from '../agent/agent.types';
+import { collectStepRefs } from './plan.refs';
 
 // The `agent/` module exposes `AgentRiskTier` as a TS union in `agent.types.ts`
 // but does not export a Zod schema for it. We define one locally so plan steps
@@ -98,6 +99,31 @@ export const planSchema = z
           message: `step ${step.step_index}: risk_tier ${step.risk_tier} does not match action definition ${definition.riskTier}`,
         });
         return;
+      }
+
+      // Steps whose args reference earlier step outputs ($steps.N.path) cannot
+      // be validated against the action schema until the runner substitutes the
+      // real values — validate the references here and defer arg validation to
+      // execution time (proposeAgentAction re-parses args after substitution).
+      const refs = collectStepRefs(step.action_args);
+      if (refs.length > 0) {
+        for (const ref of refs) {
+          if (ref === step.step_index || ref < 0 || ref >= plan.steps.length) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `step ${step.step_index}: $steps.${ref} reference is out of range or self-referential`,
+            });
+            return;
+          }
+          if (!step.depends_on.includes(ref)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `step ${step.step_index}: references $steps.${ref} but does not declare it in depends_on`,
+            });
+            return;
+          }
+        }
+        continue;
       }
 
       const parsed = (definition.schema as unknown as z.ZodTypeAny).safeParse(step.action_args);

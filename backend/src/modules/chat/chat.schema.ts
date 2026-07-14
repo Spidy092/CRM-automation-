@@ -31,8 +31,8 @@ const pageContextSchema = z.object({
         type: visibleRecordTypeSchema,
         id: z.string().uuid(),
         name: z.string().min(1).max(160),
-        status: z.string().min(1).max(80).optional(),
-        subtitle: z.string().min(1).max(200).optional(),
+        status: z.string().max(80).optional(),
+        subtitle: z.string().max(200).optional(),
         meta: visibleRecordMetaSchema.optional(),
       }),
     )

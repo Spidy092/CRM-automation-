@@ -9,6 +9,7 @@ import {
   createSequenceHandler,
   updateSequenceHandler,
   deleteSequenceHandler,
+  getSequenceStatsHandler,
   getLeadTimelineHandler,
   getLeadLogsHandler,
   listTasksHandler,
@@ -24,6 +25,7 @@ router.use(authenticate, authenticatedLimiter);
 // Sequences
 router.get('/sequences', wrap(listSequencesHandler));
 router.get('/sequences/:id', wrap(getSequenceHandler));
+router.get('/sequences/:id/stats', wrap(getSequenceStatsHandler));
 router.post('/sequences', authorize('admin', 'marketing'), wrap(createSequenceHandler));
 router.put('/sequences/:id', authorize('admin', 'marketing'), wrap(updateSequenceHandler));
 router.delete('/sequences/:id', authorize('admin', 'marketing'), wrap(deleteSequenceHandler));

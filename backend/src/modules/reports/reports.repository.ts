@@ -6,6 +6,8 @@ import {
   OutreachPerformanceRow,
   PipelineConversionRow,
   SalesRepPerformanceRow,
+  CampaignAnalyticsRow,
+  IntegrationHealthRow,
   ReportListFilters,
   ReportStub,
 } from './reports.types';
@@ -184,6 +186,33 @@ function getDateRangeClause(
   return { clause: conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '', params };
 }
 
+function getSalesRepDateClause(
+  filters: ReportListFilters,
+  paramOffset: number = 0,
+): { clause: string; params: unknown[] } {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filters.startDate) {
+    params.push(filters.startDate);
+    conditions.push(
+      `l.created_at >= $${paramOffset + params.length} OR (l.status = 'won' AND l.updated_at >= $${paramOffset + params.length})`,
+    );
+  }
+  if (filters.endDate) {
+    params.push(`${filters.endDate}T23:59:59.999Z`);
+    conditions.push(
+      `l.created_at <= $${paramOffset + params.length} OR (l.status = 'won' AND l.updated_at <= $${paramOffset + params.length})`,
+    );
+  }
+  if (conditions.length === 0) {
+    return { clause: '', params: [] };
+  }
+  return {
+    clause: ` AND (l.id IS NULL OR (${conditions.join(' AND ')}))`,
+    params,
+  };
+}
+
 export async function findLeadGenerationReport(
   filters: ReportListFilters,
   actorId: string,
@@ -199,17 +228,26 @@ export async function findLeadGenerationReport(
   const where = `${leadWhere}${dateClause}`;
 
   const sql = `
-    SELECT DATE(l.created_at) as date, l.source_platform as source, COUNT(*) as count
+    SELECT
+      DATE(l.created_at) as date,
+      l.source_platform as source,
+      COUNT(*) as count,
+      COUNT(*) FILTER (WHERE l.classification IN ('hot', 'warm') OR l.status = 'active') as qualified_count,
+      COALESCE(100.0 * COUNT(*) FILTER (WHERE l.status = 'won') / NULLIF(COUNT(*), 0), 0) as conversion_rate
     FROM leads l
     WHERE ${where}
     GROUP BY DATE(l.created_at), l.source_platform
     ORDER BY date DESC
   `;
-  const result = await pool.query<LeadGenerationRow & { count: string }>(sql, params);
+  const result = await pool.query<
+    LeadGenerationRow & { count: string; qualified_count: string; conversion_rate: string }
+  >(sql, params);
   return result.rows.map((row) => ({
     date: String(row.date),
     source: row.source,
     count: parseInt(row.count, 10),
+    qualifiedCount: parseInt(row.qualified_count ?? '0', 10),
+    conversionRate: parseFloat(row.conversion_rate ?? '0'),
   }));
 }
 
@@ -223,11 +261,11 @@ export async function findOutreachReport(
   const conditions: string[] = [];
   if (filters.startDate) {
     dateParams.push(filters.startDate);
-    conditions.push(`ol.created_at >= $${leadParams.length + dateParams.length}`);
+    conditions.push(`ol.sent_at >= $${leadParams.length + dateParams.length}`);
   }
   if (filters.endDate) {
     dateParams.push(`${filters.endDate}T23:59:59.999Z`);
-    conditions.push(`ol.created_at <= $${leadParams.length + dateParams.length}`);
+    conditions.push(`ol.sent_at <= $${leadParams.length + dateParams.length}`);
   }
   const dateClause = conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '';
   const params = [...leadParams, ...dateParams];
@@ -239,19 +277,22 @@ export async function findOutreachReport(
 
   const sql = `
     SELECT
-      DATE(ol.created_at) as date,
+      DATE(ol.sent_at) as date,
       ol.channel,
       COUNT(*) FILTER (WHERE ol.status = 'sent') as sent,
       COUNT(*) FILTER (WHERE ol.status = 'delivered') as delivered,
       COUNT(*) FILTER (WHERE ol.status = 'opened') as opened,
       COUNT(*) FILTER (WHERE ol.status = 'replied') as replied,
-      COUNT(*) FILTER (WHERE ol.status = 'failed') as failed
+      COUNT(*) FILTER (WHERE ol.status = 'failed') as failed,
+      COUNT(*) FILTER (WHERE ol.status = 'bounced') as bounced,
+      COALESCE(100.0 * COUNT(*) FILTER (WHERE ol.status = 'replied')
+        / NULLIF(COUNT(*) FILTER (WHERE ol.status = 'sent'), 0), 0) as response_rate
     FROM outreach_logs ol
     ${joinClause}
-    WHERE ol.status IN ('sent', 'delivered', 'opened', 'replied', 'failed')
-      ${actorRole === 'sales' ? '' : `AND EXISTS (SELECT 1 FROM leads l2 WHERE l2.id = ol.lead_id AND ${leadWhere})`}
+    WHERE ol.status IN ('sent', 'delivered', 'opened', 'replied', 'failed', 'bounced')
+      ${actorRole === 'sales' ? `AND ${leadWhere}` : `AND EXISTS (SELECT 1 FROM leads l2 WHERE l2.id = ol.lead_id AND ${leadWhere})`}
       ${dateClause}
-    GROUP BY DATE(ol.created_at), ol.channel
+    GROUP BY DATE(ol.sent_at), ol.channel
     ORDER BY date DESC
   `;
   const result = await pool.query<{
@@ -262,6 +303,8 @@ export async function findOutreachReport(
     opened: string;
     replied: string;
     failed: string;
+    bounced: string;
+    response_rate: string;
   }>(sql, params);
   return result.rows.map((row) => ({
     date: String(row.date),
@@ -271,15 +314,24 @@ export async function findOutreachReport(
     opened: parseInt(row.opened ?? '0', 10),
     replied: parseInt(row.replied ?? '0', 10),
     failed: parseInt(row.failed ?? '0', 10),
+    bounced: parseInt(row.bounced ?? '0', 10),
+    responseRate: parseFloat(row.response_rate ?? '0'),
   }));
 }
 
 export async function findPipelineReport(
-  _filters: ReportListFilters,
+  filters: ReportListFilters,
   actorId: string,
   actorRole: string,
 ): Promise<PipelineConversionRow[]> {
-  const { clause: leadWhere, params } = getLeadWhere(actorRole, actorId);
+  const { clause: leadWhere, params: leadParams } = getLeadWhere(actorRole, actorId);
+  const { clause: dateClause, params: dateParams } = getDateRangeClause(
+    'l',
+    filters,
+    leadParams.length,
+  );
+  const params = [...leadParams, ...dateParams];
+  const where = `${leadWhere}${dateClause}`;
 
   const sql = `
     SELECT
@@ -289,36 +341,55 @@ export async function findPipelineReport(
         / NULLIF(COUNT(l.id) FILTER (WHERE l.status IN ('active', 'won', 'lost')), 0), 0) as conversionRate,
       COALESCE(AVG(
         EXTRACT(EPOCH FROM (l.updated_at - l.created_at)) / 86400
-      ) FILTER (WHERE l.status = 'won'), 0)::numeric as avgDays
+      ) FILTER (WHERE l.status = 'won'), 0)::numeric as avgDays,
+      COALESCE(AVG(
+        EXTRACT(EPOCH FROM (l.updated_at - l.created_at)) / 86400
+      ) FILTER (WHERE l.status IN ('active', 'won', 'lost')), 0)::numeric as avgDaysInStage,
+      COALESCE(100.0 * COUNT(l.id) FILTER (WHERE l.status = 'lost')
+        / NULLIF(COUNT(l.id), 0), 0) as dropOffRate
     FROM leads l
     JOIN pipeline_stages ps ON l.pipeline_stage_id = ps.id
-    WHERE ${leadWhere}
+    WHERE ${where}
     GROUP BY ps.name, ps.position
     ORDER BY ps.position
   `;
   const result = await pool.query<
-    PipelineConversionRow & { leadCount: string; conversionRate: string; avgDays: string }
+    PipelineConversionRow & {
+      leadCount: string;
+      conversionRate: string;
+      avgDays: string;
+      avgDaysInStage: string;
+      dropOffRate: string;
+    }
   >(sql, params);
   return result.rows.map((row) => ({
     stageName: row.stageName,
     leadCount: parseInt(row.leadCount, 10),
     conversionRate: parseFloat(row.conversionRate),
-    avgDays: parseFloat(row.avgDays),
+    avgDays: parseFloat(row.avgDays ?? '0'),
+    avgDaysInStage: parseFloat(row.avgDaysInStage ?? '0'),
+    dropOffRate: parseFloat(row.dropOffRate ?? '0'),
   }));
 }
 
 export async function findSalesRepReport(
-  _filters: ReportListFilters,
+  filters: ReportListFilters,
   actorId: string,
   actorRole: string,
 ): Promise<SalesRepPerformanceRow[]> {
   // Sales reps only see their own record; managers/admins see all reps
   let whereClause = "u.role = 'sales'";
-  const params: unknown[] = [];
+  const whereParams: unknown[] = [];
   if (actorRole === 'sales') {
-    params.push(actorId);
-    whereClause += ` AND u.id = $${params.length}`;
+    whereParams.push(actorId);
+    whereClause += ` AND u.id = $${whereParams.length}`;
   }
+
+  const { clause: dateClause, params: dateParams } = getSalesRepDateClause(
+    filters,
+    whereParams.length,
+  );
+  const params = [...whereParams, ...dateParams];
 
   const sql = `
     SELECT
@@ -328,10 +399,15 @@ export async function findSalesRepReport(
       COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'won') as leadsConverted,
       COALESCE(100.0 * COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'won')
         / NULLIF(COUNT(DISTINCT l.id) FILTER (WHERE l.status IN ('active', 'won', 'lost')), 0), 0) as conversionRate,
-      0::numeric as avgResponseTime
+      COALESCE(AVG(EXTRACT(EPOCH FROM (l.first_contacted_at - l.created_at)) / 3600)
+        FILTER (WHERE l.first_contacted_at IS NOT NULL AND l.deleted_at IS NULL), 0)::numeric as avgResponseTime,
+      COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'won') as dealsClosed,
+      COALESCE(SUM(
+        COALESCE((l.custom_fields->>'estimated_value')::numeric, l.lead_score::numeric, 0)
+      ) FILTER (WHERE l.status = 'won'), 0)::numeric as revenueEstimate
     FROM users u
     LEFT JOIN leads l ON l.assigned_to = u.id
-    WHERE ${whereClause}
+    WHERE ${whereClause}${dateClause}
     GROUP BY u.id, u.name
     ORDER BY leadsConverted DESC
   `;
@@ -341,6 +417,8 @@ export async function findSalesRepReport(
       leadsConverted: string;
       conversionRate: string;
       avgResponseTime: string;
+      dealsClosed: string;
+      revenueEstimate: string;
     }
   >(sql, params);
   return result.rows.map((row) => ({
@@ -350,6 +428,178 @@ export async function findSalesRepReport(
     leadsConverted: parseInt(row.leadsConverted, 10),
     conversionRate: parseFloat(row.conversionRate),
     avgResponseTime: parseFloat(row.avgResponseTime),
+    dealsClosed: parseInt(row.dealsClosed, 10),
+    revenueEstimate: parseFloat(row.revenueEstimate),
+  }));
+}
+
+function getCampaignDateClause(
+  filters: ReportListFilters,
+  paramOffset: number = 0,
+): { clause: string; params: unknown[] } {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filters.startDate) {
+    params.push(filters.startDate);
+    conditions.push(`c.created_at >= $${paramOffset + params.length}`);
+    params.push(filters.startDate);
+    conditions.push(`cl.added_at >= $${paramOffset + params.length}`);
+  }
+  if (filters.endDate) {
+    const end = `${filters.endDate}T23:59:59.999Z`;
+    params.push(end);
+    conditions.push(`c.created_at <= $${paramOffset + params.length}`);
+    params.push(end);
+    conditions.push(`cl.added_at <= $${paramOffset + params.length}`);
+  }
+  return { clause: conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '', params };
+}
+
+function getCampaignRoleClause(
+  role: string,
+  actorId: string,
+): { clause: string; params: unknown[] } {
+  switch (role) {
+    case 'viewer':
+      return { clause: ' AND FALSE', params: [] };
+    case 'marketing':
+      return { clause: ' AND c.created_by = $1', params: [actorId] };
+    case 'sales':
+      return {
+        clause: ` AND EXISTS (
+          SELECT 1 FROM campaign_leads cl2
+          JOIN leads l2 ON cl2.lead_id = l2.id
+          WHERE cl2.campaign_id = c.id AND l2.assigned_to = $1
+        )`,
+        params: [actorId],
+      };
+    case 'admin':
+    case 'manager':
+    default:
+      return { clause: '', params: [] };
+  }
+}
+
+export async function findCampaignAnalytics(
+  filters: ReportListFilters,
+  actorId: string,
+  actorRole: string,
+): Promise<CampaignAnalyticsRow[]> {
+  if (actorRole === 'viewer') {
+    return [];
+  }
+
+  const { clause: roleClause, params: roleParams } = getCampaignRoleClause(actorRole, actorId);
+  const { clause: dateClause, params: dateParams } = getCampaignDateClause(
+    filters,
+    roleParams.length,
+  );
+  const params = [...roleParams, ...dateParams];
+
+  const sql = `
+    WITH campaign_channels AS (
+      SELECT
+        ol.campaign_id,
+        mode() WITHIN GROUP (ORDER BY ol.channel) AS channel
+      FROM outreach_logs ol
+      WHERE ol.campaign_id IS NOT NULL
+      GROUP BY ol.campaign_id
+    )
+    SELECT
+      DATE(cl.added_at) AS date,
+      c.id AS "campaignId",
+      c.name AS "campaignName",
+      COUNT(*) AS "leadsTargeted",
+      COUNT(*) FILTER (WHERE l.status = 'won') AS "leadsConverted",
+      COALESCE(100.0 * COUNT(*) FILTER (WHERE l.status = 'won')
+        / NULLIF(COUNT(*), 0), 0) AS "conversionRate",
+      COALESCE(cc.channel, 'unknown') AS channel
+    FROM campaigns c
+    JOIN campaign_leads cl ON c.id = cl.campaign_id
+    JOIN leads l ON cl.lead_id = l.id
+    LEFT JOIN campaign_channels cc ON cc.campaign_id = c.id
+    WHERE c.deleted_at IS NULL
+      ${roleClause}
+      ${dateClause}
+    GROUP BY DATE(cl.added_at), c.id, c.name, cc.channel
+    ORDER BY date DESC, c.name ASC
+  `;
+
+  const result = await pool.query<
+    CampaignAnalyticsRow & {
+      leadsTargeted: string;
+      leadsConverted: string;
+      conversionRate: string;
+    }
+  >(sql, params);
+
+  return result.rows.map((row) => ({
+    date: String(row.date),
+    campaignId: row.campaignId,
+    campaignName: row.campaignName,
+    leadsTargeted: parseInt(row.leadsTargeted, 10),
+    leadsConverted: parseInt(row.leadsConverted, 10),
+    conversionRate: parseFloat(row.conversionRate),
+    channel: row.channel,
+  }));
+}
+
+function deriveIntegrationStatus(row: {
+  isEnabled: boolean;
+  lastTestStatus: string | null;
+  lastTestedAt: string | null;
+}): IntegrationHealthRow['status'] {
+  if (!row.isEnabled) return 'disabled';
+  if (!row.lastTestStatus) return 'healthy';
+  if (row.lastTestStatus !== 'ok') return 'failing';
+  if (row.lastTestedAt) {
+    const testedAt = new Date(row.lastTestedAt);
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    if (testedAt < oneDayAgo) return 'degraded';
+  }
+  return 'healthy';
+}
+
+export async function findIntegrationHealth(): Promise<IntegrationHealthRow[]> {
+  const sql = `
+    SELECT
+      i.id AS "integrationId",
+      i.name,
+      i.display_name AS "displayName",
+      i.is_enabled AS "isEnabled",
+      i.last_tested_at AS "lastTestedAt",
+      i.last_test_status AS "lastTestStatus",
+      COALESCE(100.0 * COUNT(ol.id) FILTER (WHERE ol.status IN ('delivered', 'opened', 'replied'))
+        / NULLIF(COUNT(ol.id) FILTER (WHERE ol.status IN ('sent', 'delivered', 'opened', 'replied', 'failed')), 0), 0) AS "successRate"
+    FROM integrations i
+    LEFT JOIN outreach_logs ol ON (
+        (ol.channel::text = LOWER(i.name))
+        OR (i.name = 'twilio' AND ol.channel = 'sms')
+        OR (i.name IN ('sendgrid', 'smtp', 'outlook') AND ol.channel = 'email')
+      )
+      AND ol.created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY i.id, i.name, i.display_name, i.is_enabled, i.last_tested_at, i.last_test_status
+    ORDER BY i.display_name ASC
+  `;
+
+  const result = await pool.query<
+    IntegrationHealthRow & {
+      isEnabled: boolean;
+      lastTestedAt: string | null;
+      lastTestStatus: string | null;
+      successRate: string;
+    }
+  >(sql);
+
+  return result.rows.map((row) => ({
+    integrationId: row.integrationId,
+    name: row.name,
+    displayName: row.displayName,
+    channel: row.name,
+    status: deriveIntegrationStatus(row),
+    enabled: row.isEnabled,
+    lastTestedAt: row.lastTestedAt ?? '',
+    successRate: parseFloat(row.successRate),
   }));
 }
 

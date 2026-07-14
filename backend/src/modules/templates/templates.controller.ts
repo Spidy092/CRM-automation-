@@ -119,3 +119,36 @@ export async function deleteTemplateHandler(
     next(err);
   }
 }
+
+export async function addTemplateAttachmentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    if (!req.file) throw new AppError('No file uploaded', 400);
+    const updated = await templatesService.addTemplateAttachment(id, req.file, actorFromReq(req));
+    sendSuccess(res, updated, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function removeTemplateAttachmentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const updated = await templatesService.removeTemplateAttachment(
+      id,
+      req.params.attachmentId,
+      actorFromReq(req),
+    );
+    sendSuccess(res, updated);
+  } catch (err) {
+    next(err);
+  }
+}

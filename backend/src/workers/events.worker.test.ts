@@ -41,6 +41,8 @@ jest.mock('../lib/dlq', () => ({
 
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findActiveCampaignsByPipeline: jest.fn(),
+  findActiveCampaignsByStage: jest.fn(),
+  findActiveCampaignsByPipelineNoStage: jest.fn(),
   addLeadsToCampaign: jest.fn(),
 }));
 
@@ -74,7 +76,12 @@ jest.mock('../shared/utils/logger', () => ({
 }));
 
 import { handleStageMoved, handleLeadEvent, startEventsWorker } from './events.worker';
-import { findActiveCampaignsByPipeline, addLeadsToCampaign } from '../modules/campaigns/campaigns.repository';
+import {
+  findActiveCampaignsByPipeline,
+  findActiveCampaignsByStage,
+  findActiveCampaignsByPipelineNoStage,
+  addLeadsToCampaign,
+} from '../modules/campaigns/campaigns.repository';
 import { findSequenceById, findNextBestActionByLeadId } from '../modules/outreach/outreach.repository';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findUserById } from '../modules/users/users.repository';
@@ -91,6 +98,8 @@ import {
 import { logger } from '../shared/utils/logger';
 
 const mockFindActiveCampaignsByPipeline = findActiveCampaignsByPipeline as jest.Mock;
+const mockFindActiveCampaignsByStage = findActiveCampaignsByStage as jest.Mock;
+const mockFindActiveCampaignsByPipelineNoStage = findActiveCampaignsByPipelineNoStage as jest.Mock;
 const mockAddLeadsToCampaign = addLeadsToCampaign as jest.Mock;
 const mockFindSequenceById = findSequenceById as jest.Mock;
 const mockFindNextBestActionByLeadId = findNextBestActionByLeadId as jest.Mock;
@@ -137,7 +146,9 @@ const baseSequence = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFindActiveCampaignsByPipeline.mockResolvedValue([baseCampaign]);
+  mockFindActiveCampaignsByPipeline.mockResolvedValue([]);
+  mockFindActiveCampaignsByStage.mockResolvedValue([baseCampaign]);
+  mockFindActiveCampaignsByPipelineNoStage.mockResolvedValue([]);
   mockFindSequenceById.mockResolvedValue(baseSequence);
   mockFindNextBestActionByLeadId.mockResolvedValue(null);
   mockFindLeadById.mockResolvedValue(null);
@@ -163,23 +174,25 @@ describe('startEventsWorker', () => {
 
 describe('handleStageMoved', () => {
   it('returns early when pipelineId is missing', async () => {
+    mockFindActiveCampaignsByStage.mockResolvedValue([]);
     await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1' });
-    expect(mockFindActiveCampaignsByPipeline).not.toHaveBeenCalled();
+    expect(mockFindActiveCampaignsByPipelineNoStage).not.toHaveBeenCalled();
     expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
-      'lead.stage_moved: pipelineId missing from payload, skipping auto-enrollment',
+      'lead.stage_moved: pipelineId missing — pipeline catch-all campaigns skipped',
       { leadId: 'lead1', toStageId: 's1' },
     );
   });
 
   it('returns early when no active campaigns exist', async () => {
-    mockFindActiveCampaignsByPipeline.mockResolvedValue([]);
+    mockFindActiveCampaignsByStage.mockResolvedValue([]);
+    mockFindActiveCampaignsByPipelineNoStage.mockResolvedValue([]);
     await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
     expect(mockFindNextBestActionByLeadId).not.toHaveBeenCalled();
     expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();
     expect(logger.info).toHaveBeenCalledWith(
-      'lead.stage_moved: no active campaigns for pipeline',
-      { leadId: 'lead1', pipelineId: 'pipe1' },
+      'lead.stage_moved: no matching active campaigns',
+      { leadId: 'lead1', toStageId: 's1', pipelineId: 'pipe1' },
     );
   });
 
@@ -317,7 +330,7 @@ describe('handleStageMoved', () => {
   });
 
   it('skips campaign when sequence_id is missing', async () => {
-    mockFindActiveCampaignsByPipeline.mockResolvedValue([{ ...baseCampaign, sequence_id: null }]);
+    mockFindActiveCampaignsByStage.mockResolvedValue([{ ...baseCampaign, sequence_id: null }]);
     await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
     expect(mockFindSequenceById).not.toHaveBeenCalled();
     expect(mockEnqueueOutreachDispatch).not.toHaveBeenCalled();

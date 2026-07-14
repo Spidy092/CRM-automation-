@@ -39,6 +39,8 @@ export interface LeadGenerationRow {
   date: string;
   count: number;
   source: string;
+  qualifiedCount?: number;
+  conversionRate?: number;
 }
 
 export interface OutreachPerformanceRow {
@@ -49,6 +51,8 @@ export interface OutreachPerformanceRow {
   opened: number;
   replied: number;
   failed: number;
+  bounced?: number;
+  responseRate?: number;
 }
 
 export interface PipelineConversionRow {
@@ -56,6 +60,8 @@ export interface PipelineConversionRow {
   leadCount: number;
   conversionRate: number;
   avgDays: number;
+  avgDaysInStage?: number;
+  dropOffRate?: number;
 }
 
 export interface SalesRepPerformanceRow {
@@ -65,7 +71,45 @@ export interface SalesRepPerformanceRow {
   leadsConverted: number;
   conversionRate: number;
   avgResponseTime: number;
+  dealsClosed?: number;
+  revenueEstimate?: number;
 }
+
+export interface CampaignAnalyticsRow {
+  date: string;
+  campaignId: string;
+  campaignName: string;
+  leadsTargeted: number;
+  leadsConverted: number;
+  conversionRate: number;
+  channel: string;
+}
+
+export interface IntegrationHealthRow {
+  integrationId: string;
+  name: string;
+  displayName: string;
+  channel: string;
+  status: 'healthy' | 'degraded' | 'failing' | 'disabled';
+  enabled: boolean;
+  lastTestedAt: string;
+  successRate: number;
+}
+
+export interface CachedReport<T> {
+  key: AnalyticsCacheKey;
+  generatedAt: string;
+  ttlSeconds: number;
+  data: T;
+}
+
+export type AnalyticsCacheKey =
+  | `campaigns:${string}:${string}:${string}`
+  | `integrations:${string}`
+  | `lead-generation:${string}:${string}`
+  | `outreach:${string}:${string}`
+  | `pipeline:${string}:${string}`
+  | `sales-reps:${string}:${string}`;
 
 export interface ExportJobInput {
   reportType: string;

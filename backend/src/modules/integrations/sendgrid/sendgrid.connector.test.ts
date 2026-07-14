@@ -15,11 +15,15 @@ jest.mock('../connector.base', () => ({
   ...jest.requireActual('../connector.base'),
   loggedFetch: jest.fn(),
 }));
+jest.mock('fs/promises', () => ({
+  readFile: jest.fn(),
+}));
 
 import { loadCredentials, sendEmail } from './sendgrid.connector';
 import { findByName, findCredentialsById } from '../integrations.repository';
 import { decryptJson } from '../../../shared/utils/encryption';
 import { loggedFetch } from '../connector.base';
+import { readFile } from 'fs/promises';
 import { AppError } from '../../../shared/middleware/errorHandler';
 
 const mockFindByName = findByName as jest.Mock;
@@ -111,5 +115,50 @@ describe('sendgrid sendEmail', () => {
 
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toBe('HTTP 500');
+  });
+
+  it('base64-encodes attachments read from disk and includes them in the request body', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: true, status: 200, externalId: 'x', latencyMs: 10 });
+    (readFile as jest.Mock).mockResolvedValue(Buffer.from('fake-bytes'));
+
+    await sendEmail({
+      leadId: 'l1',
+      to: 'recipient@example.com',
+      subject: 'Hello',
+      htmlBody: '<p>hi</p>',
+      attachments: [{ filename: 'flyer.png', mimeType: 'image/png', storagePath: '/x/flyer.png' }],
+    });
+
+    expect(readFile).toHaveBeenCalledWith('/x/flyer.png');
+    const [, options] = mockLoggedFetch.mock.calls[0];
+    const body = JSON.parse(options.body as string);
+    expect(body.attachments).toEqual([
+      {
+        content: Buffer.from('fake-bytes').toString('base64'),
+        filename: 'flyer.png',
+        type: 'image/png',
+        disposition: 'attachment',
+      },
+    ]);
+  });
+
+  it('skips an attachment that fails to read from disk instead of failing the whole send', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: true, status: 200, externalId: 'x', latencyMs: 10 });
+    (readFile as jest.Mock).mockRejectedValue(new Error('ENOENT'));
+
+    const res = await sendEmail({
+      leadId: 'l1',
+      to: 'recipient@example.com',
+      subject: 'Hello',
+      htmlBody: '<p>hi</p>',
+      attachments: [{ filename: 'flyer.png', mimeType: 'image/png', storagePath: '/x/flyer.png' }],
+    });
+
+    expect(res.ok).toBe(true);
+    const [, options] = mockLoggedFetch.mock.calls[0];
+    const body = JSON.parse(options.body as string);
+    expect(body.attachments).toBeUndefined();
   });
 });

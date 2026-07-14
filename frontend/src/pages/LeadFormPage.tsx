@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useLead, useCreateLead, useUpdateLead, usePauseLead } from '@/api/leads';
 import { useCampaigns } from '@/api/campaigns';
 import { useSequences, useManualOutreachSend } from '@/api/outreach';
+import { usePipelines } from '@/api/pipelines';
 import { useTemplates } from '@/api/templates';
 import { useCustomFields } from '@/api/customFields';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { LeadTimeline } from '@/components/LeadTimeline';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Pause, Play, Send } from 'lucide-react';
 import type { LeadInput } from '@/types';
 
@@ -28,6 +30,7 @@ export function LeadFormPage() {
   const manualSend = useManualOutreachSend();
   const { data: campaigns = [] } = useCampaigns();
   const { data: sequenceData } = useSequences();
+  const { data: pipelines } = usePipelines();
   const { data: templates = [] } = useTemplates({ approval_status: 'approved' });
   const { data: customFields = [] } = useCustomFields();
 
@@ -50,8 +53,10 @@ export function LeadFormPage() {
     google_rating: null,
     review_count: null,
     source_platform: 'manual',
+    pipeline_stage_id: null,
     tags: [],
     notes: null,
+    deal_value: null,
     custom_fields: {},
   });
 
@@ -70,8 +75,10 @@ export function LeadFormPage() {
         google_rating: lead.google_rating,
         review_count: lead.review_count,
         source_platform: lead.source_platform,
+        pipeline_stage_id: lead.pipeline_stage_id,
         tags: lead.tags,
         notes: lead.notes,
+        deal_value: lead.deal_value,
         custom_fields: lead.custom_fields || {},
       }));
     }
@@ -80,10 +87,10 @@ export function LeadFormPage() {
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
-    const { name, value } = e.target;
+    const { name, value, type } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: value === '' ? null : value,
+      [name]: value === '' ? null : (type === 'number' && value ? Number(value) : value),
     }));
   };
 
@@ -168,32 +175,33 @@ export function LeadFormPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">
-          {isEditing ? 'Edit Lead' : 'Add New Lead'}
-        </h1>
-        {isEditing && lead && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTogglePause}
-            disabled={pauseLead.isPending}
-            className={isPaused ? 'border-green-300 text-green-700 hover:bg-green-50' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}
-          >
-            {isPaused ? (
-              <>
-                <Play className="mr-1.5 h-3.5 w-3.5" />
-                Resume Automation
-              </>
-            ) : (
-              <>
-                <Pause className="mr-1.5 h-3.5 w-3.5" />
-                Pause Automation
-              </>
-            )}
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={isEditing ? 'Edit Lead' : 'Add New Lead'}
+        eyebrow="Leads"
+        actions={
+          isEditing && lead ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTogglePause}
+              disabled={pauseLead.isPending}
+              className={isPaused ? 'border-green-300 text-green-700 hover:bg-green-50' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}
+            >
+              {isPaused ? (
+                <>
+                  <Play className="mr-1.5 h-3.5 w-3.5" />
+                  Resume Automation
+                </>
+              ) : (
+                <>
+                  <Pause className="mr-1.5 h-3.5 w-3.5" />
+                  Pause Automation
+                </>
+              )}
+            </Button>
+          ) : undefined
+        }
+      />
 
       <Card>
         <CardHeader>
@@ -288,6 +296,41 @@ export function LeadFormPage() {
                   id="country"
                   name="country"
                   value={formData.country || ''}
+                  onChange={handleChange}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="pipeline_stage_id">Pipeline Stage</Label>
+                <select
+                  id="pipeline_stage_id"
+                  name="pipeline_stage_id"
+                  value={formData.pipeline_stage_id || ''}
+                  onChange={handleChange}
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <option value="">No Stage</option>
+                  {pipelines?.map((p) => (
+                    <optgroup key={p.id} label={p.name}>
+                      {p.stages?.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="deal_value">Deal Value ($)</Label>
+                <Input
+                  id="deal_value"
+                  name="deal_value"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.deal_value || ''}
                   onChange={handleChange}
                 />
               </div>

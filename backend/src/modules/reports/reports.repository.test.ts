@@ -1,7 +1,9 @@
 import { pool } from '../../shared/utils/db';
 import {
   findAvailableReports,
+  findCampaignAnalytics,
   findDashboardMetrics,
+  findIntegrationHealth,
   findLeadGenerationReport,
   findOutreachReport,
   findPipelineReport,
@@ -25,7 +27,13 @@ jest.mock('../../shared/utils/db', () => ({
 const mockPoolQuery = pool.query as unknown as jest.Mock;
 
 function mockQueryResult(rows: unknown[]) {
-  return Promise.resolve({ rows, command: 'SELECT', oid: 0, fields: [], rowCount: rows.length } as any);
+  return Promise.resolve({
+    rows,
+    command: 'SELECT',
+    oid: 0,
+    fields: [],
+    rowCount: rows.length,
+  } as any);
 }
 
 describe('reports.repository', () => {
@@ -128,21 +136,31 @@ describe('reports.repository', () => {
     it('returns rows for admin without date range', async () => {
       mockPoolQuery.mockResolvedValueOnce(
         mockQueryResult([
-          { date: '2026-06-20', source: 'facebook', count: '5' },
-          { date: '2026-06-21', source: 'google', count: '3' },
+          { date: '2026-06-20', source: 'facebook', count: '5', qualified_count: '3', conversion_rate: '40' },
+          { date: '2026-06-21', source: 'google', count: '3', qualified_count: '1', conversion_rate: '0' },
         ]),
       );
 
       const result = await findLeadGenerationReport({ limit: 25, offset: 0 }, 'admin-1', 'admin');
       expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ date: '2026-06-20', source: 'facebook', count: 5 });
+      expect(result[0]).toEqual({
+        date: '2026-06-20',
+        source: 'facebook',
+        count: 5,
+        qualifiedCount: 3,
+        conversionRate: 40,
+      });
       const queryCall = mockPoolQuery.mock.calls[0];
       expect(queryCall[1]).not.toContain('2026-06-01');
+      expect(queryCall[0]).toContain('qualified_count');
+      expect(queryCall[0]).toContain('conversion_rate');
     });
 
     it('returns rows for sales with date range', async () => {
       mockPoolQuery.mockResolvedValueOnce(
-        mockQueryResult([{ date: '2026-06-20', source: null, count: '2' }]),
+        mockQueryResult([
+          { date: '2026-06-20', source: null, count: '2', qualified_count: '1', conversion_rate: '50' },
+        ]),
       );
 
       const result = await findLeadGenerationReport(
@@ -152,6 +170,8 @@ describe('reports.repository', () => {
       );
       expect(result).toHaveLength(1);
       expect(result[0].count).toBe(2);
+      expect(result[0].qualifiedCount).toBe(1);
+      expect(result[0].conversionRate).toBe(50);
       const queryCall = mockPoolQuery.mock.calls[0];
       expect(queryCall[0]).toContain('assigned_to = $1');
       expect(queryCall[0]).toContain('l.created_at >= $2');
@@ -160,7 +180,9 @@ describe('reports.repository', () => {
 
     it('returns rows for marketing', async () => {
       mockPoolQuery.mockResolvedValueOnce(
-        mockQueryResult([{ date: '2026-06-20', source: 'campaign', count: '10' }]),
+        mockQueryResult([
+          { date: '2026-06-20', source: 'campaign', count: '10', qualified_count: '6', conversion_rate: '20' },
+        ]),
       );
 
       const result = await findLeadGenerationReport({ limit: 25, offset: 0 }, 'mkt-1', 'marketing');
@@ -196,12 +218,24 @@ describe('reports.repository', () => {
         opened: 4,
         replied: 2,
         failed: 1,
+        bounced: 0,
+        responseRate: 0,
       });
     });
 
     it('returns rows for sales with date range', async () => {
       mockPoolQuery.mockResolvedValueOnce(
-        mockQueryResult([{ date: '2026-06-20', channel: 'sms', sent: '5', delivered: '5', opened: '3', replied: '1', failed: '0' }]),
+        mockQueryResult([
+          {
+            date: '2026-06-20',
+            channel: 'sms',
+            sent: '5',
+            delivered: '5',
+            opened: '3',
+            replied: '1',
+            failed: '0',
+          },
+        ]),
       );
 
       const result = await findOutreachReport(
@@ -212,8 +246,8 @@ describe('reports.repository', () => {
       expect(result).toHaveLength(1);
       const queryCall = mockPoolQuery.mock.calls[0];
       expect(queryCall[0]).toContain('JOIN leads l ON ol.lead_id = l.id');
-      expect(queryCall[0]).toContain('ol.created_at >= $2');
-      expect(queryCall[0]).toContain('ol.created_at <= $3');
+      expect(queryCall[0]).toContain('ol.sent_at >= $2');
+      expect(queryCall[0]).toContain('ol.sent_at <= $3');
     });
 
     it('handles empty results', async () => {
@@ -227,20 +261,36 @@ describe('reports.repository', () => {
     it('returns pipeline rows for admin', async () => {
       mockPoolQuery.mockResolvedValueOnce(
         mockQueryResult([
-          { stageName: 'proposal', leadCount: '5', conversionRate: '20', avgDays: '3.5' },
-          { stageName: 'closed', leadCount: '2', conversionRate: '100', avgDays: '1' },
+          { stageName: 'proposal', leadCount: '5', conversionRate: '20', avgDays: '3.5', avgDaysInStage: '0', dropOffRate: '0' },
+          { stageName: 'closed', leadCount: '2', conversionRate: '100', avgDays: '1', avgDaysInStage: '0', dropOffRate: '0' },
         ]),
       );
 
       const result = await findPipelineReport({ limit: 25, offset: 0 }, 'admin-1', 'admin');
       expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ stageName: 'proposal', leadCount: 5, conversionRate: 20, avgDays: 3.5 });
-      expect(result[1]).toEqual({ stageName: 'closed', leadCount: 2, conversionRate: 100, avgDays: 1 });
+      expect(result[0]).toEqual({
+        stageName: 'proposal',
+        leadCount: 5,
+        conversionRate: 20,
+        avgDays: 3.5,
+        avgDaysInStage: 0,
+        dropOffRate: 0,
+      });
+      expect(result[1]).toEqual({
+        stageName: 'closed',
+        leadCount: 2,
+        conversionRate: 100,
+        avgDays: 1,
+        avgDaysInStage: 0,
+        dropOffRate: 0,
+      });
     });
 
     it('returns pipeline rows for sales rep scoped to own leads', async () => {
       mockPoolQuery.mockResolvedValueOnce(
-        mockQueryResult([{ stageName: 'proposal', leadCount: '3', conversionRate: '33.33', avgDays: '2' }]),
+        mockQueryResult([
+          { stageName: 'proposal', leadCount: '3', conversionRate: '33.33', avgDays: '2' },
+        ]),
       );
 
       const result = await findPipelineReport({ limit: 25, offset: 0 }, 'sales-1', 'sales');
@@ -254,8 +304,22 @@ describe('reports.repository', () => {
     it('returns all reps for admin', async () => {
       mockPoolQuery.mockResolvedValueOnce(
         mockQueryResult([
-          { repId: 'u1', repName: 'Alice', leadsAssigned: '10', leadsConverted: '3', conversionRate: '30', avgResponseTime: '0' },
-          { repId: 'u2', repName: 'Bob', leadsAssigned: '8', leadsConverted: '2', conversionRate: '25', avgResponseTime: '0' },
+          {
+            repId: 'u1',
+            repName: 'Alice',
+            leadsAssigned: '10',
+            leadsConverted: '3',
+            conversionRate: '30',
+            avgResponseTime: '0',
+          },
+          {
+            repId: 'u2',
+            repName: 'Bob',
+            leadsAssigned: '8',
+            leadsConverted: '2',
+            conversionRate: '25',
+            avgResponseTime: '0',
+          },
         ]),
       );
 
@@ -270,7 +334,14 @@ describe('reports.repository', () => {
     it('returns only own record for sales rep', async () => {
       mockPoolQuery.mockResolvedValueOnce(
         mockQueryResult([
-          { repId: 'sales-1', repName: 'Alice', leadsAssigned: '5', leadsConverted: '1', conversionRate: '20', avgResponseTime: '0' },
+          {
+            repId: 'sales-1',
+            repName: 'Alice',
+            leadsAssigned: '5',
+            leadsConverted: '1',
+            conversionRate: '20',
+            avgResponseTime: '0',
+          },
         ]),
       );
 
@@ -287,15 +358,243 @@ describe('reports.repository', () => {
       // Any unknown role string falls through without adding a user-id filter.
       mockPoolQuery.mockResolvedValueOnce(
         mockQueryResult([
-          { repId: 'rep-1', repName: 'Charlie', leadsAssigned: '4', leadsConverted: '1', conversionRate: '25', avgResponseTime: '0' },
-          { repId: 'rep-2', repName: 'Diana', leadsAssigned: '3', leadsConverted: '0', conversionRate: '0', avgResponseTime: '0' },
+          {
+            repId: 'rep-1',
+            repName: 'Charlie',
+            leadsAssigned: '4',
+            leadsConverted: '1',
+            conversionRate: '25',
+            avgResponseTime: '0',
+          },
+          {
+            repId: 'rep-2',
+            repName: 'Diana',
+            leadsAssigned: '3',
+            leadsConverted: '0',
+            conversionRate: '0',
+            avgResponseTime: '0',
+          },
         ]),
       );
 
-      const result = await findSalesRepReport({ limit: 25, offset: 0 }, 'rep-1', 'unknown_legacy_role');
+      const result = await findSalesRepReport(
+        { limit: 25, offset: 0 },
+        'rep-1',
+        'unknown_legacy_role',
+      );
       expect(result).toHaveLength(2);
       const queryCall = mockPoolQuery.mock.calls[0];
       expect(queryCall[0]).not.toContain('u.id = $1');
+    });
+
+    it('returns all reps without date filters', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            repId: 'u1',
+            repName: 'Alice',
+            leadsAssigned: '10',
+            leadsConverted: '3',
+            conversionRate: '30',
+            avgResponseTime: '0',
+          },
+        ]),
+      );
+
+      const result = await findSalesRepReport({ limit: 25, offset: 0 }, 'admin-1', 'admin');
+      expect(result).toHaveLength(1);
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[0]).not.toContain('l.created_at >=');
+      expect(queryCall[0]).not.toContain('l.created_at <=');
+    });
+  });
+
+  describe('findCampaignAnalytics', () => {
+    it('returns aggregated rows for admin with date filter', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            date: '2026-06-20',
+            campaignId: 'camp-1',
+            campaignName: 'Summer Promo',
+            leadsTargeted: '10',
+            leadsConverted: '2',
+            conversionRate: '20',
+            channel: 'email',
+          },
+        ]),
+      );
+
+      const result = await findCampaignAnalytics(
+        { limit: 25, offset: 0, startDate: '2026-06-01', endDate: '2026-06-30' },
+        'admin-1',
+        'admin',
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        date: '2026-06-20',
+        campaignId: 'camp-1',
+        campaignName: 'Summer Promo',
+        leadsTargeted: 10,
+        leadsConverted: 2,
+        conversionRate: 20,
+        channel: 'email',
+      });
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[0]).toContain('FROM campaigns c');
+      expect(queryCall[0]).toContain('c.created_at >= $1');
+      expect(queryCall[0]).toContain('cl.added_at >= $2');
+    });
+
+    it('returns aggregated rows for admin without date filters', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            date: '2026-06-20',
+            campaignId: 'camp-1',
+            campaignName: 'Summer Promo',
+            leadsTargeted: '10',
+            leadsConverted: '2',
+            conversionRate: '20',
+            channel: 'email',
+          },
+        ]),
+      );
+
+      const result = await findCampaignAnalytics({ limit: 25, offset: 0 }, 'admin-1', 'admin');
+
+      expect(result).toHaveLength(1);
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[0]).toContain('FROM campaigns c');
+      expect(queryCall[0]).not.toContain('c.created_at >= $1');
+      expect(queryCall[0]).not.toContain('cl.added_at >= $2');
+    });
+
+    it('returns rows scoped to campaigns created by marketing user', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            date: '2026-06-21',
+            campaignId: 'camp-2',
+            campaignName: 'Mkt Campaign',
+            leadsTargeted: '5',
+            leadsConverted: '1',
+            conversionRate: '20',
+            channel: 'sms',
+          },
+        ]),
+      );
+
+      const result = await findCampaignAnalytics({ limit: 25, offset: 0 }, 'mkt-1', 'marketing');
+
+      expect(result).toHaveLength(1);
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[0]).toContain('c.created_by = $1');
+      expect(queryCall[1]).toEqual(['mkt-1']);
+    });
+
+    it('returns rows scoped to campaigns containing leads assigned to sales user', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            date: '2026-06-22',
+            campaignId: 'camp-3',
+            campaignName: 'Sales Campaign',
+            leadsTargeted: '3',
+            leadsConverted: '0',
+            conversionRate: '0',
+            channel: 'unknown',
+          },
+        ]),
+      );
+
+      const result = await findCampaignAnalytics({ limit: 25, offset: 0 }, 'sales-1', 'sales');
+
+      expect(result).toHaveLength(1);
+      const queryCall = mockPoolQuery.mock.calls[0];
+      expect(queryCall[0]).toContain('l2.assigned_to = $1');
+      expect(queryCall[1]).toEqual(['sales-1']);
+    });
+
+    it('returns empty array for viewer', async () => {
+      const result = await findCampaignAnalytics({ limit: 25, offset: 0 }, 'view-1', 'viewer');
+
+      expect(result).toEqual([]);
+      expect(mockPoolQuery).not.toHaveBeenCalled();
+    });
+
+    it('handles empty query results', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+
+      const result = await findCampaignAnalytics({ limit: 25, offset: 0 }, 'admin-1', 'admin');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('findIntegrationHealth', () => {
+    it('returns integration rows with computed status and success rate', async () => {
+      mockPoolQuery.mockResolvedValueOnce(
+        mockQueryResult([
+          {
+            integrationId: 'int-1',
+            name: 'sendgrid',
+            displayName: 'SendGrid Email',
+            isEnabled: true,
+            lastTestedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            lastTestStatus: 'ok',
+            successRate: '95',
+          },
+          {
+            integrationId: 'int-2',
+            name: 'twilio',
+            displayName: 'Twilio SMS',
+            isEnabled: true,
+            lastTestedAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+            lastTestStatus: 'ok',
+            successRate: '80',
+          },
+          {
+            integrationId: 'int-3',
+            name: 'whatsapp',
+            displayName: 'WhatsApp Cloud API',
+            isEnabled: false,
+            lastTestedAt: null,
+            lastTestStatus: null,
+            successRate: '0',
+          },
+          {
+            integrationId: 'int-4',
+            name: 'smtp',
+            displayName: 'SMTP Server',
+            isEnabled: true,
+            lastTestedAt: new Date().toISOString(),
+            lastTestStatus: 'failed',
+            successRate: '50',
+          },
+        ]),
+      );
+
+      const result = await findIntegrationHealth();
+
+      expect(result).toHaveLength(4);
+      expect(result[0].status).toBe('healthy');
+      expect(result[0].successRate).toBe(95);
+      expect(result[1].status).toBe('degraded');
+      expect(result[1].successRate).toBe(80);
+      expect(result[2].status).toBe('disabled');
+      expect(result[2].successRate).toBe(0);
+      expect(result[3].status).toBe('failing');
+      expect(result[3].successRate).toBe(50);
+    });
+
+    it('handles empty results', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+
+      const result = await findIntegrationHealth();
+
+      expect(result).toEqual([]);
     });
   });
 
@@ -368,5 +667,4 @@ describe('reports.repository', () => {
       expect(result.total).toBe(0);
     });
   });
-
 });

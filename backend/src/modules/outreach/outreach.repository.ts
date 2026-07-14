@@ -5,7 +5,7 @@ import { LeadAiProfileRow } from '../ai-intelligence/ai-intelligence.types';
 
 // ── Outreach Sequences ─────────────────────────────────────────────────────
 
-const SEQ_COLS = `id, name, steps, created_by, created_at, updated_at`;
+const SEQ_COLS = `id, name, description, is_active, steps, created_by, created_at, updated_at`;
 
 export async function findSequences(limit: number, offset: number): Promise<SequenceRow[]> {
   return query<SequenceRow>(
@@ -20,14 +20,22 @@ export async function findSequenceById(id: string): Promise<SequenceRow | null> 
 
 export async function insertSequence(data: {
   name: string;
+  description?: string | null;
+  is_active?: boolean;
   steps: unknown[];
   created_by: string;
 }): Promise<SequenceRow> {
   const row = await queryOne<SequenceRow>(
-    `INSERT INTO outreach_sequences (name, steps, created_by)
-     VALUES ($1, $2::jsonb, $3)
+    `INSERT INTO outreach_sequences (name, description, is_active, steps, created_by)
+     VALUES ($1, $2, $3, $4::jsonb, $5)
      RETURNING ${SEQ_COLS}`,
-    [data.name, JSON.stringify(data.steps), data.created_by],
+    [
+      data.name,
+      data.description ?? null,
+      data.is_active ?? true,
+      JSON.stringify(data.steps),
+      data.created_by,
+    ],
   );
   if (!row) throw new AppError('Failed to create sequence', 500);
   return row;
@@ -35,7 +43,12 @@ export async function insertSequence(data: {
 
 export async function updateSequence(
   id: string,
-  fields: Partial<{ name: string; steps: unknown[] }>,
+  fields: Partial<{
+    name: string;
+    description: string | null;
+    is_active: boolean;
+    steps: unknown[];
+  }>,
 ): Promise<SequenceRow> {
   const sets: string[] = [];
   const params: unknown[] = [];
@@ -44,6 +57,14 @@ export async function updateSequence(
   if (fields.name !== undefined) {
     sets.push(`name = $${i++}`);
     params.push(fields.name);
+  }
+  if ('description' in fields) {
+    sets.push(`description = $${i++}`);
+    params.push(fields.description ?? null);
+  }
+  if (fields.is_active !== undefined) {
+    sets.push(`is_active = $${i++}`);
+    params.push(fields.is_active);
   }
   if (fields.steps !== undefined) {
     sets.push(`steps = $${i++}::jsonb`);
@@ -63,6 +84,60 @@ export async function updateSequence(
   return row;
 }
 
+/**
+ * Returns enrollment stats for a sequence:
+ *   currently_in — leads in campaign_leads for any campaign using this sequence
+ *                  whose lead status is 'active' (still in the funnel)
+ *   completed    — leads that have an outreach_log with the max step_number
+ *                  for this sequence (reached the final step)
+ *   removed      — leads in those campaigns whose lead status is not 'active'
+ *                  (won / lost / paused / opted_out)
+ */
+export async function getSequenceEnrollmentStats(
+  sequenceId: string,
+): Promise<{ currently_in: number; completed: number; removed: number }> {
+  const result = await queryOne<{
+    currently_in: string;
+    completed: string;
+    removed: string;
+  }>(
+    `WITH seq_campaigns AS (
+       SELECT id FROM campaigns
+       WHERE sequence_id = $1 AND deleted_at IS NULL
+     ),
+     enrolled AS (
+       SELECT DISTINCT cl.lead_id, l.status AS lead_status
+       FROM campaign_leads cl
+       JOIN seq_campaigns sc ON sc.id = cl.campaign_id
+       JOIN leads l ON l.id = cl.lead_id AND l.deleted_at IS NULL
+     ),
+     max_step AS (
+       SELECT MAX(step_number) AS max_step_number
+       FROM outreach_logs
+       WHERE campaign_id IN (SELECT id FROM seq_campaigns)
+     ),
+     completed_leads AS (
+       SELECT DISTINCT ol.lead_id
+       FROM outreach_logs ol
+       JOIN max_step ms ON ol.step_number = ms.max_step_number
+       WHERE ol.campaign_id IN (SELECT id FROM seq_campaigns)
+         AND ol.status IN ('sent', 'delivered', 'opened', 'replied')
+     )
+     SELECT
+       COUNT(DISTINCT CASE WHEN e.lead_status = 'active' THEN e.lead_id END)::text AS currently_in,
+       COUNT(DISTINCT cl2.lead_id)::text AS completed,
+       COUNT(DISTINCT CASE WHEN e.lead_status <> 'active' THEN e.lead_id END)::text AS removed
+     FROM enrolled e
+     LEFT JOIN completed_leads cl2 ON cl2.lead_id = e.lead_id`,
+    [sequenceId],
+  );
+  return {
+    currently_in: parseInt(result?.currently_in ?? '0', 10),
+    completed: parseInt(result?.completed ?? '0', 10),
+    removed: parseInt(result?.removed ?? '0', 10),
+  };
+}
+
 export async function deleteSequence(id: string): Promise<void> {
   const result = await queryOne<{ id: string }>(
     'DELETE FROM outreach_sequences WHERE id = $1 RETURNING id',
@@ -74,8 +149,8 @@ export async function deleteSequence(id: string): Promise<void> {
 // ── Outreach Logs ──────────────────────────────────────────────────────────
 
 const LOG_COLS = `id, lead_id, campaign_id, channel, template_id, step_number, status,
-  external_msg_id, message_body, sent_at, delivered_at, opened_at, replied_at,
-  error_message, created_at, updated_at`;
+  external_msg_id, message_body, sent_at, delivered_at, opened_at, clicked_at, replied_at,
+  click_url, error_message, created_at, updated_at`;
 
 export async function insertOutreachLog(data: {
   lead_id: string;
@@ -112,7 +187,9 @@ export async function updateOutreachLogStatus(
     sentAt: string;
     deliveredAt: string;
     openedAt: string;
+    clickedAt: string;
     repliedAt: string;
+    clickUrl: string;
     errorMessage: string;
     externalMsgId: string;
   }>,
@@ -136,6 +213,14 @@ export async function updateOutreachLogStatus(
   if (extra?.openedAt !== undefined) {
     sets.push(`opened_at = $${i++}`);
     params.push(extra.openedAt);
+  }
+  if (extra?.clickedAt !== undefined) {
+    sets.push(`clicked_at = $${i++}`);
+    params.push(extra.clickedAt);
+  }
+  if (extra?.clickUrl !== undefined) {
+    sets.push(`click_url = $${i++}`);
+    params.push(extra.clickUrl);
   }
   if (extra?.repliedAt !== undefined) {
     sets.push(`replied_at = $${i++}`);

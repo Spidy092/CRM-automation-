@@ -3,7 +3,13 @@ import { executeAgentAction, rejectAgentAction } from '../agent/agent.service';
 import { continuePlanIfReady } from '../agent-planner/runner.service';
 import * as planRepository from '../agent-planner/plan.repository';
 import { incAiInboxItem } from '../../shared/utils/metrics';
-import { createItem, listItems, actionItem, runExpirySweep } from './ai-inbox.service';
+import {
+  createItem,
+  listItems,
+  actionItem,
+  runExpirySweep,
+  findPendingItemForAgentAction,
+} from './ai-inbox.service';
 import * as repository from './ai-inbox.repository';
 import type { AiInboxItem } from './ai-inbox.types';
 
@@ -328,5 +334,24 @@ describe('runExpirySweep', () => {
       'ai inbox: guarded item expiry execution failed',
       expect.objectContaining({ id: 'inbox-1', agentActionId: 'agent-1' }),
     );
+  });
+});
+
+describe('findPendingItemForAgentAction', () => {
+  it('delegates to the repository lookup', async () => {
+    mockedRepo.findPendingInboxItemByAgentActionId.mockResolvedValue(baseItem);
+
+    const result = await findPendingItemForAgentAction('agent-1');
+
+    expect(result).toEqual(baseItem);
+    expect(mockedRepo.findPendingInboxItemByAgentActionId).toHaveBeenCalledWith('agent-1');
+  });
+
+  it('returns null when nothing is pending', async () => {
+    mockedRepo.findPendingInboxItemByAgentActionId.mockResolvedValue(null);
+
+    const result = await findPendingItemForAgentAction('agent-missing');
+
+    expect(result).toBeNull();
   });
 });

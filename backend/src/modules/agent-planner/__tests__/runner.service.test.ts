@@ -173,6 +173,87 @@ describe('executePlan', () => {
       expect.objectContaining({ errorMessage: 'Policy rejected' }),
     );
   });
+
+  it('does not advance past a wave containing a step still pending approval', async () => {
+    const plan = basePlan({ status: 'paused_for_approval', started_at: new Date().toISOString() });
+
+    mockedFindPlanById.mockResolvedValue(plan);
+    mockedUpdatePlanStatus.mockResolvedValue(plan);
+    mockedFindPlanStepsByPlan.mockResolvedValue([
+      baseStep({ id: 'step-0', step_index: 0, status: 'succeeded', result: { items: [] } }),
+      baseStep({
+        id: 'step-1',
+        step_index: 1,
+        action_name: 'template.create',
+        risk_tier: 'sensitive_write',
+        status: 'pending_approval',
+      }),
+      baseStep({
+        id: 'step-2',
+        step_index: 2,
+        action_name: 'sequence.create',
+        action_args: { name: 'seq', steps: [{ templateId: '$steps.1.id' }] },
+        risk_tier: 'sensitive_write',
+        depends_on: [1],
+        status: 'pending',
+      }),
+    ]);
+
+    const result = await executePlan('plan-1', actor as any);
+
+    expect(result.status).toBe('paused_for_approval');
+    expect(mockedProposeAgentAction).not.toHaveBeenCalled();
+    expect(mockedUpdatePlanStatus).toHaveBeenLastCalledWith('plan-1', 'paused_for_approval');
+  });
+
+  it('resolves $steps references from earlier step results before proposing', async () => {
+    const plan = basePlan();
+    const runningPlan = { ...plan, status: 'running' as const };
+
+    mockedFindPlanById.mockResolvedValue(plan);
+    mockedUpdatePlanStatus.mockResolvedValue(runningPlan);
+    mockedFindPlanStepsByPlan.mockResolvedValue([
+      baseStep({
+        id: 'step-0',
+        step_index: 0,
+        action_name: 'template.create',
+        risk_tier: 'sensitive_write',
+        status: 'succeeded',
+        result: { id: 'tpl-1' },
+      }),
+      baseStep({
+        id: 'step-1',
+        step_index: 1,
+        action_name: 'sequence.create',
+        action_args: {
+          name: 'seq',
+          steps: [{ stepNumber: 1, channel: 'email', delayHours: 0, templateId: '$steps.0.id' }],
+        },
+        risk_tier: 'sensitive_write',
+        depends_on: [0],
+        status: 'pending',
+      }),
+    ]);
+    mockedUpdatePlanStepStatus.mockResolvedValue(baseStep({ status: 'succeeded' }));
+    mockedProposeAgentAction.mockResolvedValue({
+      policy: { outcome: 'execute_now', reason: 'ok' },
+      action: { id: 'action-1', result: { id: 'seq-1' } },
+      result: { id: 'seq-1' },
+    } as any);
+
+    const result = await executePlan('plan-1', actor as any);
+
+    expect(result.status).toBe('succeeded');
+    expect(mockedProposeAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionName: 'sequence.create',
+        args: {
+          name: 'seq',
+          steps: [{ stepNumber: 1, channel: 'email', delayHours: 0, templateId: 'tpl-1' }],
+        },
+      }),
+    );
+  });
 });
 
 describe('continuePlanIfReady', () => {

@@ -4,7 +4,7 @@ import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
-  created_at, updated_at, deleted_at`;
+  deal_value, created_at, updated_at, deleted_at`;
 
 function jsonArray(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -41,6 +41,12 @@ export async function findLeads(
   if (filters.assigned_to) {
     conditions.push(`assigned_to = $${i++}`);
     params.push(filters.assigned_to);
+  }
+  if (filters.pipeline_id) {
+    conditions.push(
+      `pipeline_stage_id IN (SELECT id FROM pipeline_stages WHERE pipeline_id = $${i++})`,
+    );
+    params.push(filters.pipeline_id);
   }
   if (filters.search) {
     conditions.push(
@@ -97,11 +103,11 @@ export async function insertLead(input: LeadInput): Promise<LeadRow> {
     `INSERT INTO leads (
        business_name, contact_name, phone, email, website, industry, location, country,
        google_rating, review_count, social_links, source_platform, lead_score, classification,
-       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes
+       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value
      ) VALUES (
        $1, $2, $3, lower($4), $5, $6, $7, $8,
        $9, $10, $11::jsonb, $12, 0, NULL,
-       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17
+       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18
      )
      RETURNING ${COLS}`,
     [
@@ -122,6 +128,7 @@ export async function insertLead(input: LeadInput): Promise<LeadRow> {
       jsonArray(input.custom_fields) ?? '{}',
       input.tags ?? null,
       input.notes ?? null,
+      input.deal_value ?? null,
     ],
   );
   if (!row) throw new Error('Failed to insert lead');
@@ -149,6 +156,7 @@ export async function updateLead(id: string, input: Partial<LeadInput>): Promise
     ['assigned_to', 'assigned_to', false],
     ['pipeline_stage_id', 'pipeline_stage_id', false],
     ['notes', 'notes', false],
+    ['deal_value', 'deal_value', false],
   ];
 
   for (const [key, col, lower] of scalars) {

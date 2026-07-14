@@ -66,9 +66,19 @@ function mapRow(raw: Record<string, unknown>, defaultSource: string): LeadInput 
   const tagsRaw = toStr(norm.tags);
 
   const standardKeys = new Set([
-    'business_name', 'contact_name', 'phone', 'email', 'website',
-    'industry', 'location', 'country', 'google_rating', 'review_count',
-    'source_platform', 'tags', 'notes'
+    'business_name',
+    'contact_name',
+    'phone',
+    'email',
+    'website',
+    'industry',
+    'location',
+    'country',
+    'google_rating',
+    'review_count',
+    'source_platform',
+    'tags',
+    'notes',
   ]);
 
   const custom_fields: Record<string, unknown> = {};

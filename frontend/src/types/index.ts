@@ -49,6 +49,7 @@ export interface Lead {
   custom_fields: Record<string, unknown>;
   tags: string[];
   notes: string | null;
+  deal_value: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +72,29 @@ export interface LeadInput {
   custom_fields?: Record<string, unknown>;
   tags?: string[];
   notes?: string | null;
+  deal_value?: number | null;
+}
+
+export type ActivityType =
+  | 'call'
+  | 'whatsapp'
+  | 'email'
+  | 'note'
+  | 'status_change'
+  | 'assignment_change';
+
+export interface Activity {
+  id: string;
+  lead_id: string;
+  user_id: string | null;
+  type: ActivityType;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ActivityWithUser extends Activity {
+  user_name: string | null;
+  user_email: string | null;
 }
 
 export interface Pipeline {
@@ -108,6 +132,14 @@ export interface Campaign {
   updated_at: string;
 }
 
+export interface TemplateAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  url: string;
+}
+
 export interface Template {
   id: string;
   name: string;
@@ -115,6 +147,7 @@ export interface Template {
   subject: string | null;
   body: string;
   variables: string[];
+  attachments: TemplateAttachment[];
   approval_status: TemplateApprovalStatus;
   approved_by: string | null;
   approved_at: string | null;
@@ -167,14 +200,48 @@ export interface DashboardMetrics {
   totalLeads: number;
   qualifiedLeads: number;
   totalCampaigns: number;
+  activeCampaigns?: number;
   activeOutreach: number;
   pipelineConversion: number;
+  healthyIntegrations?: number;
   recentActivity: Array<{
     date: string;
     leads: number;
     outreach: number;
   }>;
 }
+
+export type CampaignAnalytics = {
+  date: string;
+  campaignId: string;
+  campaignName: string;
+  channel: string;
+  leadsTargeted: number;
+  leadsConverted: number;
+  conversionRate: number;
+};
+
+export type IntegrationHealth = {
+  integrationId: string;
+  name: string;
+  displayName: string;
+  channel: string;
+  status: 'healthy' | 'degraded' | 'failing' | 'disabled';
+  enabled: boolean;
+  lastTestedAt: string;
+  successRate: number;
+};
+
+export type ExtendedDashboardMetrics = {
+  totalLeads: number;
+  qualifiedLeads: number;
+  totalCampaigns: number;
+  activeCampaigns?: number;
+  activeOutreach: number;
+  pipelineConversion: number;
+  healthyIntegrations?: number;
+  recentActivity: Array<{ date: string; leads: number; outreach: number }>;
+};
 
 export interface LeadGenerationRow {
   date: string;
@@ -224,6 +291,18 @@ export interface ExportJobInput {
 export interface ExportJobResult {
   jobId: string;
   status: 'queued' | 'processing' | 'completed' | 'failed';
+}
+
+/* ─── Team Metrics Types ─── */
+
+export interface MemberMetrics {
+  user_id: string;
+  name: string;
+  assigned_count: number;
+  contacted_count: number;
+  contacted_pct: number;
+  avg_response_time: number;
+  total_activities: number;
 }
 
 /* ─── Scraper Types ─── */

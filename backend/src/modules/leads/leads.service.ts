@@ -18,6 +18,11 @@ import {
   type LeadActivityEntry,
 } from './leads.repository';
 import {
+  createOutboundActivityAndUpdateLead,
+  insertActivity,
+} from '../activities/activities.repository';
+import { Activity } from '../activities/activities.types';
+import {
   LeadInput,
   LeadListFilters,
   LeadListResult,
@@ -41,7 +46,7 @@ function applyScope(filters: LeadListFilters, actor: Actor): LeadListFilters {
 }
 
 /** Resource-level ownership: sales reps may only touch leads assigned to them. */
-function assertAccess(assignedTo: string | null, actor: Actor, write: boolean): void {
+export function assertAccess(assignedTo: string | null, actor: Actor, write: boolean): void {
   if (actor.role === 'admin' || actor.role === 'manager') return;
   if (actor.role === 'marketing' || actor.role === 'viewer') {
     if (write) throw new AppError('Forbidden: read-only role', 403);
@@ -176,6 +181,35 @@ export async function updateLeadFields(
   }
 
   const updated = await updateLead(id, input);
+
+  if (
+    input.pipeline_stage_id !== undefined &&
+    input.pipeline_stage_id !== before.pipeline_stage_id
+  ) {
+    await insertActivity({
+      lead_id: id,
+      user_id: actor.id,
+      type: 'status_change',
+      metadata: {
+        field: 'pipeline_stage_id',
+        from: before.pipeline_stage_id,
+        to: updated.pipeline_stage_id,
+      },
+    });
+  }
+
+  if (input.assigned_to !== undefined && input.assigned_to !== before.assigned_to) {
+    await insertActivity({
+      lead_id: id,
+      user_id: actor.id,
+      type: 'assignment_change',
+      metadata: {
+        from: before.assigned_to,
+        to: updated.assigned_to,
+      },
+    });
+  }
+
   await writeAuditLog({
     userId: actor.id,
     action: 'lead.updated',
@@ -241,6 +275,20 @@ export async function getLeadActivity(
   if (!lead) throw new AppError('Lead not found', 404);
   assertAccess(lead.assigned_to, actor, false);
   return findActivityForLead(id, Math.min(limit, 200));
+}
+
+export async function logOutboundActivity(
+  leadId: string,
+  userId: string,
+  type: 'call' | 'whatsapp' | 'email',
+  metadata?: Record<string, unknown>,
+): Promise<Activity> {
+  return createOutboundActivityAndUpdateLead({
+    lead_id: leadId,
+    user_id: userId,
+    type,
+    metadata,
+  });
 }
 
 export { clampLimit, decodeCursor };

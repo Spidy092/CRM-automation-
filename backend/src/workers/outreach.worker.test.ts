@@ -267,6 +267,45 @@ describe('handleDispatch', () => {
     );
   });
 
+  it('passes the template attachments through to dispatchOutbound', async () => {
+    const templateAttachments = [
+      {
+        id: 'a1',
+        filename: 'flyer.png',
+        mimeType: 'image/png',
+        sizeBytes: 100,
+        url: 'http://x/flyer.png',
+        storagePath: '/x/flyer.png',
+      },
+    ];
+    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      id: 't1',
+      approval_status: 'approved',
+      subject: 'Hi',
+      attachments: templateAttachments,
+    });
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+    (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
+
+    await handleDispatch({
+      leadId: 'lead1',
+      campaignId: 'camp1',
+      sequenceId: 'seq1',
+      stepNumber: 1,
+      channel: 'email',
+      templateId: 't1',
+      mockMode: false,
+    });
+
+    expect(dispatchOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: templateAttachments }),
+    );
+  });
+
   it('updates log to failed and throws with 502 when dispatchOutbound returns ok:false', async () => {
     (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
@@ -367,8 +406,8 @@ describe('handleStopCheck', () => {
 
   it('returns stopped=true for max_messages', async () => {
     (findLogsByLead as jest.Mock).mockResolvedValue([
-      { id: 'l1', status: 'sent' },
-      { id: 'l2', status: 'sent' },
+      { id: 'l1', status: 'sent', campaign_id: 'camp1' },
+      { id: 'l2', status: 'sent', campaign_id: 'camp1' },
     ] as any);
     (findLeadById as jest.Mock).mockResolvedValue(null);
 
@@ -383,7 +422,7 @@ describe('handleStopCheck', () => {
 
   it('returns stopped=true for replied', async () => {
     (findLogsByLead as jest.Mock).mockResolvedValue([
-      { id: 'l1', status: 'replied' },
+      { id: 'l1', status: 'replied', campaign_id: 'camp1' },
     ] as any);
     (findLeadById as jest.Mock).mockResolvedValue(null);
 
@@ -411,7 +450,7 @@ describe('handleStopCheck', () => {
 
   it('returns stopped=false when no rules match', async () => {
     (findLogsByLead as jest.Mock).mockResolvedValue([
-      { id: 'l1', status: 'sent' },
+      { id: 'l1', status: 'sent', campaign_id: 'camp1' },
     ] as any);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
 

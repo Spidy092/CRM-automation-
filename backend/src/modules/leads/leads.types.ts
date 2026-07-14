@@ -24,6 +24,7 @@ export interface LeadRow {
   custom_fields: Record<string, unknown>;
   tags: string[];
   notes: string | null;
+  deal_value: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -52,6 +53,7 @@ export interface LeadResponse {
   custom_fields: Record<string, unknown>;
   tags: string[];
   notes: string | null;
+  deal_value: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +76,7 @@ export interface LeadInput {
   custom_fields?: Record<string, unknown> | null;
   tags?: string[];
   notes?: string | null;
+  deal_value?: number | null;
 }
 
 export interface LeadListFilters {
@@ -86,6 +89,7 @@ export interface LeadListFilters {
   industry?: string;
   country?: string;
   assigned_to?: string;
+  pipeline_id?: string;
   search?: string;
   tags?: string[];
 }
@@ -130,6 +134,7 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
     custom_fields: row.custom_fields ?? {},
     tags: row.tags ?? [],
     notes: row.notes,
+    deal_value: row.deal_value === null ? null : Number(row.deal_value),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

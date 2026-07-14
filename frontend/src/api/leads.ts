@@ -6,13 +6,15 @@ import {
 } from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse, PaginatedResponse } from './client';
-import type { Lead, LeadInput, ImportSummary } from '@/types';
+import type { Activity, ActivityType, ActivityWithUser, Lead, LeadInput, ImportSummary } from '@/types';
 
 interface LeadFilters {
   status?: string;
   classification?: string;
   source_platform?: string;
   assigned_to?: string;
+  pipeline_id?: string;
+  tags?: string;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -29,6 +31,8 @@ function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams
   if (filters.classification) params.append('classification', filters.classification);
   if (filters.source_platform) params.append('source_platform', filters.source_platform);
   if (filters.assigned_to) params.append('assigned_to', filters.assigned_to);
+  if (filters.pipeline_id) params.append('pipeline_id', filters.pipeline_id);
+  if (filters.tags) params.append('tags', filters.tags);
   if (filters.search) params.append('search', filters.search);
   if (filters.limit) params.append('limit', filters.limit.toString());
   if (cursor) params.append('cursor', cursor);
@@ -67,6 +71,7 @@ export function useLeads(filters: LeadFilters = {}) {
       if (filters.classification) params.append('classification', filters.classification);
       if (filters.source_platform) params.append('source_platform', filters.source_platform);
       if (filters.assigned_to) params.append('assigned_to', filters.assigned_to);
+      if (filters.pipeline_id) params.append('pipeline_id', filters.pipeline_id);
       if (filters.search) params.append('search', filters.search);
       if (filters.limit) params.append('limit', filters.limit.toString());
       if (filters.cursor) params.append('cursor', filters.cursor);
@@ -194,6 +199,54 @@ export function useLeadActivity(leadId: string, limit = 50) {
       return response.data.data ?? [];
     },
     enabled: !!leadId,
+  });
+}
+
+interface ActivityFilters {
+  type?: ActivityType;
+  limit?: number;
+  offset?: number;
+}
+
+interface ActivitiesPageResult {
+  items: ActivityWithUser[];
+  meta: { total: number; limit: number; offset: number };
+}
+
+export function useLeadActivities(leadId: string, filters: ActivityFilters = {}) {
+  return useQuery({
+    queryKey: ['leads', leadId, 'activities', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.type) params.append('type', filters.type);
+      if (filters.limit !== undefined) params.append('limit', filters.limit.toString());
+      if (filters.offset !== undefined) params.append('offset', filters.offset.toString());
+      const response = await apiClient.get<ApiResponse<ActivitiesPageResult>>(
+        `/leads/${leadId}/activities`,
+        { params },
+      );
+      return response.data.data;
+    },
+    enabled: !!leadId,
+  });
+}
+
+export interface CreateActivityInput {
+  type: Exclude<ActivityType, 'status_change' | 'assignment_change'>;
+  metadata?: Record<string, unknown>;
+}
+
+export function useCreateLeadActivity() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ leadId, input }: { leadId: string; input: CreateActivityInput }) => {
+      const response = await apiClient.post<ApiResponse<Activity>>(`/leads/${leadId}/activities`, input);
+      return response.data.data;
+    },
+    onSuccess: (_, { leadId }) => {
+      queryClient.invalidateQueries({ queryKey: ['leads', leadId, 'activities'] });
+    },
   });
 }
 

@@ -79,6 +79,18 @@ export async function findInboxItemById(id: string): Promise<AiInboxItem | null>
   return queryOne<AiInboxItem>(`SELECT * FROM ai_inbox_items WHERE id = $1`, [id]);
 }
 
+export async function findPendingInboxItemByAgentActionId(
+  agentActionId: string,
+): Promise<AiInboxItem | null> {
+  return queryOne<AiInboxItem>(
+    `SELECT * FROM ai_inbox_items
+      WHERE agent_action_id = $1 AND status = 'pending'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [agentActionId],
+  );
+}
+
 export async function actionInboxItem(
   id: string,
   input: ActionInboxItemInput,

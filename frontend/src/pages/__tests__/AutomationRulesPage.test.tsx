@@ -21,6 +21,19 @@ vi.mock('@/api/campaigns', () => ({
   }),
 }));
 
+vi.mock('@/api/pipelines', () => ({
+  usePipelines: vi.fn().mockReturnValue({
+    data: [{ id: 'p1', name: 'Sales Pipeline' }],
+    isLoading: false,
+    error: null,
+  }),
+  usePipeline: vi.fn().mockReturnValue({
+    data: { id: 'p1', name: 'Sales Pipeline', stages: [] },
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 vi.mock('@/api/outreach', () => ({
   useSequences: vi.fn().mockReturnValue({
     data: [

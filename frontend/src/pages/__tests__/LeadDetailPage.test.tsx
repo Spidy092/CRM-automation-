@@ -54,6 +54,14 @@ vi.mock('@/api/leads', () => ({
     data: [],
     isLoading: false,
   }),
+  useLeadActivities: vi.fn().mockReturnValue({
+    data: { items: [], meta: { total: 0, limit: 50, offset: 0 } },
+    isLoading: false,
+  }),
+  useCreateLeadActivity: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
   usePauseLead: vi.fn().mockReturnValue({
     mutateAsync: vi.fn(),
     isPending: false,
@@ -82,5 +90,15 @@ describe('LeadDetailPage', () => {
   it('renders classification', () => {
     renderWithProviders(<LeadDetailPage />);
     expect(screen.getAllByText('hot').length).toBeGreaterThan(0);
+  });
+
+  it('renders the activity timeline section', () => {
+    renderWithProviders(<LeadDetailPage />);
+    expect(screen.getByText('Activity Timeline')).toBeDefined();
+  });
+
+  it('renders a quick-add note textarea', () => {
+    renderWithProviders(<LeadDetailPage />);
+    expect(screen.getByPlaceholderText(/add a note/i)).toBeDefined();
   });
 });

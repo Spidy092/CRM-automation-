@@ -31,6 +31,12 @@ export const smtpCredentialsSchema = z
 
 export type SmtpCredentials = z.infer<typeof smtpCredentialsSchema>;
 
+export interface SendEmailAttachment {
+  filename: string;
+  mimeType: string;
+  storagePath: string;
+}
+
 export interface SendEmailInput {
   leadId: string;
   campaignId?: string | null;
@@ -38,6 +44,7 @@ export interface SendEmailInput {
   subject: string;
   htmlBody: string;
   textBody?: string;
+  attachments?: SendEmailAttachment[];
 }
 
 export interface SendEmailOutput {
@@ -103,6 +110,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SmtpResult> {
       subject: input.subject,
       text: input.textBody ?? input.htmlBody.replace(/<[^>]*>/g, ''),
       html: input.htmlBody,
+      attachments: input.attachments?.map((a) => ({
+        filename: a.filename,
+        path: a.storagePath,
+        contentType: a.mimeType,
+      })),
     });
 
     const latencyMs = Date.now() - start;

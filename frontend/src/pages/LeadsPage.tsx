@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useInfiniteLeads, useDeleteLead, usePauseLead, useBulkPauseLeads } from '@/api/leads';
 import { useCampaigns, useAddLeadsToCampaign } from '@/api/campaigns';
+import { usePipelines, useBulkMoveLead } from '@/api/pipelines';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { useToast } from '@/components/ui/Toast';
@@ -20,10 +22,13 @@ import {
   Trash2,
   Pause,
   Play,
-  AlertCircle,
   InboxIcon,
   ExternalLink,
   X,
+  Flame,
+  PhoneCall,
+  MessageSquareMore,
+  Tag,
 } from 'lucide-react';
 
 const statusTones: Record<LeadStatus, StatusTone> = {
@@ -36,30 +41,53 @@ const statusTones: Record<LeadStatus, StatusTone> = {
 
 export function LeadsPage() {
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [classificationFilter, setClassificationFilter] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'all' | 'uncontacted' | 'contacted' | 'hot' | 'replied'>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [search]);
+
+  const apiFilters = {
+    search: debouncedSearch || undefined,
+    status: statusFilter || undefined,
+    classification: (activeTab === 'hot' ? 'hot' : classificationFilter) || undefined,
+    tags: activeTab === 'contacted' ? 'contacted'
+         : activeTab === 'replied' ? 'replied'
+         : undefined,
+  };
+
   const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
-    useInfiniteLeads({
-      search: search || undefined,
-      status: statusFilter || undefined,
-    });
+    useInfiniteLeads(apiFilters);
   const deleteLead = useDeleteLead();
   const pauseLead = usePauseLead();
   const bulkPause = useBulkPauseLeads();
   const { data: campaigns } = useCampaigns();
   const addLeadsToCampaign = useAddLeadsToCampaign();
   const [selectedCampaign, setSelectedCampaign] = useState('');
+  const { data: pipelines } = usePipelines();
+  const bulkMoveLead = useBulkMoveLead();
+  const [selectedPipelineStage, setSelectedPipelineStage] = useState('');
   const { showToast } = useToast();
 
   const leads = data?.pages.flatMap((p) => p.items) ?? [];
-  const allSelected = leads.length > 0 && leads.every((l) => selected.has(l.id));
+  // For 'uncontacted' tab, filter client-side: leads with no 'contacted' tag
+  const filteredLeads = activeTab === 'uncontacted'
+    ? leads.filter((l) => !l.tags?.includes('contacted'))
+    : leads;
+  const allSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selected.has(l.id));
 
   function toggleAll() {
     if (allSelected) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(leads.map((l) => l.id)));
+      setSelected(new Set(filteredLeads.map((l) => l.id)));
     }
   }
 
@@ -118,6 +146,19 @@ export function LeadsPage() {
     }
   };
 
+  const handleMoveToPipeline = async () => {
+    if (!selectedPipelineStage) return;
+    const ids = Array.from(selected);
+    try {
+      await bulkMoveLead.mutateAsync({ stageId: selectedPipelineStage, leadIds: ids });
+      showToast(`${ids.length} leads moved to pipeline stage.`, 'success');
+      setSelected(new Set());
+      setSelectedPipelineStage('');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to move leads to pipeline.'), 'error');
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -150,9 +191,33 @@ export function LeadsPage() {
 
       <Card>
         <CardHeader>
+          {/* ── Quick-view tabs ── */}
+          <div className="flex gap-1 pb-3 border-b border-slate-100 mb-3 overflow-x-auto">
+            {([
+              { key: 'all',         label: 'All Leads',    icon: <InboxIcon className="h-3.5 w-3.5" /> },
+              { key: 'uncontacted', label: 'Uncontacted',  icon: <PhoneCall className="h-3.5 w-3.5" /> },
+              { key: 'contacted',   label: 'Contacted',    icon: <MessageSquareMore className="h-3.5 w-3.5" /> },
+              { key: 'hot',         label: 'Hot 🔥',       icon: <Flame className="h-3.5 w-3.5" /> },
+              { key: 'replied',     label: 'Replied',      icon: <Tag className="h-3.5 w-3.5" /> },
+            ] as { key: typeof activeTab; label: string; icon: React.ReactNode }[]).map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => { setActiveTab(tab.key); setSelected(new Set()); }}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                  activeTab === tab.key
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
                 id="leads-search"
                 placeholder="Search leads…"
@@ -173,6 +238,18 @@ export function LeadsPage() {
               <option value="won">Won</option>
               <option value="lost">Lost</option>
               <option value="opted_out">Opted Out</option>
+            </select>
+            <select
+              id="leads-classification-filter"
+              value={classificationFilter}
+              onChange={(e) => setClassificationFilter(e.target.value)}
+              disabled={activeTab === 'hot'}
+              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
+            >
+              <option value="">All Scores</option>
+              <option value="hot">🔥 Hot</option>
+              <option value="warm">🌡️ Warm</option>
+              <option value="cold">❄️ Cold</option>
             </select>
           </div>
 
@@ -223,6 +300,33 @@ export function LeadsPage() {
                   Add
                 </Button>
               </div>
+              <div className="flex items-center gap-2 ml-4 border-l border-blue-200 pl-4">
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-3 py-1 text-xs max-w-xs truncate"
+                  value={selectedPipelineStage}
+                  onChange={(e) => setSelectedPipelineStage(e.target.value)}
+                >
+                  <option value="">Select pipeline stage...</option>
+                  {pipelines?.map((p) => (
+                    <optgroup key={p.id} label={p.name}>
+                      {p.stages?.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-8"
+                  disabled={!selectedPipelineStage || bulkMoveLead.isPending}
+                  onClick={handleMoveToPipeline}
+                >
+                  Move
+                </Button>
+              </div>
               <Button
                 variant="ghost"
                 size="icon"
@@ -241,20 +345,11 @@ export function LeadsPage() {
 
           {/* ── Error state ── */}
           {!isLoading && error && (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-6 py-10 text-center">
-              <AlertCircle className="h-8 w-8 text-red-400" />
-              <div>
-                <p className="font-semibold text-red-700">Failed to load leads</p>
-                <p className="mt-1 text-sm text-red-500">{error.message}</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
-                Try again
-              </Button>
-            </div>
+            <ErrorState message={error.message} onRetry={() => window.location.reload()} />
           )}
 
           {/* ── Empty state ── */}
-          {!isLoading && !error && leads.length === 0 && (
+          {!isLoading && !error && filteredLeads.length === 0 && (
             <EmptyState
               icon={<InboxIcon className="h-6 w-6" />}
               title="No leads found"
@@ -271,7 +366,7 @@ export function LeadsPage() {
           )}
 
           {/* ── Data table ── */}
-          {!isLoading && !error && leads.length > 0 && (
+          {!isLoading && !error && filteredLeads.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -281,21 +376,22 @@ export function LeadsPage() {
                         type="checkbox"
                         checked={allSelected}
                         onChange={toggleAll}
-                        className="h-4 w-4 rounded border-gray-300"
+                        className="h-4 w-4 rounded border-slate-300"
                         aria-label="Select all"
                       />
                     </th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Business</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Contact</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Email</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Phone</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Score</th>
-                    <th className="pb-3 text-right font-medium text-gray-500">Actions</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Business</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Contact</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Email</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Phone</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Status</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Score</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Tags</th>
+                    <th className="pb-3 text-right font-medium text-slate-500">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {leads.map((lead: Lead) => (
+                  {filteredLeads.map((lead: Lead) => (
                     <tr
                       key={lead.id}
                       className={`border-b transition-colors hover:bg-slate-50 ${selected.has(lead.id) ? 'bg-blue-50/60' : ''}`}
@@ -305,7 +401,7 @@ export function LeadsPage() {
                           type="checkbox"
                           checked={selected.has(lead.id)}
                           onChange={() => toggleOne(lead.id)}
-                          className="h-4 w-4 rounded border-gray-300"
+                          className="h-4 w-4 rounded border-slate-300"
                           aria-label={`Select ${lead.business_name}`}
                         />
                       </td>
@@ -316,17 +412,39 @@ export function LeadsPage() {
                         >
                           {lead.business_name}
                         </Link>
-                        <div className="text-xs text-gray-400">{lead.industry}</div>
+                        <div className="text-xs text-slate-400">{lead.industry}</div>
                       </td>
-                      <td className="py-3 text-gray-700">{lead.contact_name}</td>
-                      <td className="py-3 text-gray-700">{lead.email}</td>
-                      <td className="py-3 text-gray-700">{lead.phone}</td>
+                      <td className="py-3 text-slate-700">{lead.contact_name}</td>
+                      <td className="py-3 text-slate-700">{lead.email}</td>
+                      <td className="py-3 text-slate-700">{lead.phone}</td>
                       <td className="py-3">
                         <StatusBadge tone={statusTones[lead.status]}>
                           {lead.status.replace('_', ' ')}
                         </StatusBadge>
                       </td>
-                      <td className="py-3 font-medium text-gray-700">{lead.lead_score}</td>
+                      <td className="py-3">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          lead.classification === 'hot' ? 'bg-red-100 text-red-700'
+                          : lead.classification === 'warm' ? 'bg-amber-100 text-amber-700'
+                          : lead.classification === 'cold' ? 'bg-blue-100 text-blue-600'
+                          : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {lead.classification === 'hot' ? '🔥' : lead.classification === 'warm' ? '🌡️' : lead.classification === 'cold' ? '❄️' : ''}
+                          {lead.lead_score}
+                        </span>
+                      </td>
+                      <td className="py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {lead.tags?.slice(0, 3).map((tag) => (
+                            <span key={tag} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                              {tag}
+                            </span>
+                          ))}
+                          {(lead.tags?.length ?? 0) > 3 && (
+                            <span className="text-[10px] text-slate-400">+{(lead.tags?.length ?? 0) - 3}</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 text-right">
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="icon" asChild title="View detail">

@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>13/13</span>
+                <span class='fraction'>0/13</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">75% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>3/4</span>
+                <span class='fraction'>0/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>3/3</span>
+                <span class='fraction'>0/3</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>11/11</span>
+                <span class='fraction'>0/11</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -96,50 +96,50 @@
 <a name='L31'></a><a href='#L31'>31</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">122x</span>
-<span class="cline-any cline-yes">122x</span>
-<span class="cline-any cline-yes">122x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">90x</span>
-<span class="cline-any cline-yes">34x</span>
-<span class="cline-any cline-yes">34x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">90x</span>
-<span class="cline-any cline-yes">26x</span>
-<span class="cline-any cline-yes">26x</span>
-<span class="cline-any cline-yes">26x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { Response } from 'express';
 import { ApiResponse } from '../types';
 &nbsp;
-export function sendSuccess&lt;T&gt;(
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >s</span>endSuccess&lt;</span>T&gt;(
   res: Response,
   data: T,
-  statusCode = 200,
+  statusCode = <span class="branch-0 cbranch-no" title="branch not covered" >200,</span>
   meta?: ApiResponse&lt;T&gt;['meta'],
 ): void {
-  const body: ApiResponse&lt;T&gt; = { success: true, data };
-  if (meta) body.meta = meta;
-  res.status(statusCode).json(body);
+  const body: ApiResponse&lt;T&gt; = <span class="cstat-no" title="statement not covered" >{ success: true, data };</span>
+<span class="cstat-no" title="statement not covered" >  <span class="missing-if-branch" title="if path not taken" >I</span>if (meta) <span class="cstat-no" title="statement not covered" >body.meta = meta;</span></span>
+<span class="cstat-no" title="statement not covered" >  res.status(statusCode).json(body);</span>
 }
 &nbsp;
-export function sendError(res: Response, message: string, statusCode = <span class="branch-0 cbranch-no" title="branch not covered" >500)</span>: void {
-  const body: ApiResponse = { success: false, error: message };
-  res.status(statusCode).json(body);
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >s</span>endError(</span>res: Response, message: string, statusCode = <span class="branch-0 cbranch-no" title="branch not covered" >500)</span>: void {
+  const body: ApiResponse = <span class="cstat-no" title="statement not covered" >{ success: false, error: message };</span>
+<span class="cstat-no" title="statement not covered" >  res.status(statusCode).json(body);</span>
 }
 &nbsp;
 /**
@@ -148,10 +148,10 @@ export function sendError(res: Response, message: string, statusCode = <span cla
  * instead of using `sendSuccess`, or when the same envelope shape must be
  * produced for non-Express responses (e.g. worker return values).
  */
-export function successResponse&lt;T&gt;(data: T, meta?: ApiResponse&lt;T&gt;['meta']): ApiResponse&lt;T&gt; {
-  const body: ApiResponse&lt;T&gt; = { success: true, data };
-  if (meta) body.meta = meta;
-  return body;
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >s</span>uccessResponse&lt;</span>T&gt;(data: T, meta?: ApiResponse&lt;T&gt;['meta']): ApiResponse&lt;T&gt; {
+  const body: ApiResponse&lt;T&gt; = <span class="cstat-no" title="statement not covered" >{ success: true, data };</span>
+<span class="cstat-no" title="statement not covered" >  <span class="missing-if-branch" title="if path not taken" >I</span>if (meta) <span class="cstat-no" title="statement not covered" >body.meta = meta;</span></span>
+<span class="cstat-no" title="statement not covered" >  return body;</span>
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -160,7 +160,7 @@ export function successResponse&lt;T&gt;(data: T, meta?: ApiResponse&lt;T&gt;['m
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-27T12:57:54.233Z
+                at 2026-07-09T04:39:21.145Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -1,8 +1,8 @@
 import { query, queryOne } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { TemplateListFilters, TemplateRow } from './templates.types';
+import { TemplateAttachment, TemplateListFilters, TemplateRow } from './templates.types';
 
-const COLS = `id, name, channel, subject, body, variables, approval_status, approved_by, approved_at, rejection_reason, created_by, created_at, updated_at`;
+const COLS = `id, name, channel, subject, body, variables, attachments, approval_status, approved_by, approved_at, rejection_reason, created_by, created_at, updated_at`;
 
 export async function findTemplates(
   filters: TemplateListFilters,
@@ -62,6 +62,36 @@ export async function insertTemplate(data: {
     [data.name, data.channel, data.subject, data.body, data.variables, data.created_by],
   );
   if (!row) throw new AppError('Failed to create template', 500);
+  return row;
+}
+
+export async function appendTemplateAttachment(
+  id: string,
+  attachment: TemplateAttachment,
+): Promise<TemplateRow> {
+  const row = await queryOne<TemplateRow>(
+    `UPDATE templates SET attachments = attachments || $1::jsonb WHERE id = $2 RETURNING ${COLS}`,
+    [JSON.stringify([attachment]), id],
+  );
+  if (!row) throw new AppError('Template not found', 404);
+  return row;
+}
+
+export async function removeTemplateAttachment(
+  id: string,
+  attachmentId: string,
+): Promise<TemplateRow> {
+  const row = await queryOne<TemplateRow>(
+    `UPDATE templates
+     SET attachments = COALESCE(
+       (SELECT jsonb_agg(a) FROM jsonb_array_elements(attachments) a WHERE a->>'id' != $2),
+       '[]'::jsonb
+     )
+     WHERE id = $1
+     RETURNING ${COLS}`,
+    [id, attachmentId],
+  );
+  if (!row) throw new AppError('Template not found', 404);
   return row;
 }
 

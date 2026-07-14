@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { createTemplateSchema } from '../templates/templates.schema';
+import { createSequenceSchema } from '../outreach/outreach.schema';
+import { createCampaignSchema } from '../campaigns/campaigns.schema';
 
 const uuid = z.string().uuid();
 const actorRole = z.enum(['admin', 'manager', 'sales', 'marketing', 'viewer']);
@@ -18,6 +21,14 @@ export const agentActionNameSchema = z.enum([
   'campaign.stats',
   'assignment.override',
   'report.dashboard',
+  'template.list',
+  'template.create',
+  'sequence.create',
+  'campaign.create',
+  'campaign.add_leads',
+  'pipeline.list',
+  'sequence.list',
+  'scraper.list',
   'scraper.run',
   'outreach.send_manual',
   'ai.decision.recompute',
@@ -81,6 +92,25 @@ export const assignmentOverrideArgsSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export const scraperRunArgsSchema = z.object({ configId: uuid });
+export const templateListArgsSchema = z.object({
+  limit: z.number().int().min(1).max(100).default(25),
+  channel: messageChannel.optional(),
+  approval_status: z.enum(['pending', 'approved', 'rejected']).optional(),
+  search: z.string().max(200).optional(),
+});
+// Reuse the module create schemas so agent-proposed creates are validated
+// identically to the REST endpoints (single source of truth, no drift).
+export const templateCreateArgsSchema = createTemplateSchema;
+export const sequenceCreateArgsSchema = createSequenceSchema;
+export const campaignCreateArgsSchema = createCampaignSchema;
+export const campaignAddLeadsArgsSchema = z.object({
+  id: uuid,
+  lead_ids: z.array(uuid).min(1).max(500),
+});
+export const sequenceListArgsSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  offset: z.number().int().min(0).optional(),
+});
 export const outreachSendManualArgsSchema = z.object({
   leadId: uuid,
   campaignId: uuid,

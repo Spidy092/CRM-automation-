@@ -24,12 +24,13 @@ describe('planner.prompt', () => {
     expect(prompt).toContain('2026-06-30');
   });
 
-  it('buildPlannerSystemPrompt includes all 17 action names', () => {
+  it('buildPlannerSystemPrompt includes all 21 action names', () => {
     const prompt = buildPlannerSystemPrompt({ actor, autonomyLevel: 'guarded', today: '2026-06-30' });
     for (const name of [
       'lead.list', 'lead.get', 'lead.create', 'lead.update', 'lead.pause',
       'pipeline.move_lead', 'campaign.list', 'campaign.pause', 'campaign.resume',
       'campaign.launch', 'campaign.stats', 'assignment.override', 'report.dashboard',
+      'template.list', 'pipeline.list', 'sequence.list', 'scraper.list',
       'scraper.run', 'outreach.send_manual', 'ai.decision.recompute', 'ai.inbox.action',
     ]) {
       expect(prompt).toContain(name);

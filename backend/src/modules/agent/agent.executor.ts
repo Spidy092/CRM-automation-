@@ -9,11 +9,7 @@ import {
   findAgentActionById,
   updateAgentActionStatus,
 } from './agent.repository';
-import type {
-  AgentActionRow,
-  AgentActor,
-  ExecuteAgentActionOptions,
-} from './agent.types';
+import type { AgentActionRow, AgentActor, ExecuteAgentActionOptions } from './agent.types';
 
 export async function executeAgentAction(
   id: string,
@@ -22,11 +18,17 @@ export async function executeAgentAction(
   const existing = await findAgentActionById(id);
   if (!existing) throw new AppError('Agent action not found', 404);
   if (existing.status === 'succeeded') return existing;
-  if (existing.status === 'rejected' || existing.status === 'cancelled' || existing.status === 'expired') {
+  if (
+    existing.status === 'rejected' ||
+    existing.status === 'cancelled' ||
+    existing.status === 'expired'
+  ) {
     throw new AppError(`Agent action is ${existing.status}`, 400);
   }
   if (isExpired(existing.expires_at)) {
-    await updateAgentActionStatus(existing.id, 'expired', { errorMessage: 'Agent action has expired' });
+    await updateAgentActionStatus(existing.id, 'expired', {
+      errorMessage: 'Agent action has expired',
+    });
     throw new AppError('Agent action has expired', 400);
   }
 
@@ -64,7 +66,8 @@ export async function executeAgentAction(
         agentActionId: claimed.id,
         idempotencyKey: claimed.idempotency_key,
         result: normalized,
-        human_approval_required: claimed.status === 'pending_approval' || Boolean(options.approvedBy),
+        human_approval_required:
+          claimed.status === 'pending_approval' || Boolean(options.approvedBy),
         approved_by: options.approvedBy ?? claimed.approved_by,
       },
       ipAddress: actor.ipAddress ?? null,
@@ -89,7 +92,10 @@ export async function executeAgentAction(
       confidence: claimed.confidence,
       autonomyLevel: claimed.autonomy_level,
       humanApprovalRequired: claimed.status === 'pending_approval' || Boolean(options.approvedBy),
-      inputContext: { agentActionId: claimed.id, approvedBy: options.approvedBy ?? claimed.approved_by },
+      inputContext: {
+        agentActionId: claimed.id,
+        approvedBy: options.approvedBy ?? claimed.approved_by,
+      },
     });
     return executed;
   } catch (err) {
@@ -145,7 +151,10 @@ export function isExpired(expiresAt: string | null): boolean {
   return Number.isFinite(timestamp) && timestamp <= Date.now();
 }
 
-export function resolveExecutionActor(actor: AgentActor | null | undefined, action: AgentActionRow): AgentActor {
+export function resolveExecutionActor(
+  actor: AgentActor | null | undefined,
+  action: AgentActionRow,
+): AgentActor {
   if (action.requested_by && action.requester_role) {
     return {
       id: action.requested_by,
@@ -159,7 +168,10 @@ export function resolveExecutionActor(actor: AgentActor | null | undefined, acti
   throw new AppError('Agent action execution requires the original requester context', 400);
 }
 
-export function assertApproverCanExecute(approver: AgentActor | null | undefined, action: AgentActionRow): void {
+export function assertApproverCanExecute(
+  approver: AgentActor | null | undefined,
+  action: AgentActionRow,
+): void {
   if (!approver) return;
   const definition = getAgentActionDefinition(action.action_name);
   if (!definition.allowedRoles.includes(approver.role)) {

@@ -11,6 +11,10 @@ jest.mock('./leads.repository', () => ({
   updateLeadStatus: jest.fn(),
   runInTransaction: jest.fn(),
 }));
+jest.mock('../activities/activities.repository', () => ({
+  createOutboundActivityAndUpdateLead: jest.fn(),
+  insertActivity: jest.fn(),
+}));
 jest.mock('../custom-fields/customFields.repository', () => ({
   findActiveDefinitions: jest.fn(),
 }));
@@ -23,10 +27,15 @@ import {
   createLead,
   getLeadById,
   listLeads,
+  logOutboundActivity,
   setLeadPaused,
   softDeleteLeadById,
   updateLeadFields,
 } from './leads.service';
+import {
+  createOutboundActivityAndUpdateLead,
+  insertActivity,
+} from '../activities/activities.repository';
 import {
   findExistingForDedup,
   findLeadById,
@@ -61,6 +70,7 @@ const baseRow: LeadRow = {
   custom_fields: {},
   tags: [],
   notes: null,
+  deal_value: null,
   created_at: '2026-06-19T00:00:00.000Z',
   updated_at: '2026-06-19T00:00:00.000Z',
   deleted_at: null,
@@ -76,12 +86,47 @@ const validInput = {
   source_platform: 'manual_upload',
 };
 
+const mockActivity = {
+  id: 'act-1',
+  lead_id: 'lead-1',
+  user_id: 'user-1',
+  type: 'call',
+  metadata: {},
+  created_at: '2026-06-19T00:00:00.000Z',
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   (validateCustomFieldValues as jest.Mock).mockReturnValue({
     valid: true,
     sanitized: {},
     errors: [],
+  });
+});
+
+describe('logOutboundActivity', () => {
+  it('delegates to createOutboundActivityAndUpdateLead', async () => {
+    (createOutboundActivityAndUpdateLead as jest.Mock).mockResolvedValue(mockActivity);
+    const res = await logOutboundActivity('lead-1', 'user-1', 'email', { subject: 'Hi' });
+    expect(res).toEqual(mockActivity);
+    expect(createOutboundActivityAndUpdateLead).toHaveBeenCalledWith({
+      lead_id: 'lead-1',
+      user_id: 'user-1',
+      type: 'email',
+      metadata: { subject: 'Hi' },
+    });
+  });
+
+  it('supports call and whatsapp types', async () => {
+    (createOutboundActivityAndUpdateLead as jest.Mock).mockResolvedValue({ ...mockActivity, type: 'whatsapp' });
+    const res = await logOutboundActivity('lead-2', 'user-2', 'whatsapp');
+    expect(res.type).toBe('whatsapp');
+    expect(createOutboundActivityAndUpdateLead).toHaveBeenCalledWith({
+      lead_id: 'lead-2',
+      user_id: 'user-2',
+      type: 'whatsapp',
+      metadata: undefined,
+    });
   });
 });
 
@@ -196,6 +241,60 @@ describe('updateLeadFields', () => {
     );
     expect(res.notes).toBe('hi');
     expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('logs status_change activity when pipeline_stage_id changes', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-1' });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-2' });
+    await updateLeadFields(
+      'lead-1',
+      { pipeline_stage_id: 'stage-2' },
+      { id: 'admin-1', role: 'admin' },
+    );
+    expect(insertActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lead_id: 'lead-1',
+        user_id: 'admin-1',
+        type: 'status_change',
+        metadata: expect.objectContaining({
+          field: 'pipeline_stage_id',
+          from: 'stage-1',
+          to: 'stage-2',
+        }),
+      }),
+    );
+  });
+
+  it('logs assignment_change activity when assigned_to changes', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-2' });
+    await updateLeadFields(
+      'lead-1',
+      { assigned_to: 'rep-2' },
+      { id: 'admin-1', role: 'admin' },
+    );
+    expect(insertActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lead_id: 'lead-1',
+        user_id: 'admin-1',
+        type: 'assignment_change',
+        metadata: expect.objectContaining({
+          from: 'rep-1',
+          to: 'rep-2',
+        }),
+      }),
+    );
+  });
+
+  it('does not log activity when pipeline_stage_id or assigned_to are unchanged', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-1' });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-1' });
+    await updateLeadFields(
+      'lead-1',
+      { pipeline_stage_id: 'stage-1' },
+      { id: 'admin-1', role: 'admin' },
+    );
+    expect(insertActivity).not.toHaveBeenCalled();
   });
 });
 

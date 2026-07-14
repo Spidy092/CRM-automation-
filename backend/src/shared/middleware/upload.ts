@@ -15,3 +15,16 @@ export const leadImportUpload = multer({
   storage,
   limits: { fileSize: MAX_BYTES },
 });
+
+/**
+ * In-memory upload for template attachments (images/PDFs sent alongside
+ * WhatsApp/email messages). Kept in memory — the service layer writes the
+ * buffer to disk itself so it controls the filename and storage path.
+ * Content-type validation happens in the handler, same rationale as above.
+ */
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+
+export const templateAttachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ATTACHMENT_MAX_BYTES },
+});

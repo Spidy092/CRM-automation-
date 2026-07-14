@@ -105,8 +105,8 @@ export function CampaignsPage() {
           <div className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Launch Preview</h2>
-                <p className="text-sm text-gray-500">Eligible leads, skipped leads, and readiness checks.</p>
+                <h2 className="text-lg font-semibold text-slate-900">Launch Preview</h2>
+                <p className="text-sm text-slate-500">Eligible leads, skipped leads, and readiness checks.</p>
               </div>
               <Button variant="outline" size="sm" onClick={() => setPreviewCampaignId(null)}>
                 Close
@@ -121,16 +121,16 @@ export function CampaignsPage() {
               <div className="mt-5 space-y-4">
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div className="rounded-md border p-3">
-                    <div className="text-gray-500">Eligible</div>
+                    <div className="text-slate-500">Eligible</div>
                     <div className="text-2xl font-semibold text-green-700">{preview.eligibleLeads.length}</div>
                   </div>
                   <div className="rounded-md border p-3">
-                    <div className="text-gray-500">Skipped</div>
+                    <div className="text-slate-500">Skipped</div>
                     <div className="text-2xl font-semibold text-amber-700">{preview.skippedLeads.length}</div>
                   </div>
                   <div className="rounded-md border p-3">
-                    <div className="text-gray-500">Jobs</div>
-                    <div className="text-2xl font-semibold text-gray-900">{preview.expectedJobs}</div>
+                    <div className="text-slate-500">Jobs</div>
+                    <div className="text-2xl font-semibold text-slate-900">{preview.expectedJobs}</div>
                   </div>
                 </div>
 
@@ -146,8 +146,8 @@ export function CampaignsPage() {
                   <div className="max-h-48 overflow-auto rounded-md border">
                     {preview.skippedLeads.slice(0, 8).map((lead) => (
                       <div key={lead.leadId} className="border-b p-3 text-sm last:border-b-0">
-                        <div className="font-medium text-gray-900">{lead.businessName}</div>
-                        <div className="text-gray-500">{lead.reasons.join(' ')}</div>
+                        <div className="font-medium text-slate-900">{lead.businessName}</div>
+                        <div className="text-slate-500">{lead.reasons.join(' ')}</div>
                       </div>
                     ))}
                   </div>
@@ -192,7 +192,7 @@ export function CampaignsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between text-sm text-gray-500">
+                  <div className="flex items-center justify-between text-sm text-slate-500">
                     <span>Tone: {campaign.tone}</span>
                     {campaign.launched_at && (
                       <span>

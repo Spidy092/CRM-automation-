@@ -2,19 +2,20 @@ import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import type { FormEvent, ReactNode } from 'react';
-import { Bot, CheckCircle2, MessageSquare, Send, X } from 'lucide-react';
+import { Bot, Check, Loader2, MessageSquare, Send, X, XCircle } from 'lucide-react';
 import {
   useChatHistory,
   useSendChatMessage,
   type ChatPageContext,
   type ChatResponse,
+  type ChatTurn,
   type ChatVisibleRecord,
 } from '@/api/chat';
 import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
+import { useActionInboxItem } from '@/api/aiInbox';
 import { PlanPreview } from './PlanPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import type { Campaign } from '@/api/campaigns';
 import type { Pipeline, PipelineWithStages } from '@/api/pipelines';
@@ -38,7 +39,13 @@ const CONTEXT_RECORD_LIMIT = 25;
 function addVisibleRecord(records: ChatVisibleRecord[], record: ChatVisibleRecord): void {
   if (records.length >= CONTEXT_RECORD_LIMIT) return;
   if (records.some((existing) => existing.type === record.type && existing.id === record.id)) return;
-  records.push(record);
+  // Backend validation rejects empty strings — omit blank optional fields entirely.
+  records.push({
+    ...record,
+    name: record.name?.trim() ? record.name : 'Untitled',
+    status: record.status?.trim() ? record.status : undefined,
+    subtitle: record.subtitle?.trim() ? record.subtitle : undefined,
+  });
 }
 
 function addLead(records: ChatVisibleRecord[], lead: Lead): void {
@@ -444,6 +451,16 @@ export function buildPageContext(route: string, queryClient: QueryClient): ChatP
   };
 }
 
+
+function extractLastPlanId(history: ChatTurn[]): string | null {
+  for (const turn of [...history].reverse()) {
+    if (turn.role !== 'assistant') continue;
+    const match = turn.content.match(/^plan:([0-9a-f-]{36})/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function getConversationId(): string {
   const key = 'crm-chat-conversation-id';
   const existing = window.sessionStorage.getItem(key);
@@ -454,28 +471,173 @@ function getConversationId(): string {
 }
 
 
-function renderCopilotText(content: string): ReactNode[] {
-  const cleaned = content
-    .replace(/👋|✨|🚀|✅|❌|⚠️|📌/gu, '')
-    .replace(/^[ \t]*[-*][ \t]+/gm, '')
-    .trim();
+function isTableSeparatorRow(line: string): boolean {
+  return /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes('-');
+}
 
-  return cleaned.split(/\n+/).flatMap((line, lineIndex) => {
-    const parts = line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
-    const nodes = parts.map((part, partIndex) => {
+/** Defensive fallback: the model is told never to emit markdown tables, but if
+ * one slips through, render it as readable "cell · cell · cell" lines instead
+ * of raw pipe characters. */
+function normalizeTableRows(lines: string[]): string[] {
+  return lines
+    .filter((line) => !isTableSeparatorRow(line))
+    .map((line) => {
+      if (!line.trim().startsWith('|')) return line;
+      const cells = line
+        .split('|')
+        .map((cell) => cell.trim())
+        .filter(Boolean);
+      return cells.join(' · ');
+    });
+}
+
+function renderInlineBold(text: string, keyPrefix: string): ReactNode[] {
+  return text
+    .split(/(\*\*[^*]+\*\*)/g)
+    .filter(Boolean)
+    .map((part, index) => {
       const bold = part.startsWith('**') && part.endsWith('**');
-      const text = bold ? part.slice(2, -2) : part;
+      const inner = bold ? part.slice(2, -2) : part;
       return bold ? (
-        <strong key={`${lineIndex}-${partIndex}`} className="font-semibold text-slate-900">
-          {text}
+        <strong key={`${keyPrefix}-${index}`} className="font-semibold text-slate-900">
+          {inner}
         </strong>
       ) : (
-        <span key={`${lineIndex}-${partIndex}`}>{text}</span>
+        <span key={`${keyPrefix}-${index}`}>{inner}</span>
       );
     });
+}
 
-    return lineIndex === 0 ? nodes : [<br key={`br-${lineIndex}`} />, ...nodes];
+function renderCopilotText(content: string): ReactNode[] {
+  const cleaned = content.replace(/👋|✨|🚀|✅|❌|⚠️|📌/gu, '').trim();
+  const rawLines = cleaned.split(/\n+/).filter((line) => line.trim().length > 0);
+  const lines = normalizeTableRows(rawLines);
+
+  return lines.map((line, lineIndex) => {
+    const listMatch = line.match(/^\s*(\d+[.)]|[-*])\s+(.*)$/);
+    const marker = listMatch ? listMatch[1].replace(/[.)]$/, '.') : null;
+    const text = listMatch ? listMatch[2] : line;
+
+    return (
+      <div
+        key={lineIndex}
+        className={cn('leading-snug', lineIndex > 0 && 'mt-1', listMatch && 'flex gap-1.5')}
+      >
+        {marker && <span className="shrink-0 text-slate-400">{marker}</span>}
+        <span>{renderInlineBold(text, `${lineIndex}`)}</span>
+      </div>
+    );
   });
+}
+
+const ACTION_QUERY_KEYS: Array<{ prefix: string; keys: string[][] }> = [
+  { prefix: 'lead.', keys: [['leads']] },
+  { prefix: 'pipeline.', keys: [['pipelines'], ['leads']] },
+  { prefix: 'campaign.', keys: [['campaigns']] },
+  { prefix: 'scraper.', keys: [['scraper', 'configs']] },
+  { prefix: 'assignment.', keys: [['assignments-config'], ['assignments-eligible-users']] },
+  { prefix: 'outreach.', keys: [['sequences'], ['outreach', 'tasks']] },
+  { prefix: 'ai.decision.', keys: [['ai-decisions']] },
+];
+
+function invalidateQueriesForAction(queryClient: QueryClient, actionName: string): void {
+  queryClient.invalidateQueries({ queryKey: ['ai-inbox'] });
+  const match = ACTION_QUERY_KEYS.find(({ prefix }) => actionName.startsWith(prefix));
+  match?.keys.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
+}
+
+function ChatApprovalCard({
+  actionName,
+  inboxItemId,
+  onResolved,
+}: {
+  actionName: string;
+  inboxItemId: string | null;
+  onResolved: () => void;
+}) {
+  const actionInboxItem = useActionInboxItem();
+  const [resolution, setResolution] = useState<'approved' | 'rejected' | null>(null);
+
+  if (!inboxItemId) {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <span className="font-medium">{actionName}</span> needs approval. Open the AI Inbox to
+        review it.
+      </div>
+    );
+  }
+
+  if (resolution) {
+    return (
+      <div
+        className={cn(
+          'flex items-center gap-2 rounded-md border px-3 py-2 text-sm',
+          resolution === 'approved'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            : 'border-slate-200 bg-slate-50 text-slate-600',
+        )}
+      >
+        {resolution === 'approved' ? (
+          <Check className="h-4 w-4 shrink-0" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0" />
+        )}
+        <span>
+          {actionName} {resolution === 'approved' ? 'approved and running.' : 'rejected.'}
+        </span>
+      </div>
+    );
+  }
+
+  const act = (action: 'approve' | 'reject') => {
+    actionInboxItem.mutate(
+      { id: inboxItemId, action },
+      {
+        onSuccess: () => {
+          setResolution(action === 'approve' ? 'approved' : 'rejected');
+          onResolved();
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      <p>
+        <span className="font-medium">{actionName}</span> needs your approval.
+      </p>
+      <div className="mt-2 flex gap-2">
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 gap-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-700"
+          disabled={actionInboxItem.isPending}
+          onClick={() => act('approve')}
+        >
+          {actionInboxItem.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Check className="h-3.5 w-3.5" />
+          )}
+          Approve
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 px-2 text-xs"
+          disabled={actionInboxItem.isPending}
+          onClick={() => act('reject')}
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          Reject
+        </Button>
+      </div>
+      {actionInboxItem.isError && (
+        <p className="mt-1 text-xs text-red-700">Could not update the approval. Try again.</p>
+      )}
+    </div>
+  );
 }
 
 export function ChatWidget() {
@@ -487,13 +649,19 @@ export function ChatWidget() {
   const conversationId = useMemo(getConversationId, []);
   const history = useChatHistory(conversationId);
   const sendMessage = useSendChatMessage();
+  const turns = history.data ?? [];
 
-  const planId = (lastResponse?.action?.result as { planId?: string } | undefined)?.planId;
+  const responsePlanId = (lastResponse?.action?.result as { planId?: string } | undefined)?.planId;
+  const historyPlanId = extractLastPlanId(turns);
+  const planId = responsePlanId ?? historyPlanId;
   const planQuery = usePlan(planId ?? '');
   const approvePlan = useApprovePlan();
   const cancelPlan = useCancelPlan();
 
-  const turns = history.data ?? [];
+  const visibleContent = (content: string): string => {
+    const match = content.match(/^plan:[0-9a-f-]{36}:(.*)$/s);
+    return match ? match[1] : content;
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -511,11 +679,13 @@ export function ChatWidget() {
   return (
     <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
       {open && (
-        <Card className="w-[min(calc(100vw-2rem),24rem)] border-slate-200 shadow-xl">
-          <CardContent className="flex h-[30rem] flex-col p-0">
-            <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-4">
+        <section className="flex h-[32rem] w-[min(calc(100vw-2rem),25rem)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl" aria-label="Copilot chat">
+            <div className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 px-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Bot className="h-4 w-4" /> Copilot
+                <span className="grid h-8 w-8 place-items-center rounded-md bg-slate-950 text-white">
+                  <Bot className="h-4 w-4" />
+                </span>
+                <span>Copilot</span>
               </div>
               <button
                 type="button"
@@ -527,10 +697,10 @@ export function ChatWidget() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3">
               {turns.length === 0 && !lastResponse && (
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  Ask about leads, campaigns, dashboard metrics, or request an action for approval.
+                <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                  Ask about leads, templates, campaigns, pipelines, or reports. When Copilot needs permission, you can approve it here.
                 </div>
               )}
               {turns.map((turn, index) => (
@@ -540,19 +710,23 @@ export function ChatWidget() {
                     'max-w-[85%] rounded-md px-3 py-2 text-sm',
                     turn.role === 'user'
                       ? 'ml-auto bg-slate-950 text-white'
-                      : 'mr-auto border border-slate-200 bg-white text-slate-700',
+                      : 'mr-auto border border-slate-200 bg-white text-slate-700 shadow-sm',
                   )}
                 >
-                  {turn.role === 'assistant' ? renderCopilotText(turn.content) : turn.content}
+                  {turn.role === 'assistant' ? renderCopilotText(visibleContent(turn.content)) : turn.content}
                 </div>
               ))}
-              {lastResponse?.action?.policy.outcome === 'require_approval' && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle2 className="h-4 w-4" /> Approval created
-                  </div>
-                  <p className="mt-1">{lastResponse.action.name} is waiting in AI Inbox.</p>
-                </div>
+              {lastResponse?.action?.policy.outcome === 'require_approval' && !planId && (
+                <ChatApprovalCard
+                  key={
+                    lastResponse.action.inboxItemId ??
+                    lastResponse.action.agentAction?.id ??
+                    lastResponse.action.name
+                  }
+                  actionName={lastResponse.action.name}
+                  inboxItemId={lastResponse.action.inboxItemId ?? null}
+                  onResolved={() => invalidateQueriesForAction(queryClient, lastResponse.action!.name)}
+                />
               )}
               {planId && planQuery.data && (
                 <PlanPreview
@@ -561,7 +735,11 @@ export function ChatWidget() {
                   onCancel={async () => { await cancelPlan.mutateAsync(planId); }}
                 />
               )}
-              {sendMessage.isPending && <p className="text-sm text-slate-500">Working...</p>}
+              {sendMessage.isPending && (
+                <div className="mr-auto flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-sm">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Working...
+                </div>
+              )}
               {sendMessage.isError && (
                 <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   Copilot request failed.
@@ -569,24 +747,23 @@ export function ChatWidget() {
               )}
             </div>
 
-            <form onSubmit={submit} className="flex shrink-0 gap-2 border-t border-slate-200 p-3">
+            <form onSubmit={submit} className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-3">
               <Input
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
-                placeholder="Ask Copilot"
+                placeholder="Ask Copilot or approve an action"
                 disabled={sendMessage.isPending}
               />
               <Button type="submit" size="icon" disabled={sendMessage.isPending || !message.trim()}>
                 <Send className="h-4 w-4" />
               </Button>
             </form>
-          </CardContent>
-        </Card>
+        </section>
       )}
 
       <Button
         type="button"
-        className="h-12 w-12 rounded-full shadow-lg"
+        className="h-12 w-12 rounded-full bg-slate-950 shadow-lg hover:bg-slate-800"
         size="icon"
         onClick={() => setOpen((value) => !value)}
         aria-label="Open copilot"

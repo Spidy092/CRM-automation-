@@ -9,7 +9,7 @@ export function LoadingTable({ rows = 5, cols = 7 }: LoadingTableProps) {
   const columns = Array.from({ length: cols });
 
   return (
-    <div className="space-y-3 p-1">
+    <div className="flex flex-col gap-3 p-1">
       <div className="flex gap-4 pb-2">
         {columns.map((_, i) => (
           <Skeleton key={i} className={`${i === cols - 1 ? 'ml-auto ' : ''}h-4 w-24`} />

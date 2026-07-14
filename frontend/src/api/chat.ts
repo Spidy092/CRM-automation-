@@ -67,6 +67,8 @@ export interface ChatResponse {
     name: string;
     policy: AgentPolicyDecision;
     agentAction?: AgentActionRow | null;
+    /** Pending AI Inbox item linked to this action — lets the widget approve/reject in chat. */
+    inboxItemId?: string | null;
     result?: unknown;
   };
 }

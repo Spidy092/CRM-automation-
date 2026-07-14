@@ -89,3 +89,48 @@ export function useDeleteTemplate() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['templates'] }),
   });
 }
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
+
+export function useUploadTemplateAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        throw new Error('File is larger than 10MB.');
+      }
+      if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+        throw new Error('Unsupported file type. Allowed: PNG, JPEG, WEBP, GIF, PDF.');
+      }
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await apiClient.post<ApiResponse<Template>>(
+        `/templates/${id}/attachments`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', id] });
+    },
+  });
+}
+
+export function useDeleteTemplateAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, attachmentId }: { id: string; attachmentId: string }) => {
+      const response = await apiClient.delete<ApiResponse<Template>>(
+        `/templates/${id}/attachments/${attachmentId}`,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', id] });
+    },
+  });
+}

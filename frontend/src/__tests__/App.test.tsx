@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', () => ({
   apiClient: {
-    get: vi.fn().mockResolvedValue({ data: { success: true, data: { user: { id: '1', role: 'admin' } } } }),
-    post: vi.fn().mockResolvedValue({ data: { success: true } })
-  }
+    get: vi.fn().mockResolvedValue({ data: { success: true, data: { id: '1', name: 'Admin', email: 'admin@example.com', role: 'admin' } } }),
+    post: vi.fn().mockResolvedValue({ data: { success: true } }),
+  },
+  ensureAccessToken: vi.fn().mockResolvedValue('access'),
 }));
 
 describe('App', () => {

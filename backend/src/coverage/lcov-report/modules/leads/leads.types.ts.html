@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">50% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>2/2</span>
+                <span class='fraction'>1/2</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/8</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">0% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/1</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">50% </span>
-                <span class="quiet">Branches</span>
-                <span class='fraction'>3/6</span>
-            </div>
-        
-            
-            <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
-                <span class="quiet">Functions</span>
-                <span class='fraction'>1/1</span>
-            </div>
-        
-            
-            <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>2/2</span>
+                <span class='fraction'>1/2</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -199,7 +199,12 @@
 <a name='L134'></a><a href='#L134'>134</a>
 <a name='L135'></a><a href='#L135'>135</a>
 <a name='L136'></a><a href='#L136'>136</a>
-<a name='L137'></a><a href='#L137'>137</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -308,8 +313,13 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -361,6 +371,7 @@ export interface LeadRow {
   custom_fields: Record&lt;string, unknown&gt;;
   tags: string[];
   notes: string | null;
+  deal_value: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -389,6 +400,7 @@ export interface LeadResponse {
   custom_fields: Record&lt;string, unknown&gt;;
   tags: string[];
   notes: string | null;
+  deal_value: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -411,6 +423,7 @@ export interface LeadInput {
   custom_fields?: Record&lt;string, unknown&gt; | null;
   tags?: string[];
   notes?: string | null;
+  deal_value?: number | null;
 }
 &nbsp;
 export interface LeadListFilters {
@@ -423,6 +436,7 @@ export interface LeadListFilters {
   industry?: string;
   country?: string;
   assigned_to?: string;
+  pipeline_id?: string;
   search?: string;
   tags?: string[];
 }
@@ -444,8 +458,8 @@ export interface ImportSummary {
   errors: { row: number; message: string }[];
 }
 &nbsp;
-export function toLeadResponse(row: LeadRow): LeadResponse {
-  return {
+export function <span class="fstat-no" title="function not covered" >toLeadResponse(</span>row: LeadRow): LeadResponse {
+<span class="cstat-no" title="statement not covered" >  return {</span>
     id: row.id,
     business_name: row.business_name,
     contact_name: row.contact_name,
@@ -455,7 +469,7 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
     industry: row.industry,
     location: row.location,
     country: row.country,
-    google_rating: row.google_rating === null ? <span class="branch-0 cbranch-no" title="branch not covered" >null </span>: Number(row.google_rating),
+    google_rating: row.google_rating === null ? null : Number(row.google_rating),
     review_count: row.review_count,
     social_links: row.social_links,
     source_platform: row.source_platform,
@@ -464,9 +478,10 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
     status: row.status,
     assigned_to: row.assigned_to,
     pipeline_stage_id: row.pipeline_stage_id,
-    custom_fields: row.custom_fields ?? <span class="branch-1 cbranch-no" title="branch not covered" >{},</span>
-    tags: row.tags ?? <span class="branch-1 cbranch-no" title="branch not covered" >[],</span>
+    custom_fields: row.custom_fields ?? {},
+    tags: row.tags ?? [],
     notes: row.notes,
+    deal_value: row.deal_value === null ? null : Number(row.deal_value),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -478,7 +493,7 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-27T12:57:54.233Z
+                at 2026-07-09T04:39:21.145Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

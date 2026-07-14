@@ -23,24 +23,35 @@ import {
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { useDashboardMetrics } from '@/api/reports';
+import { useLeads } from '@/api/leads';
+import { useCampaigns } from '@/api/campaigns';
+import { usePipelines } from '@/api/pipelines';
+import { useTemplates } from '@/api/templates';
 import { useAuthStore } from '@/store/authStore';
 import {
   Users,
   TrendingUp,
   Mail,
   BarChart3,
-  AlertCircle,
-  RefreshCw,
   Target,
   CheckCircle2,
   ClipboardList,
   Activity,
   ArrowUpRight,
   ArrowDownRight,
+  ArrowRight,
+  Bot,
+  Clock3,
+  FileText,
+  KanbanSquare,
+  MessageSquareText,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { DashboardMetrics } from '@/types';
+import type { Campaign, DashboardMetrics, Lead, Template } from '@/types';
 import type { UserRole } from '@/types';
 
 /* ─── Types ─── */
@@ -59,6 +70,17 @@ interface StatConfig {
   accent: string;
   bg: string;
   trend?: number;
+}
+
+interface WorkQueueItem {
+  id: string;
+  title: string;
+  description: string;
+  eyebrow: string;
+  actionLabel: string;
+  to: string;
+  priority: 'high' | 'medium' | 'low';
+  icon: React.ReactNode;
 }
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -80,6 +102,147 @@ function computeTrend(data: number[]): number {
   const first = data[0] || 1;
   const last = data[data.length - 1] || 0;
   return first === 0 ? 0 : ((last - first) / first) * 100;
+}
+
+function getLeadName(lead: Lead): string {
+  return lead.business_name || lead.contact_name || 'Unnamed lead';
+}
+
+function hasMissingContactInfo(lead: Lead): boolean {
+  return !lead.email && !lead.phone;
+}
+
+function getWorkQueueItems({
+  leads,
+  campaigns,
+  templates,
+  hasPipelineStages,
+  role,
+}: {
+  leads: Lead[];
+  campaigns: Campaign[];
+  templates: Template[];
+  hasPipelineStages: boolean;
+  role: UserRole;
+}): WorkQueueItem[] {
+  const items: WorkQueueItem[] = [];
+  const canManageCampaigns = role === 'admin' || role === 'manager' || role === 'marketing';
+  const canSell = role === 'admin' || role === 'manager' || role === 'sales';
+  const canManageTemplates = role === 'admin' || role === 'manager' || role === 'marketing';
+
+  const unassignedLead = leads.find((lead) => lead.status === 'active' && !lead.assigned_to);
+  if (unassignedLead && (role === 'admin' || role === 'manager')) {
+    items.push({
+      id: `assign-${unassignedLead.id}`,
+      title: `Assign ${getLeadName(unassignedLead)}`,
+      description: 'New active lead has no owner. Assign it before outreach or follow-up stalls.',
+      eyebrow: 'Lead routing',
+      actionLabel: 'Open lead',
+      to: `/leads/${unassignedLead.id}`,
+      priority: 'high',
+      icon: <Users className="h-4 w-4" />,
+    });
+  }
+
+  const hotLead = leads.find(
+    (lead) =>
+      lead.status === 'active' &&
+      (lead.classification === 'hot' || lead.lead_score >= 80),
+  );
+  if (hotLead && canSell) {
+    items.push({
+      id: `hot-${hotLead.id}`,
+      title: `Work hot lead: ${getLeadName(hotLead)}`,
+      description: 'High-intent lead should get a direct touch and pipeline update today.',
+      eyebrow: 'Next best action',
+      actionLabel: 'Review lead',
+      to: `/leads/${hotLead.id}`,
+      priority: 'high',
+      icon: <Sparkles className="h-4 w-4" />,
+    });
+  }
+
+  const missingContactLead = leads.find(
+    (lead) => lead.status === 'active' && hasMissingContactInfo(lead),
+  );
+  if (missingContactLead && canSell) {
+    items.push({
+      id: `contact-${missingContactLead.id}`,
+      title: `Complete ${getLeadName(missingContactLead)}`,
+      description: 'This lead is missing both email and phone, so campaigns cannot reach them yet.',
+      eyebrow: 'Data cleanup',
+      actionLabel: 'Fix fields',
+      to: `/leads/${missingContactLead.id}/edit`,
+      priority: 'medium',
+      icon: <FileText className="h-4 w-4" />,
+    });
+  }
+
+  const draftCampaign = campaigns.find((campaign) => campaign.status === 'draft');
+  if (draftCampaign && canManageCampaigns) {
+    items.push({
+      id: `campaign-${draftCampaign.id}`,
+      title: `Finish campaign: ${draftCampaign.name}`,
+      description: 'Draft campaign is ready for audience, template, and launch review.',
+      eyebrow: 'Campaign setup',
+      actionLabel: 'Open campaign',
+      to: `/campaigns/${draftCampaign.id}`,
+      priority: 'medium',
+      icon: <MessageSquareText className="h-4 w-4" />,
+    });
+  }
+
+  const pendingTemplate = templates.find(
+    (template) => template.approval_status === 'pending',
+  );
+  if (pendingTemplate && canManageTemplates) {
+    items.push({
+      id: `template-${pendingTemplate.id}`,
+      title: `Approve template: ${pendingTemplate.name}`,
+      description: 'Pending templates block repeatable outreach until approved or rejected.',
+      eyebrow: 'Template approval',
+      actionLabel: 'Review template',
+      to: '/templates',
+      priority: 'medium',
+      icon: <Bot className="h-4 w-4" />,
+    });
+  }
+
+  if (!hasPipelineStages && (role === 'admin' || role === 'manager')) {
+    items.push({
+      id: 'pipeline-setup',
+      title: 'Set up pipeline stages',
+      description: 'A simple pipeline lets reps move leads by outcome instead of tracking work manually.',
+      eyebrow: 'Pipeline setup',
+      actionLabel: 'Manage pipeline',
+      to: '/pipelines/manage',
+      priority: 'low',
+      icon: <KanbanSquare className="h-4 w-4" />,
+    });
+  }
+
+  if (items.length === 0) {
+    items.push({
+      id: 'healthy-flow',
+      title: 'Flow is clear',
+      description: 'No urgent routing, approval, or setup gaps were found in the latest records.',
+      eyebrow: 'System check',
+      actionLabel: 'View AI inbox',
+      to: '/ai-inbox',
+      priority: 'low',
+      icon: <CheckCircle2 className="h-4 w-4" />,
+    });
+  }
+
+  const priorityOrder: Record<WorkQueueItem['priority'], number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
+
+  return items
+    .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
+    .slice(0, 5);
 }
 
 function getStatsForRole(
@@ -357,15 +520,117 @@ function EmptyStateCard({
   description: string;
 }) {
   return (
-    <div className="flex h-72 flex-col items-center justify-center gap-3 text-gray-400">
-      <div className="rounded-full bg-gray-100 p-4">
-        <BarChart3 className="h-8 w-8 text-gray-300" />
+    <div className="flex h-72 flex-col items-center justify-center gap-3 text-slate-400">
+      <div className="rounded-full bg-slate-100 p-4">
+        <BarChart3 className="h-8 w-8 text-slate-300" />
       </div>
       <div className="text-center">
-        <p className="text-sm font-medium text-gray-500">{title}</p>
-        <p className="text-xs text-gray-400">{description}</p>
+        <p className="text-sm font-medium text-slate-500">{title}</p>
+        <p className="text-xs text-slate-400">{description}</p>
       </div>
     </div>
+  );
+}
+
+function WorkQueueSkeleton() {
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-5">
+        {[0, 1, 2].map((item) => (
+          <div key={item} className="flex gap-3">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-3 w-full" />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function WorkQueue({ items }: { items: WorkQueueItem[] }) {
+  return (
+    <Card className="overflow-hidden border-slate-200">
+      <CardHeader className="border-b bg-white pb-4 pt-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+              <Clock3 className="h-4 w-4 text-slate-600" />
+              Today's Work Queue
+            </CardTitle>
+            <CardDescription>
+              Leads, pipeline, campaigns, and templates in one review flow
+            </CardDescription>
+          </div>
+          <Button size="sm" asChild>
+            <Link to="/ai-inbox">
+              Open AI inbox
+              <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+            </Link>
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="divide-y divide-slate-100">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="grid gap-4 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center"
+            >
+              <div className="flex min-w-0 gap-3">
+                <div
+                  className={cn(
+                    'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                    item.priority === 'high' && 'bg-rose-50 text-rose-600',
+                    item.priority === 'medium' && 'bg-amber-50 text-amber-600',
+                    item.priority === 'low' && 'bg-emerald-50 text-emerald-600',
+                  )}
+                >
+                  {item.icon}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-xs font-semibold',
+                        item.priority === 'high' && 'bg-rose-100 text-rose-700',
+                        item.priority === 'medium' && 'bg-amber-100 text-amber-700',
+                        item.priority === 'low' && 'bg-emerald-100 text-emerald-700',
+                      )}
+                    >
+                      {item.eyebrow}
+                    </span>
+                    <span className="text-xs capitalize text-slate-500">
+                      {item.priority} priority
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {item.title}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {item.description}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="justify-self-start sm:justify-self-end"
+              >
+                <Link to={item.to}>
+                  {item.actionLabel}
+                  <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                </Link>
+              </Button>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -376,6 +641,10 @@ export function DashboardPage() {
   const role = user?.role ?? 'viewer';
 
   const { data, isLoading, error, refetch } = useDashboardMetrics();
+  const leadsQuery = useLeads({ limit: 20 });
+  const campaignsQuery = useCampaigns();
+  const templatesQuery = useTemplates({ limit: 20 });
+  const pipelinesQuery = usePipelines();
   const metrics = data as ExtendedDashboardMetrics | undefined;
 
   const stats = useMemo(
@@ -389,61 +658,53 @@ export function DashboardPage() {
     day: 'numeric',
   });
 
+  const workQueueItems = useMemo(
+    () =>
+      getWorkQueueItems({
+        leads: leadsQuery.data?.items ?? [],
+        campaigns: campaignsQuery.data ?? [],
+        templates: templatesQuery.data ?? [],
+        hasPipelineStages:
+          pipelinesQuery.data?.some((pipeline) => pipeline.stages.length > 0) ?? false,
+        role,
+      }),
+    [
+      campaignsQuery.data,
+      leadsQuery.data?.items,
+      pipelinesQuery.data,
+      role,
+      templatesQuery.data,
+    ],
+  );
+
+  const isWorkQueueLoading =
+    leadsQuery.isLoading ||
+    campaignsQuery.isLoading ||
+    templatesQuery.isLoading ||
+    pipelinesQuery.isLoading;
+
   return (
     <div className="space-y-8">
-      {/* ─── Header ─── */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900">
-              {role === 'sales' ? 'My Dashboard' : 'Dashboard'}
-            </h1>
-            <span
-              className={cn(
-                'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize',
-                role === 'admin' && 'border-indigo-200 bg-indigo-50 text-indigo-700',
-                role === 'manager' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
-                role === 'sales' && 'border-amber-200 bg-amber-50 text-amber-700',
-                role === 'marketing' && 'border-purple-200 bg-purple-50 text-purple-700',
-                role === 'viewer' && 'border-slate-200 bg-slate-50 text-slate-700',
-              )}
-            >
-              {role}
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-gray-500">{today}</p>
-        </div>
-        {(role === 'admin' || role === 'manager') && (
-          <Button
-            variant="outline"
-            size="sm"
-            asChild
-            className="self-start sm:self-auto"
-          >
-            <Link to="/reports">View Reports</Link>
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={role === 'sales' ? 'My Dashboard' : 'Dashboard'}
+        description={today}
+        eyebrow={role ? role.charAt(0).toUpperCase() + role.slice(1) : undefined}
+        actions={
+          (role === 'admin' || role === 'manager') ? (
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/reports">View Reports</Link>
+            </Button>
+          ) : undefined
+        }
+      />
 
       {/* ─── Error banner ─── */}
       {error && (
-        <div className="flex items-center gap-4 rounded-xl border border-red-200 bg-red-50/60 px-5 py-4">
-          <div className="shrink-0 rounded-full bg-red-100 p-2">
-            <AlertCircle className="h-5 w-5 text-red-600" />
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-red-900">
-              Failed to load dashboard data
-            </p>
-            <p className="text-xs text-red-600">
-              Some metrics may be outdated or unavailable.
-            </p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-            Retry
-          </Button>
-        </div>
+        <ErrorState
+          title="Failed to load dashboard data"
+          message="Some metrics may be outdated or unavailable."
+          onRetry={() => refetch()}
+        />
       )}
 
       {/* ─── Hero stats ─── */}
@@ -469,16 +730,16 @@ export function DashboardPage() {
             <CardContent className="p-7">
               <div className="flex items-start justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-600">
+                  <p className="text-sm font-medium text-slate-600">
                     {stats[0].title}
                   </p>
                   <div className="mt-2 flex flex-wrap items-baseline gap-3">
-                    <span className="text-5xl font-bold tracking-tight text-gray-900">
+                    <span className="text-5xl font-bold tracking-tight text-slate-900">
                       {formatValue(stats[0].value, stats[0].format)}
                     </span>
                     <TrendBadge value={stats[0].trend} />
                   </div>
-                  <p className="mt-1 text-sm text-gray-500">
+                  <p className="mt-1 text-sm text-slate-500">
                     {stats[0].description}
                   </p>
                 </div>
@@ -545,17 +806,17 @@ export function DashboardPage() {
                 >
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-gray-600">
+                      <p className="text-sm font-medium text-slate-600">
                         {stat.title}
                       </p>
                       <div className="rounded-lg bg-white/70 p-2 shadow-sm">
                         {stat.icon}
                       </div>
                     </div>
-                    <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
+                    <p className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
                       {formatValue(stat.value, stat.format)}
                     </p>
-                    <p className="mt-1 text-xs text-gray-500">
+                    <p className="mt-1 text-xs text-slate-500">
                       {stat.description}
                     </p>
                   </CardContent>
@@ -574,13 +835,13 @@ export function DashboardPage() {
                   {stat.icon}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-gray-500">
+                  <p className="text-xs font-medium text-slate-500">
                     {stat.title}
                   </p>
-                  <p className="text-xl font-bold text-gray-900">
+                  <p className="text-xl font-bold text-slate-900">
                     {formatValue(stat.value, stat.format)}
                   </p>
-                  <p className="truncate text-xs text-gray-500">
+                  <p className="truncate text-xs text-slate-500">
                     {stat.description}
                   </p>
                 </div>
@@ -590,9 +851,11 @@ export function DashboardPage() {
         </div>
       )}
 
+      {isWorkQueueLoading ? <WorkQueueSkeleton /> : <WorkQueue items={workQueueItems} />}
+
       {/* ─── Activity chart ─── */}
       <Card className="overflow-hidden">
-        <CardHeader className="border-b bg-gray-50/50 pb-4 pt-6">
+        <CardHeader className="border-b bg-slate-50/50 pb-4 pt-6">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-base font-semibold">
@@ -606,17 +869,17 @@ export function DashboardPage() {
               <div className="hidden items-center gap-4 sm:flex">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-full bg-indigo-500" />
-                  <span className="text-xs text-gray-500">Leads</span>
+                  <span className="text-xs text-slate-500">Leads</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                  <span className="text-xs text-gray-500">Outreach</span>
+                  <span className="text-xs text-slate-500">Outreach</span>
                 </div>
               </div>
             )}
           </div>
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="p-5">
           {isLoading ? (
             <Skeleton className="h-72 w-full" />
           ) : metrics && metrics.recentActivity.length > 0 ? (
@@ -727,7 +990,7 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Role-specific chart */}
         <Card className="overflow-hidden lg:col-span-2">
-          <CardHeader className="border-b bg-gray-50/50 pb-4 pt-6">
+          <CardHeader className="border-b bg-slate-50/50 pb-4 pt-6">
             <div>
               <CardTitle className="text-base font-semibold">
                 {role === 'sales'
@@ -741,7 +1004,7 @@ export function DashboardPage() {
               </CardDescription>
             </div>
           </CardHeader>
-          <CardContent className="p-6">
+          <CardContent className="p-5">
             {isLoading ? (
               <Skeleton className="h-64 w-full" />
             ) : role === 'sales' &&

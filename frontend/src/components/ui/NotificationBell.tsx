@@ -60,6 +60,7 @@ export function NotificationBell() {
   return (
     <div className="relative">
       <button
+        type="button"
         onClick={handleOpen}
         aria-label="Notifications"
         className="relative rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
@@ -79,11 +80,12 @@ export function NotificationBell() {
             onClick={() => setOpen(false)}
             aria-hidden="true"
           />
-          <div className="absolute right-0 top-11 z-40 w-80 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+          <div className="absolute right-0 top-11 z-40 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <p className="text-sm font-semibold text-slate-900">Notifications</p>
               {notifications.length > 0 && (
                 <button
+                  type="button"
                   onClick={() => setNotifications([])}
                   className="text-xs text-slate-400 hover:text-slate-600"
                 >
@@ -128,6 +130,7 @@ export function NotificationBell() {
                         </Link>
                       )}
                       <button
+                        type="button"
                         onClick={() => dismiss(n.id)}
                         className="rounded p-1 text-slate-400 hover:text-slate-700"
                         aria-label="Dismiss"

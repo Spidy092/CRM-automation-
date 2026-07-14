@@ -51,19 +51,16 @@ export function logDecisionLogFailure(context: {
     phase: context.phase,
     error: message,
   });
-  Sentry.captureException(
-    context.err instanceof Error ? context.err : new Error(message),
-    {
-      tags: {
-        decision_type: context.decisionType,
-        decision_log_phase: context.phase,
-      },
-      extra: {
-        lead_id: context.leadId ?? null,
-        campaign_id: context.campaignId ?? null,
-      },
+  Sentry.captureException(context.err instanceof Error ? context.err : new Error(message), {
+    tags: {
+      decision_type: context.decisionType,
+      decision_log_phase: context.phase,
     },
-  );
+    extra: {
+      lead_id: context.leadId ?? null,
+      campaign_id: context.campaignId ?? null,
+    },
+  });
 }
 
 // ── Zod schema for OpenAI JSON output ────────────────────────────────────
@@ -506,4 +503,7 @@ function buildNextActionUserPrompt(
 
 // ── Re-exports for cross-module use (ai-reply module) ────────────────────
 
-export { appendObjectionToProfile, appendBuyingSignalToProfile } from './ai-intelligence.repository';
+export {
+  appendObjectionToProfile,
+  appendBuyingSignalToProfile,
+} from './ai-intelligence.repository';

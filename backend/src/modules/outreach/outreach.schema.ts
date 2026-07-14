@@ -37,11 +37,15 @@ export const sequenceStepSchema = z.object({
 
 export const createSequenceSchema = z.object({
   name: z.string().min(1, 'name is required').max(255),
+  description: z.string().max(1000).optional().nullable(),
+  is_active: z.boolean().optional().default(true),
   steps: z.array(sequenceStepSchema).min(1, 'At least one step is required'),
 });
 
 export const updateSequenceSchema = z.object({
   name: z.string().min(1).max(255).optional(),
+  description: z.string().max(1000).optional().nullable(),
+  is_active: z.boolean().optional(),
   steps: z.array(sequenceStepSchema).min(1).optional(),
 });
 

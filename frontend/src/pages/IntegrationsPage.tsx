@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
 import { IntegrationSetupWizard } from '@/components/IntegrationSetupWizard';
 import {
@@ -151,7 +152,7 @@ function groupByCategory(integrations: Integration[]): Record<string, Integratio
 function StatusBadge({ status }: { status: string | null }) {
   if (!status) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
         <AlertCircle className="h-3 w-3" /> Not tested
       </span>
     );
@@ -263,8 +264,8 @@ function CredentialForm({
   }
 
   return (
-    <div className="mt-4 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
-      <p className="text-sm font-medium text-gray-700">Configure credentials</p>
+    <div className="mt-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm font-medium text-slate-700">Configure credentials</p>
       {fields.map((f) => {
         const inputType =
           f.type === 'number' ? 'number' : f.type === 'password' || f.type === 'secret' ? 'password' : 'text';
@@ -324,7 +325,7 @@ function HealthSummary({ integrations }: HealthSummaryProps) {
     ? 'text-red-600 bg-red-50 border-red-200'
     : total > 0
       ? 'text-green-600 bg-green-50 border-green-200'
-      : 'text-gray-600 bg-gray-50 border-gray-200';
+      : 'text-slate-600 bg-slate-50 border-slate-200';
 
   return (
     <Card className="overflow-hidden">
@@ -342,28 +343,28 @@ function HealthSummary({ integrations }: HealthSummaryProps) {
       <CardContent>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-gray-500">Total</p>
+            <p className="text-xs text-slate-500">Total</p>
             <p className="text-xl font-semibold">{total}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-gray-500">Enabled</p>
+            <p className="text-xs text-slate-500">Enabled</p>
             <p className="text-xl font-semibold text-green-600">{enabled}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-gray-500">Connected</p>
+            <p className="text-xs text-slate-500">Connected</p>
             <p className="text-xl font-semibold text-green-600">{ok}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-gray-500">Failed</p>
+            <p className="text-xs text-slate-500">Failed</p>
             <p className="text-xl font-semibold text-red-600">{failed}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-gray-500">No credentials</p>
+            <p className="text-xs text-slate-500">No credentials</p>
             <p className="text-xl font-semibold text-amber-600">{noCredentials}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-gray-500">Untested</p>
-            <p className="text-xl font-semibold text-gray-600">{untested}</p>
+            <p className="text-xs text-slate-500">Untested</p>
+            <p className="text-xl font-semibold text-slate-600">{untested}</p>
           </div>
         </div>
       </CardContent>
@@ -411,10 +412,10 @@ function IntegrationCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
-            <Link2 className="h-4 w-4 text-gray-400 shrink-0" />
+            <Link2 className="h-4 w-4 text-slate-400 shrink-0" />
             <div>
               <CardTitle className="text-base">{integration.display_name}</CardTitle>
-              <CardDescription className="text-xs mt-0.5 font-mono text-gray-400">
+              <CardDescription className="text-xs mt-0.5 font-mono text-slate-400">
                 {integration.name}
               </CardDescription>
             </div>
@@ -424,7 +425,7 @@ function IntegrationCard({
       </CardHeader>
       <CardContent className="space-y-3">
         {integration.last_tested_at && (
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-slate-400">
             Tested {new Date(integration.last_tested_at).toLocaleString()}
           </p>
         )}
@@ -578,10 +579,7 @@ export function IntegrationsPage() {
     return (
       <div className="space-y-6">
         <PageHeader title="Integrations" description="Connect and validate outbound channels and lead sources." />
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
-          <XCircle className="h-4 w-4 shrink-0" />
-          <span className="text-sm">Failed to load integrations. Please try again.</span>
-        </div>
+        <ErrorState message="Failed to load integrations. Please try again." />
       </div>
     );
   }
@@ -648,7 +646,7 @@ export function IntegrationsPage() {
 
           {categories.map((category) => (
             <section key={category} className="space-y-3">
-              <h2 className="text-lg font-semibold text-gray-900">{category}</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{category}</h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {grouped[category].map((integration) => (
                   <IntegrationCard

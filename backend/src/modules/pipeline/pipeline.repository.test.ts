@@ -40,9 +40,10 @@ describe('pipeline.repository', () => {
   describe('findPipelines', () => {
     it('returns rows', async () => {
       const rows = [{ id: 'p1', name: 'Default' }];
-      mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows));
+      const stageRows = [{ id: 's1', pipeline_id: 'p1', name: 'Stage 1' }];
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows)).mockResolvedValueOnce(mockQueryResult(stageRows));
       const result = await findPipelines();
-      expect(result).toEqual(rows);
+      expect(result).toEqual([{ ...rows[0], stages: stageRows }]);
       expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('SELECT * FROM pipelines'));
     });
   });

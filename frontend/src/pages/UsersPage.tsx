@@ -8,6 +8,9 @@ import { LoadingTable } from '@/components/ui/LoadingTable';
 import { useToast } from '@/components/ui/Toast';
 import { useAuthStore } from '@/store/authStore';
 import type { UserRole } from '@/types';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Plus, X, AlertCircle, InboxIcon, Loader2, Shield, CheckCircle2 } from 'lucide-react';
 
 const roleColors: Record<UserRole, string> = {
@@ -15,7 +18,7 @@ const roleColors: Record<UserRole, string> = {
   manager: 'bg-blue-100 text-blue-800',
   sales: 'bg-emerald-100 text-emerald-800',
   marketing: 'bg-amber-100 text-amber-800',
-  viewer: 'bg-gray-100 text-gray-600',
+  viewer: 'bg-slate-100 text-slate-600',
 };
 
 export function UsersPage() {
@@ -88,12 +91,12 @@ export function UsersPage() {
   if (!isAdmin) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
+        <h1 className="text-3xl font-bold text-slate-900">User Management</h1>
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <Shield className="mb-4 h-12 w-12 text-gray-300" />
-            <p className="text-lg font-medium text-gray-600">Access Restricted</p>
-            <p className="text-sm text-gray-500">Only administrators can manage users.</p>
+            <Shield className="mb-4 h-12 w-12 text-slate-300" />
+            <p className="text-lg font-medium text-slate-600">Access Restricted</p>
+            <p className="text-sm text-slate-500">Only administrators can manage users.</p>
           </CardContent>
         </Card>
       </div>
@@ -102,19 +105,19 @@ export function UsersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
-          <p className="mt-1 text-sm text-gray-500">Create and manage user accounts</p>
-        </div>
-        {!showForm && (
-          <Button onClick={() => { resetForm(); setFeedback(null); setShowForm(true); }}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add User
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="User Management"
+        description="Create and manage user accounts"
+        eyebrow="Administration"
+        actions={
+          !showForm ? (
+            <Button onClick={() => { resetForm(); setFeedback(null); setShowForm(true); }}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add User
+            </Button>
+          ) : undefined
+        }
+      />
 
       {feedback && (
         <div
@@ -232,13 +235,7 @@ export function UsersPage() {
 
       {/* Error state */}
       {error && (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <AlertCircle className="mb-4 h-12 w-12 text-red-400" />
-            <p className="text-lg font-medium text-gray-600">Failed to load users</p>
-            <p className="text-sm text-gray-500">Please try refreshing the page.</p>
-          </CardContent>
-        </Card>
+        <ErrorState message="Failed to load users. Please try refreshing the page." />
       )}
 
       {/* Loading state */}
@@ -246,13 +243,11 @@ export function UsersPage() {
 
       {/* Empty state */}
       {!isLoading && !error && users && users.length === 0 && (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <InboxIcon className="mb-4 h-12 w-12 text-gray-300" />
-            <p className="text-lg font-medium text-gray-600">No users found</p>
-            <p className="text-sm text-gray-500">Create the first user to get started.</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<InboxIcon className="h-6 w-6" />}
+          title="No users found"
+          description="Create the first user to get started."
+        />
       )}
 
       {/* Users table */}
@@ -262,26 +257,26 @@ export function UsersPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-gray-50/50">
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Name</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Email</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Role</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Created</th>
+                  <tr className="border-b bg-slate-50/50">
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Name</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Email</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Role</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Status</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Created</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {users.map((user) => (
-                    <tr key={user.id} className="transition-colors hover:bg-gray-50/50">
+                    <tr key={user.id} className="transition-colors hover:bg-slate-50/50">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
                             {user.name.charAt(0).toUpperCase()}
                           </div>
-                          <span className="font-medium text-gray-900">{user.name}</span>
+                          <span className="font-medium text-slate-900">{user.name}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-gray-600">{user.email}</td>
+                      <td className="px-4 py-3 text-slate-600">{user.email}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${roleColors[user.role]}`}>
                           {user.role}
@@ -292,7 +287,7 @@ export function UsersPage() {
                           {user.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-500">
+                      <td className="px-4 py-3 text-slate-500">
                         {new Date(user.created_at).toLocaleDateString()}
                       </td>
                     </tr>

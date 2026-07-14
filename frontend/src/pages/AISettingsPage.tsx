@@ -6,6 +6,9 @@ import { Label } from '../components/ui/label';
 import { Switch } from '../components/ui/switch';
 import { Textarea } from '../components/ui/textarea';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../components/ui/card';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { AlertCircle, CheckCircle2, Save } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert';
 import { useToast } from '@/components/ui/Toast';
@@ -125,18 +128,16 @@ export default function AISettingsPage() {
     );
   };
 
-  if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading AI settings...</div>;
-  if (error) return <div className="p-8 text-center text-destructive">Failed to load AI settings.</div>;
+  if (isLoading) return <LoadingSpinner />;
+  if (error) return <ErrorState message="Failed to load AI settings." />;
 
   return (
-    <div className="container mx-auto p-6 max-w-4xl space-y-8 animate-in fade-in zoom-in-95 duration-500">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">AI Personalization Settings</h1>
-        <p className="text-muted-foreground mt-2">
-          Configure the AI provider used for generating personalized outreach messages. Works with
-          any OpenAI-compatible API (Xiaomi MiMo, OpenAI, or a custom endpoint).
-        </p>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="AI Personalization Settings"
+        description="Configure the AI provider used for generating personalized outreach messages. Works with any OpenAI-compatible API (Xiaomi MiMo, OpenAI, or a custom endpoint)."
+        eyebrow="Intelligence"
+      />
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <Card className="border-primary/10 shadow-md">

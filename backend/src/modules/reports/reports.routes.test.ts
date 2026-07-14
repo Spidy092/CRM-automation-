@@ -160,6 +160,66 @@ describe('Reports Routes', () => {
     });
   });
 
+  describe('GET /reports/campaigns', () => {
+    it('returns 200 with campaign analytics data', async () => {
+      mockedService.getCampaignAnalyticsReport.mockResolvedValue({
+        items: [
+          {
+            date: '2026-06-20',
+            campaignId: 'c1',
+            campaignName: 'Summer',
+            leadsTargeted: 100,
+            leadsConverted: 10,
+            conversionRate: 10,
+            channel: 'email',
+          },
+        ],
+        meta: { limit: 25, offset: 0, total: 1 },
+      });
+
+      const res = await request(app).get('/reports/campaigns?startDate=2026-06-01&endDate=2026-06-30');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data[0].campaignName).toBe('Summer');
+    });
+
+    it('returns 422 for invalid query', async () => {
+      const res = await request(app).get('/reports/campaigns?limit=-1');
+      expect(res.status).toBe(422);
+      expect(res.body.success).toBe(false);
+    });
+  });
+
+  describe('GET /reports/integrations', () => {
+    it('returns 200 with integration health rows', async () => {
+      mockedService.getIntegrationHealthReport.mockResolvedValue([
+        {
+          integrationId: 'i1',
+          name: 'Twilio',
+          displayName: 'Twilio SMS',
+          channel: 'sms',
+          status: 'healthy',
+          enabled: true,
+          lastTestedAt: '2026-06-20T00:00:00Z',
+          successRate: 99,
+        },
+      ]);
+
+      const res = await request(app).get('/reports/integrations');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data[0].name).toBe('Twilio');
+    });
+
+    it('returns 422 for invalid query', async () => {
+      const res = await request(app).get('/reports/integrations?limit=invalid');
+      expect(res.status).toBe(422);
+      expect(res.body.success).toBe(false);
+    });
+  });
+
   describe('POST /reports/export', () => {
     it('returns 202 with job info', async () => {
       mockedService.enqueueExportJob.mockResolvedValue({ jobId: 'job-123', status: 'queued' });
@@ -249,6 +309,53 @@ describe('Reports Routes', () => {
       });
 
       const res = await request(testApp).get('/reports/dashboard');
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Forbidden');
+    });
+
+    it('forbids /reports/campaigns for unauthorized role', async () => {
+      jest.resetModules();
+      jest.doMock('../../shared/middleware/auth', () => ({
+        authenticate: (req: any, res: any, next: any) => {
+          req.user = { id: 'guest-1', role: 'guest' };
+          next();
+        },
+      }));
+
+      const { reportsRoutes: routesWithGuest } = await import('./reports.routes');
+      const testApp = express();
+      testApp.use(express.json());
+      testApp.use('/reports', routesWithGuest);
+      testApp.use(errorHandler);
+
+      mockedService.getCampaignAnalyticsReport.mockResolvedValue({
+        items: [],
+        meta: { limit: 25, offset: 0, total: 0 },
+      });
+
+      const res = await request(testApp).get('/reports/campaigns');
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Forbidden');
+    });
+
+    it('forbids /reports/integrations for unauthorized role', async () => {
+      jest.resetModules();
+      jest.doMock('../../shared/middleware/auth', () => ({
+        authenticate: (req: any, res: any, next: any) => {
+          req.user = { id: 'guest-1', role: 'guest' };
+          next();
+        },
+      }));
+
+      const { reportsRoutes: routesWithGuest } = await import('./reports.routes');
+      const testApp = express();
+      testApp.use(express.json());
+      testApp.use('/reports', routesWithGuest);
+      testApp.use(errorHandler);
+
+      mockedService.getIntegrationHealthReport.mockResolvedValue([]);
+
+      const res = await request(testApp).get('/reports/integrations');
       expect(res.status).toBe(403);
       expect(res.body.error).toContain('Forbidden');
     });

@@ -33,6 +33,13 @@ export const whatsappCredentialsSchema = z
 
 export type WhatsappCredentials = z.infer<typeof whatsappCredentialsSchema>;
 
+export interface SendMessageMedia {
+  /** Public URL — the Cloud API fetches the file itself, it does not accept uploads inline. */
+  url: string;
+  mimeType: string;
+  filename: string;
+}
+
 export interface SendMessageInput {
   leadId: string;
   campaignId?: string | null;
@@ -42,6 +49,14 @@ export interface SendMessageInput {
   templateName?: string;
   templateLanguage?: string;
   templateVariables?: string[];
+  /** When set, sends an image/document message instead of plain text —
+   *  the Cloud API allows only one message "type" per call, so a media
+   *  message carries `body` as its caption rather than as a separate text message. */
+  media?: SendMessageMedia;
+}
+
+function whatsappMediaKind(mimeType: string): 'image' | 'document' {
+  return mimeType.startsWith('image/') ? 'image' : 'document';
 }
 
 export interface SendMessageOutput {
@@ -91,7 +106,18 @@ export async function sendMessage(
     messaging_product: 'whatsapp',
     to: input.to,
   };
-  if (input.templateName) {
+  if (input.media) {
+    const kind = whatsappMediaKind(input.media.mimeType);
+    payload.type = kind;
+    payload[kind] =
+      kind === 'image'
+        ? { link: input.media.url, caption: input.body || undefined }
+        : {
+            link: input.media.url,
+            filename: input.media.filename,
+            caption: input.body || undefined,
+          };
+  } else if (input.templateName) {
     payload.type = 'template';
     payload.template = {
       name: input.templateName,

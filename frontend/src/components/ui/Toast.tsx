@@ -43,13 +43,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {/* Toast Container — slides in from top-right */}
       <div
         aria-live="assertive"
-        className="pointer-events-none fixed right-4 top-4 z-[9999] flex flex-col gap-2"
+        className="pointer-events-none fixed right-4 top-4 z-[9999] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:right-4 sm:top-4"
       >
         {toasts.map((toast) => (
           <div
             key={toast.id}
             role="alert"
-            className={`pointer-events-auto flex w-80 items-start gap-3 rounded-xl border p-4 shadow-lg backdrop-blur-sm
+            className={`pointer-events-auto flex w-full items-start gap-3 rounded-xl border p-4 shadow-lg backdrop-blur-sm
               animate-in slide-in-from-right-5 duration-300
               ${
                 toast.type === 'success'
@@ -66,6 +66,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             </span>
             <p className="flex-1 text-sm font-medium">{toast.message}</p>
             <button
+              type="button"
               onClick={() => dismiss(toast.id)}
               aria-label="Dismiss notification"
               className="shrink-0 rounded p-0.5 transition-colors hover:bg-black/10"

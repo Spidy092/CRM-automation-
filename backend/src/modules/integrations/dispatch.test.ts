@@ -235,6 +235,42 @@ describe('dispatchOutbound — whatsapp with OpenWA fallback', () => {
   });
 });
 
+describe('dispatchOutbound — whatsapp with attachments', () => {
+  const attachment = {
+    filename: 'flyer.png',
+    mimeType: 'image/png',
+    url: 'http://x/flyer.png',
+    storagePath: '/x/flyer.png',
+  };
+
+  it('skips OpenWA entirely and sends via the cloud API as a media message when attachments are present', async () => {
+    (findByName as jest.Mock<any>).mockResolvedValue(openwaRow);
+    (findCredentialsById as jest.Mock<any>).mockResolvedValue(openwaRow.encrypted_credentials);
+    (whatsapp.sendMessage as jest.Mock<any>).mockResolvedValue({
+      ok: true,
+      externalId: 'wam-media-1',
+      latencyMs: 90,
+    });
+
+    const result = await dispatchOutbound({
+      ...baseInput,
+      channel: 'whatsapp',
+      attachments: [attachment],
+    });
+
+    expect(openwa.sendMessage).not.toHaveBeenCalled();
+    expect(whatsapp.sendMessage).toHaveBeenCalledWith({
+      leadId: baseInput.leadId,
+      campaignId: baseInput.campaignId,
+      to: baseInput.destination,
+      body: baseInput.body,
+      media: { url: attachment.url, mimeType: attachment.mimeType, filename: attachment.filename },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.externalId).toBe('wam-media-1');
+  });
+});
+
 describe('dispatchOutbound — whatsapp (cloud api only)', () => {
   beforeEach(() => {
     (findByName as jest.Mock<any>).mockResolvedValue(null);
@@ -333,6 +369,52 @@ describe('dispatchOutbound — email', () => {
     });
     expect(result.ok).toBe(false);
     expect(smtp.sendEmail).not.toHaveBeenCalled();
+  });
+
+  const attachment = {
+    filename: 'flyer.png',
+    mimeType: 'image/png',
+    url: 'http://x/flyer.png',
+    storagePath: '/x/flyer.png',
+  };
+
+  it('passes attachments through to sendgrid', async () => {
+    (sendgrid.sendEmail as jest.Mock<any>).mockResolvedValue({
+      ok: true,
+      externalId: 'sg-1',
+      latencyMs: 120,
+    });
+    await dispatchOutbound({
+      ...baseInput,
+      channel: 'email',
+      destination: 'test@example.com',
+      attachments: [attachment],
+    });
+    expect(sendgrid.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: [attachment] }),
+    );
+  });
+
+  it('passes attachments through to the SMTP fallback', async () => {
+    (sendgrid.sendEmail as jest.Mock<any>).mockResolvedValue({
+      ok: false,
+      error: 'SendGrid integration not configured',
+      latencyMs: 5,
+    });
+    (smtp.sendEmail as jest.Mock<any>).mockResolvedValue({
+      ok: true,
+      externalId: 'smtp-1',
+      latencyMs: 80,
+    });
+    await dispatchOutbound({
+      ...baseInput,
+      channel: 'email',
+      destination: 'test@example.com',
+      attachments: [attachment],
+    });
+    expect(smtp.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: [attachment] }),
+    );
   });
 });
 

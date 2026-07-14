@@ -267,8 +267,8 @@ describe('handleFollowUp', () => {
 describe('stop condition: lead replied', () => {
   it('handleStopCheck returns stopped=true when outreach_log has replied status', async () => {
     (findLogsByLead as jest.Mock<any>).mockResolvedValue([
-      { id: 'l1', status: 'sent' },
-      { id: 'l2', status: 'replied' },
+      { id: 'l1', status: 'sent', campaign_id: 'camp-e2e' },
+      { id: 'l2', status: 'replied', campaign_id: 'camp-e2e' },
     ]);
     (findLeadById as jest.Mock<any>).mockResolvedValue({ ...MOCK_LEAD, status: 'active' });
 

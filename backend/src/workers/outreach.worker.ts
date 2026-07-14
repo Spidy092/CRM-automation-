@@ -7,6 +7,7 @@ import {
   OUTREACH_STOP_CHECK,
   enqueueOutreachDispatch,
   enqueueOutreachFollowUp,
+  enqueueLeadEvent,
   type OutreachDispatchJob,
   type OutreachFollowUpJob,
   type OutreachStopCheckJob,
@@ -24,6 +25,7 @@ import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { createTask } from '../modules/outreach/outreach.service';
+import { pool } from '../shared/utils/db';
 
 interface DispatchResult {
   success: boolean;
@@ -210,6 +212,7 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
     channel,
     templateId,
     mockMode,
+    logId: log.id,
   });
 
   if (result.success) {
@@ -217,6 +220,88 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
       externalMsgId: result.externalId,
       sentAt: new Date().toISOString(),
     });
+
+    // ── Automated Pipeline Stage Progression ────────────────────────────
+    try {
+      const lead = await findLeadById(leadId);
+      if (lead && lead.pipeline_stage_id) {
+        const stageQuery = await pool.query<{ pipeline_id: string }>(
+          'SELECT pipeline_id FROM pipeline_stages WHERE id = $1',
+          [lead.pipeline_stage_id],
+        );
+        if (stageQuery.rows.length > 0) {
+          const pipelineId = stageQuery.rows[0].pipeline_id;
+          const stagesQuery = await pool.query<{ id: string; name: string }>(
+            'SELECT id, name FROM pipeline_stages WHERE pipeline_id = $1 ORDER BY position',
+            [pipelineId],
+          );
+
+          let targetStageId: string | null = null;
+          if (stepNumber === 1) {
+            const contacted = stagesQuery.rows.find((s) =>
+              s.name.toLowerCase().includes('contacted'),
+            );
+            if (contacted) targetStageId = contacted.id;
+          } else if (stepNumber > 1) {
+            const followUp = stagesQuery.rows.find(
+              (s) =>
+                s.name.toLowerCase().includes('follow-up') ||
+                s.name.toLowerCase().includes('follow up'),
+            );
+            if (followUp) targetStageId = followUp.id;
+          }
+
+          if (targetStageId && targetStageId !== lead.pipeline_stage_id) {
+            await pool.query('UPDATE leads SET pipeline_stage_id = $1 WHERE id = $2', [
+              targetStageId,
+              leadId,
+            ]);
+            await enqueueLeadEvent({
+              event: 'lead.stage_moved',
+              leadId,
+              payload: {
+                fromStageId: lead.pipeline_stage_id,
+                toStageId: targetStageId,
+                pipelineId,
+              },
+            });
+            logger.info('automated pipeline progression triggered', {
+              leadId,
+              stepNumber,
+              targetStageId,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.error('failed automated pipeline progression', {
+        leadId,
+        stepNumber,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // ── Smart Auto-Tagging ───────────────────────────────────────────────
+    // Append behaviour tags to the lead without overwriting existing tags.
+    try {
+      const newTag = stepNumber === 1 ? 'contacted' : 'follow-up-sent';
+      // Use PostgreSQL array functions to add tag only if not already present
+      await pool.query(
+        `UPDATE leads
+         SET tags = array_append(tags, $1::text),
+             updated_at = now()
+         WHERE id = $2
+           AND NOT ($1::text = ANY(tags))`,
+        [newTag, leadId],
+      );
+      logger.info('smart tag applied', { leadId, tag: newTag, stepNumber });
+    } catch (err) {
+      logger.error('failed smart auto-tagging', {
+        leadId,
+        stepNumber,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   } else {
     await updateLogStatus(log.id, 'failed' as OutreachStatus, {
       errorMessage: result.error ?? 'Unknown dispatch error',
@@ -309,7 +394,8 @@ export async function handleStopCheck(data: OutreachStopCheckJob): Promise<StopC
   const { findLogsByLead } = await import('../modules/outreach/outreach.repository');
   const { findLeadById } = await import('../modules/leads/leads.repository');
 
-  const logs = (await findLogsByLead(leadId, 1_000)) ?? [];
+  const allLogs = (await findLogsByLead(leadId, 1_000)) ?? [];
+  const logs = allLogs.filter((l) => l.campaign_id === campaignId);
   const lead = await findLeadById(leadId);
 
   for (const rule of rules) {
@@ -379,6 +465,7 @@ async function sendViaConnector(opts: {
   templateId: string;
   mockMode: boolean;
   aiPersonalizationEnabled?: boolean;
+  logId?: string;
 }): Promise<DispatchResult> {
   if (opts.mockMode) {
     logger.info('mock dispatch', { leadId: opts.leadId, channel: opts.channel });
@@ -439,6 +526,8 @@ async function sendViaConnector(opts: {
     destination,
     subject: template.subject ?? undefined,
     mockMode: opts.mockMode,
+    logId: opts.logId,
+    attachments: template.attachments,
   });
 
   // 8. Map outcome to result

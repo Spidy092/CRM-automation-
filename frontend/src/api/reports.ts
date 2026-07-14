@@ -10,6 +10,8 @@ import type {
   ReportListFilters,
   ExportJobInput,
   ExportJobResult,
+  CampaignAnalytics,
+  IntegrationHealth,
 } from '@/types';
 
 /* ─── Dashboard ─── */
@@ -114,5 +116,40 @@ export function useExportReport() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
+  });
+}
+
+const REFETCH_INTERVAL = 60000; // 1 minute
+
+export function useCampaignAnalytics(filters: { startDate?: string; endDate?: string; limit?: number; offset?: number } = {}) {
+  return useQuery<{ success: boolean; data: CampaignAnalytics[]; meta?: Record<string, unknown> }, Error>({
+    queryKey: ['reports', 'campaigns', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.startDate) params.set('startDate', filters.startDate);
+      if (filters.endDate) params.set('endDate', filters.endDate);
+      if (filters.limit != null) params.set('limit', String(filters.limit));
+      if (filters.offset != null) params.set('offset', String(filters.offset));
+      const res = await apiClient.get(`/reports/campaigns?${params.toString()}`);
+      return res.data;
+    },
+    refetchInterval: REFETCH_INTERVAL,
+    staleTime: REFETCH_INTERVAL / 2,
+  });
+}
+
+export function useIntegrationAnalytics(filters: { limit?: number; offset?: number } = {}) {
+  return useQuery<{ success: boolean; data: IntegrationHealth[]; meta?: Record<string, unknown> }, Error>({
+    queryKey: ['reports', 'integrations', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.limit != null) params.set('limit', String(filters.limit));
+      if (filters.offset != null) params.set('offset', String(filters.offset));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiClient.get(`/reports/integrations${query}`);
+      return res.data;
+    },
+    refetchInterval: REFETCH_INTERVAL,
+    staleTime: REFETCH_INTERVAL / 2,
   });
 }

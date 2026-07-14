@@ -4,6 +4,7 @@ export type PlannerErrorCode =
   | 'invalid_plan'
   | 'planner_timeout'
   | 'planner_malformed'
+  | 'unsupported_goal'
   | 'compliance_in_plan';
 
 export type RunnerErrorCode =
@@ -16,6 +17,7 @@ export type RunnerErrorCode =
 export function mapCodeToHttp(code: PlannerErrorCode | RunnerErrorCode): number {
   switch (code) {
     case 'invalid_plan':
+    case 'unsupported_goal':
     case 'compliance_in_plan':
       return 422;
     case 'planner_timeout':

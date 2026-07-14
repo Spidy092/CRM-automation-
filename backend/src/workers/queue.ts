@@ -376,13 +376,22 @@ function outreachJobId(
   payload: { campaignId: string; leadId: string; stepNumber?: number; nextStepNumber?: number },
 ): string {
   const step = payload.stepNumber ?? payload.nextStepNumber ?? 0;
-  return `outreach:${kind}:${payload.campaignId}:${payload.leadId}:step:${step}`;
+  return `outreach-${kind}-${payload.campaignId}-${payload.leadId}-step-${step}`;
 }
 
-export async function enqueueOutreachDispatch(payload: OutreachDispatchJob): Promise<void> {
-  await outreachQueue.add(OUTREACH_DISPATCH, payload, {
-    jobId: outreachJobId('dispatch', payload),
-  });
+export async function enqueueOutreachDispatch(
+  payload: OutreachDispatchJob,
+  opts?: { jobIdSuffix?: string },
+): Promise<void> {
+  // Default jobId is deterministic per (campaign, lead, step) so a campaign
+  // launch can be safely re-run without double-enqueueing a step that's
+  // already in flight or completed. Retries need a *distinct* id — reusing
+  // the original id would make BullMQ silently return the old completed/failed
+  // job instead of dispatching again — so callers doing a manual retry must
+  // pass a unique `jobIdSuffix`.
+  const baseId = outreachJobId('dispatch', payload);
+  const jobId = opts?.jobIdSuffix ? `${baseId}-${opts.jobIdSuffix}` : baseId;
+  await outreachQueue.add(OUTREACH_DISPATCH, payload, { jobId });
 }
 
 export async function enqueueOutreachFollowUp(payload: OutreachFollowUpJob): Promise<void> {
@@ -403,7 +412,7 @@ export async function enqueueLeadEvent(payload: LeadEventJob): Promise<void> {
 
 export async function enqueueAiResearch(payload: AiResearchLeadJob): Promise<void> {
   await aiResearchQueue.add(AI_RESEARCH_LEAD, payload, {
-    jobId: `ai:research:${payload.leadId}${payload.force ? ':force' : ''}`,
+    jobId: `ai-research-${payload.leadId}${payload.force ? '-force' : ''}`,
   });
 }
 
@@ -417,13 +426,13 @@ export async function enqueueAiCreateInboxItem(payload: AiCreateInboxItemJob): P
 
 export async function enqueueAiCampaignBrief(payload: AiGenerateCampaignBriefJob): Promise<void> {
   await aiCampaignQueue.add(AI_CAMPAIGN_BRIEF, payload, {
-    jobId: `ai:brief:${payload.campaignId}`,
+    jobId: `ai-brief-${payload.campaignId}`,
   });
 }
 
 export async function enqueueAiDecision(payload: AiDecisionLeadJob): Promise<void> {
   await aiDecisionQueue.add(AI_DECISION_LEAD, payload, {
-    jobId: `ai:decision:${payload.leadId}${payload.force ? ':force' : ''}`,
+    jobId: `ai-decision-${payload.leadId}${payload.force ? '-force' : ''}`,
   });
 }
 

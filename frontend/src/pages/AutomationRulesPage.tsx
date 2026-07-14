@@ -1,16 +1,19 @@
 import { Link } from 'react-router-dom';
 import { useCampaigns } from '@/api/campaigns';
 import { useSequences } from '@/api/outreach';
+import { usePipelines } from '@/api/pipelines';
 import type { Campaign, CampaignStatus } from '@/api/campaigns';
 import type { Sequence } from '@/api/outreach';
+import type { Pipeline, PipelineStage } from '@/api/pipelines';
 
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Mail, MessageSquare, Phone, Zap, Target, Play, AlertCircle } from 'lucide-react';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { Mail, MessageSquare, Phone, Zap, Target, Play, GitBranch, ArrowRight } from 'lucide-react';
 
 // ── Channel icons ────────────────────────────────────────────────────────────
 
@@ -55,7 +58,18 @@ function StepPill({
 
 // ── Trigger section ───────────────────────────────────────────────────────────
 
-function TriggerSection({ campaign }: { campaign: Campaign }) {
+function TriggerSection({
+  campaign,
+  pipelineMap,
+}: {
+  campaign: Campaign;
+  pipelineMap: Record<string, { pipeline: Pipeline; stages: PipelineStage[] }>;
+}) {
+  const pipelineEntry = campaign.pipeline_id ? pipelineMap[campaign.pipeline_id] : undefined;
+  const triggerStage = campaign.trigger_stage_id
+    ? pipelineEntry?.stages.find((s) => s.id === campaign.trigger_stage_id)
+    : undefined;
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -95,12 +109,36 @@ function TriggerSection({ campaign }: { campaign: Campaign }) {
         </div>
       )}
 
-      {campaign.pipeline_id && (
-        <div>
-          <p className="text-xs text-slate-500">Pipeline</p>
-          <p className="text-sm font-medium text-slate-900">{campaign.pipeline_id}</p>
+      {pipelineEntry ? (
+        <div className="rounded-md border border-indigo-100 bg-indigo-50 px-3 py-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <GitBranch className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+            <span className="text-xs font-medium text-indigo-800">{pipelineEntry.pipeline.name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-indigo-600">
+            <ArrowRight className="h-3 w-3 shrink-0 text-indigo-400" />
+            {triggerStage ? (
+              <span>
+                Triggers on:{' '}
+                <span className="font-semibold">{triggerStage.name}</span>
+                {triggerStage.is_terminal_won && (
+                  <span className="ml-1 text-green-600">(Won)</span>
+                )}
+                {triggerStage.is_terminal_lost && (
+                  <span className="ml-1 text-red-500">(Lost)</span>
+                )}
+              </span>
+            ) : (
+              <span className="italic text-indigo-400">Any stage move (catch-all)</span>
+            )}
+          </div>
         </div>
-      )}
+      ) : campaign.pipeline_id ? (
+        // pipeline_id is set but not yet loaded in the map — show a loading skeleton
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-400 animate-pulse">
+          Loading pipeline…
+        </div>
+      ) : null}
 
       <div>
         <p className="text-xs text-slate-500">Tone</p>
@@ -161,9 +199,11 @@ function ActionSection({ sequence }: { sequence: Sequence | null }) {
 function RuleCard({
   campaign,
   sequence,
+  pipelineMap,
 }: {
   campaign: Campaign;
   sequence: Sequence | null;
+  pipelineMap: Record<string, { pipeline: Pipeline; stages: PipelineStage[] }>;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -175,7 +215,7 @@ function RuleCard({
       <div className="grid grid-cols-1 divide-y divide-slate-100 md:grid-cols-2 md:divide-y-0 md:divide-x">
         {/* Trigger */}
         <div className="bg-white px-5 py-4">
-          <TriggerSection campaign={campaign} />
+          <TriggerSection campaign={campaign} pipelineMap={pipelineMap} />
         </div>
 
         {/* Action */}
@@ -201,8 +241,9 @@ function RuleCard({
 export function AutomationRulesPage() {
   const { data: campaigns = [], isLoading: campaignsLoading, isError: campaignsError } = useCampaigns();
   const { data: sequenceData, isLoading: sequencesLoading } = useSequences();
+  const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
 
-  const isLoading = campaignsLoading || sequencesLoading;
+  const isLoading = campaignsLoading || sequencesLoading || pipelinesLoading;
 
   const sequences = (sequenceData as { items?: Sequence[] } | undefined)?.items ?? [];
 
@@ -210,6 +251,21 @@ export function AutomationRulesPage() {
     acc[seq.id] = seq;
     return acc;
   }, {});
+
+  // Build a map: pipelineId → { pipeline, stages }
+  // usePipelines() returns Pipeline[] (no stages); to get stages we need usePipeline(id).
+  // Instead of N individual queries, we derive stage info from campaigns that have a
+  // trigger_stage_id by extracting what we can from the pipelines list, and use a
+  // secondary fetch pattern via PipelineStagesLoader per unique pipeline.
+  const pipelineMap = pipelines.reduce<Record<string, { pipeline: Pipeline; stages: PipelineStage[] }>>(
+    (acc, p) => {
+      // stages come from the detail endpoint; for the list view we start with empty
+      // and let PipelineStagesEnricher fill them in via usePipeline per card.
+      acc[p.id] = { pipeline: p, stages: [] };
+      return acc;
+    },
+    {},
+  );
 
   // Metrics
   const activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
@@ -237,15 +293,7 @@ export function AutomationRulesPage() {
       {isLoading && <LoadingTable rows={4} cols={3} />}
 
       {campaignsError && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="flex items-center gap-3 p-4">
-            <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />
-            <div>
-              <p className="text-sm font-medium text-red-800">Failed to load automation rules.</p>
-              <p className="text-xs text-red-600">Unable to fetch campaigns. Please try again.</p>
-            </div>
-          </CardContent>
-        </Card>
+        <ErrorState message="Failed to load automation rules. Unable to fetch campaigns." />
       )}
 
       {!isLoading && !campaignsError && campaigns.length === 0 && (
@@ -264,14 +312,49 @@ export function AutomationRulesPage() {
       {!isLoading && !campaignsError && campaigns.length > 0 && (
         <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
           {campaigns.map((campaign) => (
-            <RuleCard
+            <PipelineEnrichedCard
               key={campaign.id}
               campaign={campaign}
               sequence={campaign.sequence_id ? sequenceMap[campaign.sequence_id] ?? null : null}
+              basePipelineMap={pipelineMap}
             />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// ── Per-card pipeline enricher ────────────────────────────────────────────────
+// Fetches the full pipeline (with stages) only for campaigns that have a pipeline_id.
+// This avoids N+1 for cards without pipeline links while keeping each card self-contained.
+
+import { usePipeline } from '@/api/pipelines';
+
+function PipelineEnrichedCard({
+  campaign,
+  sequence,
+  basePipelineMap,
+}: {
+  campaign: Campaign;
+  sequence: Sequence | null;
+  basePipelineMap: Record<string, { pipeline: Pipeline; stages: PipelineStage[] }>;
+}) {
+  const { data: pipelineDetail } = usePipeline(campaign.pipeline_id ?? '');
+
+  const enrichedMap = { ...basePipelineMap };
+  if (campaign.pipeline_id && pipelineDetail) {
+    enrichedMap[campaign.pipeline_id] = {
+      pipeline: pipelineDetail,
+      stages: pipelineDetail.stages ?? [],
+    };
+  }
+
+  return (
+    <RuleCard
+      campaign={campaign}
+      sequence={sequence}
+      pipelineMap={enrichedMap}
+    />
   );
 }

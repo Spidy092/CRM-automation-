@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- TODO: refactor away from `any` casts (legacy debt) */
 import { AppError } from '../../../shared/middleware/errorHandler';
 import { logger } from '../../../shared/utils/logger';
 import { findByName, findCredentialsById } from '../integrations.repository';
@@ -36,7 +37,7 @@ export async function getCredentials(): Promise<HunterCredentials> {
  * Implementation of the connector test logic required by IntegrationsService.
  */
 export async function loadCredentials(
-  rawCredentials?: Record<string, unknown>
+  rawCredentials?: Record<string, unknown>,
 ): Promise<HunterCredentials> {
   if (rawCredentials) {
     return hunterCredentialsSchema.parse(rawCredentials);
@@ -51,20 +52,28 @@ export async function loadCredentials(
 }
 
 export async function testConnection(
-  credentials: HunterCredentials
+  credentials: HunterCredentials,
 ): Promise<{ ok: boolean; error?: string; latencyMs: number }> {
   const start = Date.now();
   try {
     // Ping Hunter's Account API to verify API key
     const response = await fetch(`https://api.hunter.io/v2/account?api_key=${credentials.api_key}`);
-    
+
     if (!response.ok) {
-      return { ok: false, error: `Hunter API responded with status ${response.status}`, latencyMs: Date.now() - start };
+      return {
+        ok: false,
+        error: `Hunter API responded with status ${response.status}`,
+        latencyMs: Date.now() - start,
+      };
     }
-    
-    const data = await response.json() as any;
+
+    const data = (await response.json()) as any;
     if (data.errors) {
-      return { ok: false, error: data.errors[0]?.details || 'Invalid API Key', latencyMs: Date.now() - start };
+      return {
+        ok: false,
+        error: data.errors[0]?.details || 'Invalid API Key',
+        latencyMs: Date.now() - start,
+      };
     }
 
     return { ok: true, latencyMs: Date.now() - start };
@@ -93,27 +102,30 @@ export interface HunterEmailResult {
  */
 export async function enrichDomain(domain: string): Promise<HunterEmailResult | null> {
   const creds = await getCredentials();
-  
+
   const cleanDomain = domain.replace(/^(?:https?:\/\/)?(?:www\.)?/i, '').split('/')[0];
-  
+
   try {
     const url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(cleanDomain)}&limit=1&api_key=${creds.api_key}`;
     const response = await fetch(url);
-    
+
     if (!response.ok) {
-      logger.warn('hunter api domain search failed', { domain: cleanDomain, status: response.status });
+      logger.warn('hunter api domain search failed', {
+        domain: cleanDomain,
+        status: response.status,
+      });
       return null;
     }
-    
-    const data = await response.json() as any;
+
+    const data = (await response.json()) as any;
     const emails = data?.data?.emails;
-    
+
     if (!emails || !Array.isArray(emails) || emails.length === 0) {
       return null;
     }
-    
+
     const bestEmail = emails[0];
-    
+
     return {
       email: bestEmail.value,
       confidence: bestEmail.confidence,
@@ -125,7 +137,10 @@ export async function enrichDomain(domain: string): Promise<HunterEmailResult | 
       twitter: bestEmail.twitter,
     };
   } catch (err) {
-    logger.error('hunter api domain search error', { domain: cleanDomain, error: err instanceof Error ? err.message : String(err) });
+    logger.error('hunter api domain search error', {
+      domain: cleanDomain,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }

@@ -13,6 +13,7 @@ import { incAiTokens, incAiReplyClassified } from '../../shared/utils/metrics';
 import { invalidateProfileCache } from '../ai-intelligence/ai-intelligence.service';
 import { logDecisionLogFailure } from '../ai-intelligence/ai-intelligence.service';
 import { cancelPendingOutreachJobs, enqueueAiCreateInboxItem } from '../../workers/queue';
+import { pool } from '../../shared/utils/db';
 import { findUserById } from '../users/users.repository';
 import { findStageByName } from '../pipeline/pipeline.repository';
 import { proposeAgentAction } from '../agent/agent.service';
@@ -211,18 +212,53 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
     logger.info('ai reply: opt_out detected — sequence stopped', { leadId });
   }
 
+  // ── Smart Auto-Tagging on Reply ───────────────────────────────────────
+  // Tag 'replied' on every inbound reply. Also tag intent-based signals.
+  try {
+    const tagsToAdd = ['replied'];
+    if (raw.intent_class === 'interested' || raw.intent_class === 'meeting_request') {
+      tagsToAdd.push('interested');
+    }
+    if (raw.intent_class === 'meeting_request') {
+      tagsToAdd.push('meeting-requested');
+    }
+    if (raw.intent_class === 'opt_out') {
+      tagsToAdd.push('opted-out');
+    }
+    for (const tag of tagsToAdd) {
+      await pool.query(
+        `UPDATE leads
+         SET tags = array_append(tags, $1::text), updated_at = now()
+         WHERE id = $2 AND NOT ($1::text = ANY(tags))`,
+        [tag, leadId],
+      );
+    }
+    logger.info('ai reply: smart tags applied', {
+      leadId,
+      tags: tagsToAdd,
+      intent: raw.intent_class,
+    });
+  } catch (tagErr) {
+    logger.error('ai reply: smart tagging failed', {
+      leadId,
+      error: tagErr instanceof Error ? tagErr.message : String(tagErr),
+    });
+  }
+
   // ── Persist memory updates ────────────────────────────────────────────
   await persistMemoryUpdates(leadId, raw, messageText, context?.campaignId ?? null);
 
   // ── Stage movement ────────────────────────────────────────────────────
   if (raw.update_stage_to) {
-    await proposeStageMoveAction(leadId, raw.update_stage_to, raw, context).catch((err: unknown) => {
-      logger.warn('ai reply: stage move proposal failed', {
-        leadId,
-        stage: raw.update_stage_to,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    await proposeStageMoveAction(leadId, raw.update_stage_to, raw, context).catch(
+      (err: unknown) => {
+        logger.warn('ai reply: stage move proposal failed', {
+          leadId,
+          stage: raw.update_stage_to,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    );
   }
 
   await updateProfileNextAction(
@@ -303,7 +339,10 @@ async function proposeStageMoveAction(
 
   const actor = await resolveAssignedActor(context?.assignedTo ?? null);
   if (!actor) {
-    logger.warn('ai reply: no assigned actor for stage move proposal', { leadId, stage: stageName });
+    logger.warn('ai reply: no assigned actor for stage move proposal', {
+      leadId,
+      stage: stageName,
+    });
     return;
   }
 
@@ -327,7 +366,9 @@ async function resolveAssignedActor(userId: string | null): Promise<AgentActor |
   return { id: user.id, role: user.role, email: user.email, name: user.name };
 }
 
-function normalizeAutonomyLevel(value: string | null | undefined): 'supervised' | 'guarded' | 'autopilot' {
+function normalizeAutonomyLevel(
+  value: string | null | undefined,
+): 'supervised' | 'guarded' | 'autopilot' {
   if (value === 'supervised' || value === 'guarded' || value === 'autopilot') return value;
   return 'guarded';
 }

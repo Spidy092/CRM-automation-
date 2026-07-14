@@ -11,15 +11,17 @@ import {
   bulkTestIntegrations,
 } from '../integrations';
 
-const mockPost = vi.fn();
-const mockGet = vi.fn();
-const mockPatch = vi.fn();
+const { mockGet, mockPost, mockPut } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockPost: vi.fn(),
+  mockPut: vi.fn(),
+}));
 
 vi.mock('../client', () => ({
   apiClient: {
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
-    patch: (...args: unknown[]) => mockPatch(...args),
+    put: (...args: unknown[]) => mockPut(...args),
   },
 }));
 
@@ -36,7 +38,7 @@ describe('integrations API', () => {
     queryClient.clear();
     mockGet.mockReset();
     mockPost.mockReset();
-    mockPatch.mockReset();
+    mockPut.mockReset();
   });
 
   it('useIntegrations fetches integrations', async () => {
@@ -57,13 +59,13 @@ describe('integrations API', () => {
     expect(result.current.data).toEqual({ id: '1', name: 'twilio' });
   });
 
-  it('useUpdateIntegration patches and invalidates integrations', async () => {
-    mockPatch.mockResolvedValueOnce({
+  it('useUpdateIntegration puts and invalidates integrations', async () => {
+    mockPut.mockResolvedValueOnce({
       data: { data: { id: '1', name: 'twilio', is_enabled: true } },
     });
     const { result } = renderHook(() => useUpdateIntegration(), { wrapper });
     await result.current.mutateAsync({ id: '1', input: { is_enabled: true } });
-    expect(mockPatch).toHaveBeenCalledWith('/integrations/1', { is_enabled: true });
+    expect(mockPut).toHaveBeenCalledWith('/integrations/1', { is_enabled: true });
   });
 
   it('useTestIntegration posts a test and invalidates integrations', async () => {

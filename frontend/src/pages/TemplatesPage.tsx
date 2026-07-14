@@ -8,9 +8,10 @@ import { Input } from '@/components/ui/input';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
 import type { MessageChannel, TemplateApprovalStatus } from '@/types';
-import { Plus, Search, Check, X, Trash2, Edit, FileText, AlertCircle } from 'lucide-react';
+import { Plus, Search, Check, X, Trash2, Edit, FileText, Paperclip } from 'lucide-react';
 
 const approvalTones: Record<TemplateApprovalStatus, StatusTone> = {
   pending: 'amber',
@@ -83,7 +84,7 @@ export function TemplatesPage() {
         <CardHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
                 placeholder="Search templates…"
                 value={search}
@@ -119,10 +120,7 @@ export function TemplatesPage() {
           {isLoading && <LoadingTable />}
 
           {!isLoading && error && (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-6 py-10 text-center">
-              <AlertCircle className="h-8 w-8 text-red-400" />
-              <p className="font-semibold text-red-700">Failed to load templates</p>
-            </div>
+            <ErrorState message="Failed to load templates" />
           )}
 
           {!isLoading && !error && templates.length === 0 && (
@@ -155,12 +153,18 @@ export function TemplatesPage() {
                       <StatusBadge tone={approvalTones[template.approval_status]}>
                         {template.approval_status}
                       </StatusBadge>
+                      {(template.attachments?.length ?? 0) > 0 && (
+                        <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                          <Paperclip className="h-3 w-3" />
+                          {template.attachments?.length ?? 0}
+                        </span>
+                      )}
                     </div>
                     {template.subject && (
                       <p className="mt-1 text-xs text-slate-500">Subject: {template.subject}</p>
                     )}
                     <p className="mt-2 text-sm text-slate-600 line-clamp-2">{template.body}</p>
-                    {template.variables.length > 0 && (
+                    {(template.variables?.length ?? 0) > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {template.variables.map((v) => (
                           <code key={v} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">

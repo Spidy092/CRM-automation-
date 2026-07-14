@@ -5,6 +5,8 @@ import {
   updateTemplate,
   approveTemplate,
   removeTemplate,
+  addTemplateAttachment,
+  removeTemplateAttachment,
 } from './templates.service';
 import { TemplateRow } from './templates.types';
 
@@ -15,9 +17,16 @@ jest.mock('./templates.repository', () => ({
   updateTemplate: jest.fn(),
   setApprovalStatus: jest.fn(),
   deleteTemplate: jest.fn(),
+  appendTemplateAttachment: jest.fn(),
+  removeTemplateAttachment: jest.fn(),
 }));
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('fs/promises', () => ({
+  unlink: jest.fn().mockResolvedValue(undefined),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+  mkdir: jest.fn().mockResolvedValue(undefined),
+}));
 
 import {
   findTemplates,
@@ -26,8 +35,11 @@ import {
   updateTemplate as updateTemplateRepo,
   setApprovalStatus,
   deleteTemplate,
+  appendTemplateAttachment,
+  removeTemplateAttachment as removeTemplateAttachmentRepo,
 } from './templates.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { unlink, writeFile } from 'fs/promises';
 
 const actor = { id: 'u1', role: 'admin', ipAddress: '127.0.0.1' };
 
@@ -42,6 +54,7 @@ const baseRow: TemplateRow = {
   approved_by: null,
   approved_at: null,
   rejection_reason: null,
+  attachments: [],
   created_by: 'u1',
   created_at: '2026-06-19T00:00:00Z',
   updated_at: '2026-06-19T00:00:00Z',
@@ -195,6 +208,154 @@ describe('removeTemplate', () => {
     expect(deleteTemplate).toHaveBeenCalledWith(baseRow.id);
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'template.deleted', entityId: baseRow.id }),
+    );
+  });
+
+  it('cleans up attachment files from disk when the template had any', async () => {
+    const withAttachments: TemplateRow = {
+      ...baseRow,
+      attachments: [
+        {
+          id: 'a1',
+          filename: 'flyer.png',
+          mimeType: 'image/png',
+          sizeBytes: 1234,
+          url: 'http://localhost:3000/uploads/templates/a1.png',
+          storagePath: '/srv/uploads/templates/a1.png',
+        },
+      ],
+    };
+    (findTemplateById as jest.Mock).mockResolvedValue(withAttachments);
+    (deleteTemplate as jest.Mock).mockResolvedValue(undefined);
+    await removeTemplate(withAttachments.id, actor);
+    expect(unlink).toHaveBeenCalledWith('/srv/uploads/templates/a1.png');
+  });
+});
+
+describe('addTemplateAttachment', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const file = {
+    originalname: 'flyer.png',
+    mimetype: 'image/png',
+    size: 2048,
+    buffer: Buffer.from('fake-image-bytes'),
+  };
+
+  it('throws 404 when template missing', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(null);
+    await expect(addTemplateAttachment('missing', file, actor)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
+  it('rejects edits to an approved template from a non-admin', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue({ ...baseRow, approval_status: 'approved' });
+    await expect(
+      addTemplateAttachment(baseRow.id, file, { ...actor, role: 'marketing' }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects an unsupported mime type', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(baseRow);
+    await expect(
+      addTemplateAttachment(baseRow.id, { ...file, mimetype: 'application/zip' }, actor),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('rejects once the per-template attachment limit is reached', async () => {
+    const full: TemplateRow = {
+      ...baseRow,
+      attachments: [1, 2, 3].map((n) => ({
+        id: `a${n}`,
+        filename: `f${n}.png`,
+        mimeType: 'image/png',
+        sizeBytes: 10,
+        url: `http://x/${n}.png`,
+        storagePath: `/x/${n}.png`,
+      })),
+    };
+    (findTemplateById as jest.Mock).mockResolvedValue(full);
+    await expect(addTemplateAttachment(full.id, file, actor)).rejects.toMatchObject({
+      statusCode: 400,
+    });
+  });
+
+  it('writes the file to disk and appends it to the template, then audits', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(baseRow);
+    const updatedRow: TemplateRow = {
+      ...baseRow,
+      attachments: [
+        {
+          id: 'new-id',
+          filename: 'flyer.png',
+          mimeType: 'image/png',
+          sizeBytes: 2048,
+          url: 'http://localhost:3000/uploads/templates/new-id.png',
+          storagePath: '/x/new-id.png',
+        },
+      ],
+    };
+    (appendTemplateAttachment as jest.Mock).mockResolvedValue(updatedRow);
+
+    const result = await addTemplateAttachment(baseRow.id, file, actor);
+
+    expect(writeFile).toHaveBeenCalled();
+    expect(appendTemplateAttachment).toHaveBeenCalledWith(
+      baseRow.id,
+      expect.objectContaining({ filename: 'flyer.png', mimeType: 'image/png', sizeBytes: 2048 }),
+    );
+    expect(result.attachments).toEqual([
+      { id: 'new-id', filename: 'flyer.png', mimeType: 'image/png', sizeBytes: 2048, url: updatedRow.attachments[0].url },
+    ]);
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'template.attachment_added' }),
+    );
+  });
+});
+
+describe('removeTemplateAttachment', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const rowWithAttachment: TemplateRow = {
+    ...baseRow,
+    attachments: [
+      {
+        id: 'a1',
+        filename: 'flyer.png',
+        mimeType: 'image/png',
+        sizeBytes: 1234,
+        url: 'http://localhost:3000/uploads/templates/a1.png',
+        storagePath: '/x/a1.png',
+      },
+    ],
+  };
+
+  it('throws 404 when template missing', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(null);
+    await expect(removeTemplateAttachment('missing', 'a1', actor)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
+  it('throws 404 when the attachment id does not belong to the template', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(rowWithAttachment);
+    await expect(
+      removeTemplateAttachment(rowWithAttachment.id, 'not-there', actor),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('removes the attachment, deletes the file, and audits', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(rowWithAttachment);
+    (removeTemplateAttachmentRepo as jest.Mock).mockResolvedValue(baseRow);
+
+    const result = await removeTemplateAttachment(rowWithAttachment.id, 'a1', actor);
+
+    expect(removeTemplateAttachmentRepo).toHaveBeenCalledWith(rowWithAttachment.id, 'a1');
+    expect(unlink).toHaveBeenCalledWith('/x/a1.png');
+    expect(result.attachments).toEqual([]);
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'template.attachment_removed' }),
     );
   });
 });

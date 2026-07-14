@@ -7,10 +7,7 @@ import { executeAgentAction } from './agent.executor';
 import { logAgentDecision } from './agent.decision-log';
 import { evaluateAgentPolicy } from './agent.policy';
 import { createAgentAction } from './agent.repository';
-import type {
-  AgentActionProposalResult,
-  ProposeAgentActionInput,
-} from './agent.types';
+import type { AgentActionProposalResult, ProposeAgentActionInput } from './agent.types';
 
 export function stableJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -31,7 +28,9 @@ export function buildIdempotencyKey(input: {
 }): string {
   const hash = crypto
     .createHash('sha256')
-    .update(`${input.source}:${input.actionName}:${input.actorId ?? 'system'}:${stableJson(input.args)}:${input.sourceMessage ?? ''}`)
+    .update(
+      `${input.source}:${input.actionName}:${input.actorId ?? 'system'}:${stableJson(input.args)}:${input.sourceMessage ?? ''}`,
+    )
     .digest('hex');
   return `agent:${hash}`;
 }
@@ -116,7 +115,11 @@ export async function proposeAgentAction(
     confidence: input.confidence ?? null,
     autonomyLevel: input.autonomyLevel ?? null,
     humanApprovalRequired: policy.outcome === 'require_approval',
-    inputContext: { actorRole: input.actor?.role ?? null, riskTier: action.risk_tier, agentActionId: action.id },
+    inputContext: {
+      actorRole: input.actor?.role ?? null,
+      riskTier: action.risk_tier,
+      agentActionId: action.id,
+    },
   });
 
   if (policy.outcome === 'require_approval') {
@@ -136,7 +139,10 @@ export async function proposeAgentAction(
     return { policy, action };
   }
 
-  const executed = await executeAgentAction(action.id, { actor: input.actor, source: input.source });
+  const executed = await executeAgentAction(action.id, {
+    actor: input.actor,
+    source: input.source,
+  });
   return { policy, action: executed, result: executed.result };
 }
 

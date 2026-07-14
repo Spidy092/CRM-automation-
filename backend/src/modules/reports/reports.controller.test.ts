@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { AppError } from '../../shared/middleware/errorHandler';
 import {
   listReportsHandler,
   getDashboardHandler,
@@ -6,7 +7,10 @@ import {
   getOutreachReportHandler,
   getPipelineReportHandler,
   getSalesRepReportHandler,
+  getCampaignAnalyticsReportHandler,
+  getIntegrationHealthReportHandler,
   exportReportHandler,
+  downloadExportHandler,
 } from './reports.controller';
 import * as service from './reports.service';
 import { ZodError } from 'zod';
@@ -264,6 +268,167 @@ describe('reports.controller', () => {
 
       expect(mockNext).toHaveBeenCalled();
       expect((mockNext as jest.Mock).mock.calls[0][0]).toBeInstanceOf(ZodError);
+    });
+  });
+
+  describe('getCampaignAnalyticsReportHandler', () => {
+    it('returns 200 with campaign analytics', async () => {
+      mockedService.getCampaignAnalyticsReport.mockResolvedValue({
+        items: [{ date: '2026-06-20', campaignId: 'camp-1', campaignName: 'Summer Promo', channel: 'email', leadsTargeted: 10, leadsConverted: 2, conversionRate: 0.2 }],
+        meta: { limit: 25, offset: 0, total: 1 },
+      });
+
+      const req = mockReq({ query: { startDate: '2026-06-01', endDate: '2026-06-30' } });
+      const res = mockRes() as Response;
+
+      await getCampaignAnalyticsReportHandler(req as Request, res, mockNext);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: expect.any(Array),
+          meta: expect.any(Object),
+        }),
+      );
+    });
+
+    it('passes validation errors to next', async () => {
+      const req = mockReq({ query: { limit: '-1' } });
+      const res = mockRes() as Response;
+
+      await getCampaignAnalyticsReportHandler(req as Request, res, mockNext);
+
+      expect(mockNext).toHaveBeenCalled();
+      expect((mockNext as jest.Mock).mock.calls[0][0]).toBeInstanceOf(ZodError);
+    });
+
+    it('passes service errors to next', async () => {
+      const error = new Error('service error');
+      mockedService.getCampaignAnalyticsReport.mockRejectedValue(error);
+
+      const req = mockReq();
+      const res = mockRes() as Response;
+
+      await getCampaignAnalyticsReportHandler(req as Request, res, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getIntegrationHealthReportHandler', () => {
+    it('returns 200 with integration health rows', async () => {
+      mockedService.getIntegrationHealthReport.mockResolvedValue([
+        { integrationId: 'int-1', name: 'twilio', displayName: 'Twilio', channel: 'sms', status: 'healthy', enabled: true, successRate: 95, lastTestedAt: new Date().toISOString() },
+      ]);
+
+      const req = mockReq();
+      const res = mockRes() as Response;
+
+      await getIntegrationHealthReportHandler(req as Request, res, mockNext);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: expect.any(Array),
+        }),
+      );
+    });
+
+    it('passes service errors to next', async () => {
+      const error = new Error('service error');
+      mockedService.getIntegrationHealthReport.mockRejectedValue(error);
+
+      const req = mockReq();
+      const res = mockRes() as Response;
+
+      await getIntegrationHealthReportHandler(req as Request, res, mockNext);
+
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('downloadExportHandler', () => {
+    const tmpDir = '/tmp/crm-test-exports';
+    const fs = require('fs');
+    const path = require('path');
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      if (fs.existsSync(tmpDir)) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(tmpDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+      if (fs.existsSync(tmpDir)) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    function mockDownloadRes(): Partial<Response> {
+      const res: Partial<Response> = {};
+      res.status = jest.fn().mockReturnValue(res);
+      res.json = jest.fn().mockReturnValue(res);
+      res.download = jest.fn().mockImplementation((_path: string, _filename: string, cb: (err?: Error) => void) => {
+        cb();
+      });
+      return res;
+    }
+
+    it('downloads an existing export file', () => {
+      jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+      const exportsDir = path.join(tmpDir, 'exports');
+      fs.mkdirSync(exportsDir, { recursive: true });
+      fs.writeFileSync(path.join(exportsDir, 'job-123-export.csv'), 'a,b,c');
+
+      const req = { params: { jobId: 'job-123' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const res = mockDownloadRes() as Response;
+
+      downloadExportHandler(req, res, mockNext);
+
+      expect(mockNext).not.toHaveBeenCalled();
+      expect(res.download).toHaveBeenCalledWith(
+        expect.stringContaining('job-123-export.csv'),
+        'job-123-export.csv',
+        expect.any(Function),
+      );
+    });
+
+    it('rejects invalid job id format', () => {
+      jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+      const req = { params: { jobId: 'job-123/../../etc/passwd' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const res = mockDownloadRes() as Response;
+
+      downloadExportHandler(req, res, mockNext);
+
+      expect(mockNext).toHaveBeenCalled();
+      expect((mockNext as jest.Mock).mock.calls[0][0]).toBeInstanceOf(AppError);
+    });
+
+    it('returns 404 when exports directory is missing', () => {
+      jest.spyOn(process, 'cwd').mockReturnValue('/tmp/no-such-crm-dir');
+      const req = { params: { jobId: 'job-123' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const res = mockDownloadRes() as Response;
+
+      downloadExportHandler(req, res, mockNext);
+
+      expect(mockNext).toHaveBeenCalled();
+      expect((mockNext as jest.Mock).mock.calls[0][0]).toBeInstanceOf(AppError);
+    });
+
+    it('returns 404 when no file matches the job id', () => {
+      jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+      const req = { params: { jobId: 'job-missing' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const res = mockDownloadRes() as Response;
+
+      downloadExportHandler(req, res, mockNext);
+
+      expect(mockNext).toHaveBeenCalled();
+      expect((mockNext as jest.Mock).mock.calls[0][0]).toBeInstanceOf(AppError);
     });
   });
 });

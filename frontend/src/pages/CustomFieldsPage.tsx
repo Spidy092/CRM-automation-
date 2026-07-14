@@ -8,9 +8,10 @@ import { Label } from '@/components/ui/label';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
 import type { CustomFieldType } from '@/types';
-import { Plus, Edit, AlertCircle, Settings2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Edit, Settings2, ToggleLeft, ToggleRight } from 'lucide-react';
 
 const fieldTypeLabels: Record<CustomFieldType, string> = {
   text: 'Text',
@@ -208,7 +209,7 @@ export function CustomFieldsPage() {
                   type="checkbox"
                   checked={form.is_required}
                   onChange={(e) => setForm((f) => ({ ...f, is_required: e.target.checked }))}
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-slate-300"
                 />
                 <Label htmlFor="cf-required" className="cursor-pointer">Required field</Label>
               </div>
@@ -232,10 +233,7 @@ export function CustomFieldsPage() {
           {isLoading && <LoadingTable />}
 
           {!isLoading && error && (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-6 py-10 text-center">
-              <AlertCircle className="h-8 w-8 text-red-400" />
-              <p className="font-semibold text-red-700">Failed to load custom fields</p>
-            </div>
+            <ErrorState message="Failed to load custom fields" />
           )}
 
           {!isLoading && !error && fields.length === 0 && !showForm && (
@@ -257,12 +255,12 @@ export function CustomFieldsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="pb-3 text-left font-medium text-gray-500">Label</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Key</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Type</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Required</th>
-                    <th className="pb-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="pb-3 text-right font-medium text-gray-500">Actions</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Label</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Key</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Type</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Required</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Status</th>
+                    <th className="pb-3 text-right font-medium text-slate-500">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

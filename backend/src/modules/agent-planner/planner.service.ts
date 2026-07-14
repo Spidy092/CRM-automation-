@@ -28,7 +28,7 @@ export async function createPlanFromGoal(input: {
   conversationId?: string | null;
   pageContext?: unknown;
 }): Promise<{ plan: PlanRow; steps: PlanStepRow[] }> {
-  const idempotencyKey = buildPlanIdempotencyKey({
+  let idempotencyKey = buildPlanIdempotencyKey({
     source: input.source,
     actorId: input.actor?.id,
     goal: input.goal,
@@ -37,8 +37,13 @@ export async function createPlanFromGoal(input: {
 
   const existing = await findPlanByIdempotencyKey(idempotencyKey);
   if (existing) {
-    const steps = await findPlanStepsByPlan(existing.id);
-    return { plan: existing, steps };
+    if (existing.status !== 'failed' && existing.status !== 'cancelled') {
+      const steps = await findPlanStepsByPlan(existing.id);
+      return { plan: existing, steps };
+    }
+    // A dead plan must not satisfy idempotency — the user retrying the same
+    // goal gets a fresh plan. Suffix the key so the unique constraint holds.
+    idempotencyKey = `${idempotencyKey}:retry:${Date.now()}`;
   }
 
   const aiConfig = await getAiConfig();
@@ -99,7 +104,11 @@ export async function createPlanFromGoal(input: {
       break;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      logger.error('planner: OpenAI call failed', { attempt, error: errMsg, stack: (err as Error).stack });
+      logger.error('planner: OpenAI call failed', {
+        attempt,
+        error: errMsg,
+        stack: (err as Error).stack,
+      });
       lastParseError = `OpenAI call failed: ${errMsg}`;
       if (attempt === 1) {
         incPlanError({ code: 'planner_malformed' });
@@ -111,6 +120,18 @@ export async function createPlanFromGoal(input: {
   if (!parsedJson) {
     incPlanError({ code: 'planner_malformed' });
     throw new PlannerError('planner_malformed', lastParseError ?? 'OpenAI returned malformed JSON');
+  }
+
+  // The planner may decline goals that no catalog action can accomplish.
+  const draft = parsedJson as { steps?: unknown; unsupported_reason?: unknown };
+  if (Array.isArray(draft.steps) && draft.steps.length === 0) {
+    const reason =
+      typeof draft.unsupported_reason === 'string' && draft.unsupported_reason.trim()
+        ? draft.unsupported_reason.trim()
+        : 'This goal is not supported by the available agent actions.';
+    incPlanError({ code: 'unsupported_goal' });
+    logger.info('planner: goal declined as unsupported', { goal: input.goal, reason });
+    throw new PlannerError('unsupported_goal', reason, parsedJson);
   }
 
   const validated = planSchema.safeParse(parsedJson);

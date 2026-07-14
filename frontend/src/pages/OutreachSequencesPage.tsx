@@ -1,272 +1,224 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   useSequences,
+  useSequenceStats,
   useCreateSequence,
   useUpdateSequence,
   useDeleteSequence,
   useOutreachTasks,
 } from '@/api/outreach';
 import type { Sequence, SequenceStep } from '@/api/outreach';
-import { useTemplates } from '@/api/templates';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronUp, Mail, MessageSquare, Phone, Zap } from 'lucide-react';
+import {
+  SequenceForm,
+  CHANNEL_ICONS,
+  CHANNEL_LABELS,
+  CHANNEL_COLORS,
+} from '@/components/SequenceStepEditor';
+import {
+  Plus,
+  Trash2,
+  Edit2,
+  Zap,
+  Users,
+  CheckCircle2,
+  UserMinus,
+  Clock,
+  ToggleLeft,
+  ToggleRight,
+  ExternalLink,
+} from 'lucide-react';
 
-// ── Channel icon ────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-const CHANNEL_ICONS: Record<string, React.ReactNode> = {
-  whatsapp: <MessageSquare className="h-4 w-4 text-green-600" />,
-  email: <Mail className="h-4 w-4 text-blue-600" />,
-  sms: <Zap className="h-4 w-4 text-amber-600" />,
-  phone_call: <Phone className="h-4 w-4 text-purple-600" />,
-};
+/** Sum all step delays and return a human-readable "X steps over Y days" string. */
+function durationLabel(steps: SequenceStep[]): string {
+  if (steps.length === 0) return '0 steps';
+  const totalHours = steps.reduce((sum, s) => sum + (s.delayHours ?? 0), 0);
+  const days = Math.round(totalHours / 24);
+  const stepWord = steps.length === 1 ? 'step' : 'steps';
+  if (days === 0) return `${steps.length} ${stepWord} · same day`;
+  const dayWord = days === 1 ? 'day' : 'days';
+  return `${steps.length} ${stepWord} over ${days} ${dayWord}`;
+}
 
-const CHANNEL_LABELS: Record<string, string> = {
-  whatsapp: 'WhatsApp',
-  email: 'Email',
-  sms: 'SMS',
-  phone_call: 'Phone Call (manual task)',
-};
+// ── Enrollment stats panel ────────────────────────────────────────────────────
 
-const CHANNEL_COLORS: Record<string, string> = {
-  whatsapp: 'bg-green-50 border-green-200',
-  email: 'bg-blue-50 border-blue-200',
-  sms: 'bg-amber-50 border-amber-200',
-  phone_call: 'bg-purple-50 border-purple-200',
-};
+function EnrollmentStats({ sequenceId }: { sequenceId: string }) {
+  const { data: stats, isLoading } = useSequenceStats(sequenceId);
 
-// ── Step editor ─────────────────────────────────────────────────────────────
-
-function StepEditor({
-  steps,
-  onChange,
-}: {
-  steps: SequenceStep[];
-  onChange: (steps: SequenceStep[]) => void;
-}) {
-  const { data: templates = [] } = useTemplates({ approval_status: 'approved' });
-  const addStep = () => {
-    const nextNumber = steps.length + 1;
-    onChange([
-      ...steps,
-      {
-        stepNumber: nextNumber,
-        channel: 'email',
-        delayHours: nextNumber === 1 ? 0 : 24,
-        templateId: null,
-      },
-    ]);
-  };
-
-  const removeStep = (index: number) => {
-    const updated = steps
-      .filter((_, i) => i !== index)
-      .map((s, i) => ({ ...s, stepNumber: i + 1 }));
-    onChange(updated);
-  };
-
-  const moveUp = (index: number) => {
-    if (index === 0) return;
-    const updated = [...steps];
-    [updated[index - 1], updated[index]] = [updated[index], updated[index - 1]];
-    onChange(updated.map((s, i) => ({ ...s, stepNumber: i + 1 })));
-  };
-
-  const moveDown = (index: number) => {
-    if (index === steps.length - 1) return;
-    const updated = [...steps];
-    [updated[index], updated[index + 1]] = [updated[index + 1], updated[index]];
-    onChange(updated.map((s, i) => ({ ...s, stepNumber: i + 1 })));
-  };
-
-  const updateStep = (index: number, field: keyof SequenceStep, value: unknown) => {
-    const updated = steps.map((s, i) => (i === index ? { ...s, [field]: value } : s));
-    onChange(updated);
-  };
+  const statItems = [
+    {
+      label: 'Currently in',
+      value: stats?.currently_in ?? 0,
+      icon: <Users className="h-3.5 w-3.5 text-blue-500" />,
+      color: 'text-blue-700',
+    },
+    {
+      label: 'Completed',
+      value: stats?.completed ?? 0,
+      icon: <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />,
+      color: 'text-green-700',
+    },
+    {
+      label: 'Removed',
+      value: stats?.removed ?? 0,
+      icon: <UserMinus className="h-3.5 w-3.5 text-slate-400" />,
+      color: 'text-slate-600',
+    },
+  ];
 
   return (
-    <div className="space-y-3">
-      {steps.map((step, i) => (
-        <div
-          key={i}
-          className={`rounded-lg border p-3 ${CHANNEL_COLORS[step.channel] ?? 'bg-gray-50 border-gray-200'}`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold shadow-sm">
-                {step.stepNumber}
-              </span>
-              {CHANNEL_ICONS[step.channel]}
-              <span className="text-sm font-medium text-gray-700">
-                {CHANNEL_LABELS[step.channel]}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => moveUp(i)}
-                disabled={i === 0}
-                className="rounded p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-30"
-                aria-label="Move up"
-              >
-                <ChevronUp className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => moveDown(i)}
-                disabled={i === steps.length - 1}
-                className="rounded p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-30"
-                aria-label="Move down"
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => removeStep(i)}
-                className="rounded p-0.5 text-red-400 hover:text-red-600"
-                aria-label="Remove step"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
+    <div className="grid grid-cols-3 divide-x divide-slate-100 border-t border-slate-100">
+      {statItems.map((item) => (
+        <div key={item.label} className="flex flex-col items-center gap-0.5 px-3 py-2.5">
+          <div className="flex items-center gap-1">
+            {item.icon}
+            <span className={`text-base font-bold ${item.color}`}>
+              {isLoading ? '—' : item.value}
+            </span>
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">Channel</Label>
-              <select
-                value={step.channel}
-                onChange={(e) =>
-                  updateStep(i, 'channel', e.target.value as SequenceStep['channel'])
-                }
-                className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <option value="whatsapp">WhatsApp</option>
-                <option value="email">Email</option>
-                <option value="sms">SMS</option>
-                <option value="phone_call">Phone Call (manual)</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-500">
-                {i === 0 ? 'Delay (hours, 0 = immediate)' : 'Delay after previous (hours)'}
-              </Label>
-              <Input
-                type="number"
-                min={0}
-                value={step.delayHours}
-                onChange={(e) => updateStep(i, 'delayHours', Number(e.target.value))}
-                className="h-8 text-xs"
-              />
-            </div>
-
-            <div className="col-span-2 space-y-1">
-              <Label className="text-xs text-gray-500">Approved Template</Label>
-              <select
-                value={step.templateId ?? ''}
-                onChange={(e) => updateStep(i, 'templateId', e.target.value || null)}
-                className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <option value="">Select approved template</option>
-                {templates
-                  .filter((template) => template.channel === step.channel)
-                  .map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          </div>
-
-          {step.channel === 'phone_call' && (
-            <p className="mt-2 text-xs text-purple-600">
-              ⚡ Phone call steps create a task for the assigned rep — no message is auto-sent.
-            </p>
-          )}
+          <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+            {item.label}
+          </span>
         </div>
       ))}
-
-      <Button type="button" variant="outline" size="sm" onClick={addStep} className="w-full">
-        <Plus className="mr-1 h-3.5 w-3.5" />
-        Add Step
-      </Button>
     </div>
   );
 }
 
-// ── Sequence form ───────────────────────────────────────────────────────────
+// ── Sequence card ─────────────────────────────────────────────────────────────
 
-function SequenceForm({
-  initial,
-  onSave,
-  onCancel,
-  isPending,
+function SequenceCard({
+  seq,
+  onEdit,
+  onDelete,
+  onToggleActive,
+  isDeleting,
+  isUpdating,
 }: {
-  initial?: Sequence;
-  onSave: (name: string, steps: SequenceStep[]) => void;
-  onCancel: () => void;
-  isPending: boolean;
+  seq: Sequence;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggleActive: () => void;
+  isDeleting: boolean;
+  isUpdating: boolean;
 }) {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [steps, setSteps] = useState<SequenceStep[]>(
-    initial?.steps ?? [{ stepNumber: 1, channel: 'whatsapp', delayHours: 0, templateId: null }],
-  );
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    onSave(name.trim(), steps);
-  };
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="space-y-1">
-        <Label htmlFor="seq-name">Sequence Name *</Label>
-        <Input
-          id="seq-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g., 3-Step Restaurant Outreach"
-          required
-        />
+    <Card className="overflow-hidden">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50 px-5 py-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-base font-semibold text-slate-900 truncate">{seq.name}</h3>
+            <span
+              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                seq.is_active
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-slate-100 text-slate-500'
+              }`}
+            >
+              {seq.is_active ? '● Active' : '○ Inactive'}
+            </span>
+          </div>
+          {seq.description && (
+            <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{seq.description}</p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            title={seq.is_active ? 'Deactivate sequence' : 'Activate sequence'}
+            onClick={onToggleActive}
+            disabled={isUpdating}
+            className="rounded p-1 text-slate-400 hover:text-indigo-600 disabled:opacity-40"
+          >
+            {seq.is_active ? (
+              <ToggleRight className="h-5 w-5 text-green-500" />
+            ) : (
+              <ToggleLeft className="h-5 w-5" />
+            )}
+          </button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onEdit}>
+            <Edit2 className="mr-1 h-3 w-3" />
+            Edit
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs text-red-600 hover:bg-red-50"
+            onClick={onDelete}
+            disabled={isDeleting}
+          >
+            <Trash2 className="mr-1 h-3 w-3" />
+            Delete
+          </Button>
+        </div>
       </div>
 
-      <div className="space-y-2">
-        <Label>Steps (WhatsApp → Email → SMS → Phone Call)</Label>
-        <StepEditor steps={steps} onChange={setSteps} />
+      {/* Steps */}
+      <div className="px-5 py-3">
+        <div className="mb-2 flex items-center gap-1.5 text-xs text-slate-500">
+          <Clock className="h-3.5 w-3.5" />
+          <span className="font-medium">{durationLabel(seq.steps)}</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {seq.steps.map((step) => (
+            <div
+              key={step.stepNumber}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
+                CHANNEL_COLORS[step.channel] ?? 'bg-slate-50 border-slate-200'
+              }`}
+            >
+              {CHANNEL_ICONS[step.channel]}
+              <span className="font-medium">Step {step.stepNumber}</span>
+              <span className="text-slate-500">
+                {step.delayHours === 0 ? '(immediate)' : `+${step.delayHours}h`}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="flex gap-2">
-        <Button type="submit" disabled={isPending || !name.trim() || steps.length === 0}>
-          {isPending ? 'Saving…' : initial ? 'Save Changes' : 'Create Sequence'}
-        </Button>
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
+      {/* Enrollment stats */}
+      <EnrollmentStats sequenceId={seq.id} />
+
+      {/* Footer actions */}
+      <div className="flex items-center justify-between border-t border-slate-100 bg-white px-5 py-2.5">
+        <span className="text-xs text-slate-400">
+          {seq.steps.map((s) => CHANNEL_LABELS[s.channel] ?? s.channel).join(' → ')}
+        </span>
+        <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+          <Link to={`/campaigns/new`} state={{ prefillSequenceId: seq.id }}>
+            <Users className="mr-1 h-3 w-3" />
+            Add clients
+            <ExternalLink className="ml-1 h-3 w-3 opacity-50" />
+          </Link>
         </Button>
       </div>
-    </form>
+    </Card>
   );
 }
 
-// ── Page ────────────────────────────────────────────────────────────────────
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function OutreachSequencesPage() {
   const { data: sequenceData, isLoading } = useSequences();
   const createSequence = useCreateSequence();
   const updateSequence = useUpdateSequence();
   const deleteSequence = useDeleteSequence();
-  const { data: tasks = [], isLoading: isTasksLoading, isError: isTasksError } = useOutreachTasks({
-    status: 'pending',
-    assignedTo: 'me',
-  });
+  const {
+    data: tasks = [],
+    isLoading: isTasksLoading,
+    isError: isTasksError,
+  } = useOutreachTasks({ status: 'pending', assignedTo: 'me' });
   const { showToast } = useToast();
 
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -274,9 +226,9 @@ export function OutreachSequencesPage() {
 
   const sequences = (sequenceData as { items?: Sequence[] } | undefined)?.items ?? [];
 
-  const handleCreate = async (name: string, steps: SequenceStep[]) => {
+  const handleCreate = async (name: string, steps: SequenceStep[], description?: string) => {
     try {
-      await createSequence.mutateAsync({ name, steps });
+      await createSequence.mutateAsync({ name, description: description ?? null, steps });
       showToast('Sequence created.', 'success');
       setShowCreateForm(false);
     } catch {
@@ -284,9 +236,14 @@ export function OutreachSequencesPage() {
     }
   };
 
-  const handleUpdate = async (id: string, name: string, steps: SequenceStep[]) => {
+  const handleUpdate = async (
+    id: string,
+    name: string,
+    steps: SequenceStep[],
+    description?: string,
+  ) => {
     try {
-      await updateSequence.mutateAsync({ id, input: { name, steps } });
+      await updateSequence.mutateAsync({ id, input: { name, description: description ?? null, steps } });
       showToast('Sequence updated.', 'success');
       setEditingId(null);
     } catch {
@@ -304,6 +261,29 @@ export function OutreachSequencesPage() {
     }
   };
 
+  const handleToggleActive = async (seq: Sequence) => {
+    try {
+      await updateSequence.mutateAsync({
+        id: seq.id,
+        input: { is_active: !seq.is_active },
+      });
+      showToast(
+        seq.is_active ? 'Sequence deactivated.' : 'Sequence activated.',
+        'success',
+      );
+    } catch {
+      showToast('Failed to update sequence status.', 'error');
+    }
+  };
+
+  const totalSteps = sequences.reduce((sum, seq) => sum + seq.steps.length, 0);
+  const phoneSteps = sequences.reduce(
+    (sum, seq) => sum + seq.steps.filter((s) => s.channel === 'phone_call').length,
+    0,
+  );
+  const immediateStarts = sequences.filter((seq) => seq.steps[0]?.delayHours === 0).length;
+  const activeCount = sequences.filter((seq) => seq.is_active).length;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -312,9 +292,10 @@ export function OutreachSequencesPage() {
         description="Define multi-step flows across WhatsApp, email, SMS, and manual phone-call tasks."
         metrics={[
           { label: 'Sequences', value: sequences.length },
-          { label: 'Total steps', value: sequences.reduce((sum, sequence) => sum + sequence.steps.length, 0) },
-          { label: 'Phone tasks', value: sequences.reduce((sum, sequence) => sum + sequence.steps.filter((step) => step.channel === 'phone_call').length, 0) },
-          { label: 'Immediate starts', value: sequences.filter((sequence) => sequence.steps[0]?.delayHours === 0).length, tone: 'success' },
+          { label: 'Active', value: activeCount, tone: 'success' },
+          { label: 'Total steps', value: totalSteps },
+          { label: 'Phone tasks', value: phoneSteps },
+          { label: 'Immediate starts', value: immediateStarts },
         ]}
         actions={
           !showCreateForm ? (
@@ -326,6 +307,7 @@ export function OutreachSequencesPage() {
         }
       />
 
+      {/* Phone task inbox */}
       <Card>
         <CardHeader>
           <CardTitle>Phone Task Inbox</CardTitle>
@@ -335,18 +317,24 @@ export function OutreachSequencesPage() {
           {isTasksLoading ? (
             <LoadingTable rows={3} cols={3} />
           ) : isTasksError ? (
-            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">Unable to load tasks.</div>
+            <ErrorState message="Unable to load tasks." />
           ) : tasks.length === 0 ? (
-            <div className="rounded-md border border-dashed p-4 text-sm text-gray-500">No pending phone-call tasks.</div>
+            <div className="rounded-md border border-dashed p-4 text-sm text-slate-500">
+              No pending phone-call tasks.
+            </div>
           ) : (
             <div className="divide-y rounded-md border">
               {tasks.map((task) => (
                 <div key={task.id} className="flex items-center justify-between gap-3 p-3 text-sm">
                   <div>
-                    <div className="font-medium text-gray-900">{task.title}</div>
-                    <div className="text-gray-500">{task.due_at ? new Date(task.due_at).toLocaleString() : 'No due date'}</div>
+                    <div className="font-medium text-slate-900">{task.title}</div>
+                    <div className="text-slate-500">
+                      {task.due_at ? new Date(task.due_at).toLocaleString() : 'No due date'}
+                    </div>
                   </div>
-                  <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">{task.status}</span>
+                  <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                    {task.status}
+                  </span>
                 </div>
               ))}
             </div>
@@ -354,6 +342,7 @@ export function OutreachSequencesPage() {
         </CardContent>
       </Card>
 
+      {/* Create form */}
       {showCreateForm && (
         <Card>
           <CardHeader>
@@ -370,6 +359,7 @@ export function OutreachSequencesPage() {
         </Card>
       )}
 
+      {/* Sequence list */}
       {isLoading ? (
         <LoadingTable rows={4} cols={3} />
       ) : sequences.length === 0 && !showCreateForm ? (
@@ -386,72 +376,35 @@ export function OutreachSequencesPage() {
         />
       ) : (
         <div className="space-y-4">
-          {sequences.map((seq) => (
-            <Card key={seq.id}>
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{seq.name}</CardTitle>
-                    <CardDescription className="text-xs mt-0.5">
-                      {seq.steps.length} step{seq.steps.length !== 1 ? 's' : ''} ·{' '}
-                      {seq.steps.map((s) => CHANNEL_LABELS[s.channel] ?? s.channel).join(' → ')}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs"
-                      onClick={() => setEditingId(seq.id === editingId ? null : seq.id)}
-                    >
-                      <Edit2 className="mr-1 h-3 w-3" />
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs text-red-600 hover:bg-red-50"
-                      onClick={() => handleDelete(seq.id, seq.name)}
-                      disabled={deleteSequence.isPending}
-                    >
-                      <Trash2 className="mr-1 h-3 w-3" />
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-
-              {editingId === seq.id && (
+          {sequences.map((seq) =>
+            editingId === seq.id ? (
+              <Card key={seq.id}>
+                <CardHeader>
+                  <CardTitle>Edit — {seq.name}</CardTitle>
+                </CardHeader>
                 <CardContent>
                   <SequenceForm
                     initial={seq}
-                    onSave={(name, steps) => handleUpdate(seq.id, name, steps)}
+                    onSave={(name, steps, description) =>
+                      handleUpdate(seq.id, name, steps, description)
+                    }
                     onCancel={() => setEditingId(null)}
                     isPending={updateSequence.isPending}
                   />
                 </CardContent>
-              )}
-
-              {editingId !== seq.id && (
-                <CardContent className="pt-0">
-                  <div className="flex flex-wrap gap-2">
-                    {seq.steps.map((step) => (
-                      <div
-                        key={step.stepNumber}
-                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${CHANNEL_COLORS[step.channel] ?? 'bg-gray-50 border-gray-200'}`}
-                      >
-                        {CHANNEL_ICONS[step.channel]}
-                        <span className="font-medium">Step {step.stepNumber}</span>
-                        <span className="text-gray-500">
-                          {step.delayHours === 0 ? '(immediate)' : `+${step.delayHours}h`}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          ))}
+              </Card>
+            ) : (
+              <SequenceCard
+                key={seq.id}
+                seq={seq}
+                onEdit={() => setEditingId(seq.id)}
+                onDelete={() => handleDelete(seq.id, seq.name)}
+                onToggleActive={() => handleToggleActive(seq)}
+                isDeleting={deleteSequence.isPending}
+                isUpdating={updateSequence.isPending}
+              />
+            ),
+          )}
         </div>
       )}
     </div>

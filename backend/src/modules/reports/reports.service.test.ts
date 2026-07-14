@@ -5,6 +5,8 @@ import {
   getOutreachReport,
   getPipelineReport,
   getSalesRepReport,
+  getCampaignAnalyticsReport,
+  getIntegrationHealthReport,
   enqueueExportJob,
 } from './reports.service';
 import * as repository from './reports.repository';
@@ -12,7 +14,19 @@ import * as pagination from '../../shared/utils/pagination';
 import { enqueueReportExport } from '../../workers/queue';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { AppError } from '../../shared/middleware/errorHandler';
+import { IntegrationHealthRow } from './reports.types';
 
+jest.mock('./reports.cache', () => ({
+  getOrComputeReport: jest.fn().mockImplementation((_key: string, compute: () => Promise<unknown>) =>
+    compute().then((data: unknown) => ({
+      key: _key,
+      generatedAt: new Date().toISOString(),
+      ttlSeconds: 300,
+      data,
+    })),
+  ),
+  DEFAULT_ANALYTICS_TTL_SECONDS: 300,
+}));
 jest.mock('./reports.repository');
 jest.mock('../../workers/queue', () => ({
   enqueueReportExport: jest.fn(),
@@ -360,6 +374,119 @@ describe('reports.service', () => {
           filters: undefined,
         }),
       );
+    });
+  });
+
+  describe('role scoped reports', () => {
+    it('applies sales role scope to lead generation report', async () => {
+      mockedRepo.findLeadGenerationReport.mockResolvedValue([]);
+
+      await getLeadGenerationReport(
+        { limit: 25, offset: 0 },
+        { id: 'sales-1', role: 'sales' },
+      );
+
+      expect(mockedRepo.findLeadGenerationReport).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 25, offset: 0 }),
+        'sales-1',
+        'sales',
+      );
+    });
+
+    it('applies sales role scope to outreach report', async () => {
+      mockedRepo.findOutreachReport.mockResolvedValue([]);
+
+      await getOutreachReport(
+        { limit: 25, offset: 0 },
+        { id: 'sales-1', role: 'sales' },
+      );
+
+      expect(mockedRepo.findOutreachReport).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 25, offset: 0 }),
+        'sales-1',
+        'sales',
+      );
+    });
+
+    it('applies sales role scope to pipeline report', async () => {
+      mockedRepo.findPipelineReport.mockResolvedValue([]);
+
+      await getPipelineReport(
+        { limit: 25, offset: 0 },
+        { id: 'sales-1', role: 'sales' },
+      );
+
+      expect(mockedRepo.findPipelineReport).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 25, offset: 0 }),
+        'sales-1',
+        'sales',
+      );
+    });
+
+    it('applies sales role scope to sales rep report', async () => {
+      mockedRepo.findSalesRepReport.mockResolvedValue([]);
+
+      await getSalesRepReport(
+        { limit: 25, offset: 0 },
+        { id: 'sales-1', role: 'sales' },
+      );
+
+      expect(mockedRepo.findSalesRepReport).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 25, offset: 0 }),
+        'sales-1',
+        'sales',
+      );
+    });
+  });
+
+  describe('getCampaignAnalyticsReport', () => {
+    it('returns paginated campaign rows', async () => {
+      const rows = [
+        { date: '2026-06-20', campaignId: 'camp-1', campaignName: 'Summer Promo', channel: 'email', leadsTargeted: 10, leadsConverted: 2, conversionRate: 0.2 },
+      ];
+      mockedRepo.findCampaignAnalytics.mockResolvedValue(rows);
+
+      const result = await getCampaignAnalyticsReport(
+        { limit: 25, offset: 0, startDate: '2026-06-01', endDate: '2026-06-30' },
+        { id: 'admin-1', role: 'admin' },
+      );
+
+      expect(result.items).toHaveLength(1);
+      expect(result.meta.total).toBe(1);
+      expect(mockedRepo.findCampaignAnalytics).toHaveBeenCalledWith(
+        expect.objectContaining({ startDate: '2026-06-01', endDate: '2026-06-30' }),
+        'admin-1',
+        'admin',
+      );
+    });
+
+    it('paginates rows', async () => {
+      mockedRepo.findCampaignAnalytics.mockResolvedValue([
+        { date: '2026-06-20', campaignId: 'camp-1', campaignName: 'A', channel: 'email', leadsTargeted: 1, leadsConverted: 0, conversionRate: 0 },
+        { date: '2026-06-21', campaignId: 'camp-2', campaignName: 'B', channel: 'sms', leadsTargeted: 2, leadsConverted: 1, conversionRate: 0.5 },
+      ]);
+
+      const result = await getCampaignAnalyticsReport(
+        { limit: 1, offset: 1 },
+        { id: 'admin-1', role: 'admin' },
+      );
+
+      expect(result.items).toHaveLength(1);
+      expect(result.meta.total).toBe(2);
+    });
+  });
+
+  describe('getIntegrationHealthReport', () => {
+    it('returns integration health rows', async () => {
+      const rows: IntegrationHealthRow[] = [
+        { integrationId: 'int-1', name: 'twilio', displayName: 'Twilio', channel: 'sms', status: 'healthy', enabled: true, successRate: 95, lastTestedAt: new Date().toISOString() },
+      ];
+      mockedRepo.findIntegrationHealth.mockResolvedValue(rows);
+
+      const result = await getIntegrationHealthReport({ id: 'admin-1', role: 'admin' });
+
+      expect(result).toEqual(rows);
+      expect(mockedRepo.findIntegrationHealth).toHaveBeenCalledTimes(1);
     });
   });
 });

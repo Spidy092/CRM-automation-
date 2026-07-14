@@ -129,7 +129,16 @@ describe('planner.service.createPlanFromGoal', () => {
     mockedFindPlanByIdempotencyKey.mockResolvedValue(null);
 
     const mockCompletion = {
-      choices: [{ message: { content: JSON.stringify({ goal: 'x', steps: [] }) } }],
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              goal: 'x',
+              steps: [{ step_index: 0, action_name: 'not.a.real.action' }],
+            }),
+          },
+        },
+      ],
     };
     openAiCreateMock.mockResolvedValue(mockCompletion as any);
 
@@ -142,6 +151,40 @@ describe('planner.service.createPlanFromGoal', () => {
         sourceMessage: null,
       }),
     ).rejects.toMatchObject({ code: 'invalid_plan' });
+  });
+
+  it('throws PlannerError(unsupported_goal) when the planner declines with empty steps', async () => {
+    mockedFindPlanByIdempotencyKey.mockResolvedValue(null);
+
+    const mockCompletion = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              goal: 'create a campaign',
+              steps: [],
+              unsupported_reason:
+                'I cannot create campaigns; I can list campaigns or launch an existing one.',
+            }),
+          },
+        },
+      ],
+    };
+    openAiCreateMock.mockResolvedValue(mockCompletion as any);
+
+    await expect(
+      createPlanFromGoal({
+        goal: 'create a campaign',
+        actor: baseActor as any,
+        autonomyLevel: 'supervised',
+        source: 'chat',
+        sourceMessage: null,
+      }),
+    ).rejects.toMatchObject({
+      code: 'unsupported_goal',
+      message: 'I cannot create campaigns; I can list campaigns or launch an existing one.',
+    });
+    expect(mockedCreatePlan).not.toHaveBeenCalled();
   });
 
   it('retries once on malformed JSON then throws PlannerError(planner_malformed)', async () => {

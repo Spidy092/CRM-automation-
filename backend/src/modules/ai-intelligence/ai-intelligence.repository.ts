@@ -118,10 +118,7 @@ export async function appendObjectionToProfile(
   );
 }
 
-export async function appendBuyingSignalToProfile(
-  leadId: string,
-  signal: string,
-): Promise<void> {
+export async function appendBuyingSignalToProfile(leadId: string, signal: string): Promise<void> {
   const entry = JSON.stringify({ signal, detected_at: new Date().toISOString() });
   await pool.query(
     `UPDATE lead_ai_profiles

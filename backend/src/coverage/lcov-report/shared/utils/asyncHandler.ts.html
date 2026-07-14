@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>3/3</span>
+                <span class='fraction'>0/3</span>
             </div>
         
             
@@ -37,16 +37,16 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>2/2</span>
+                <span class='fraction'>0/2</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>3/3</span>
+                <span class='fraction'>0/3</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -78,7 +78,12 @@
 <a name='L13'></a><a href='#L13'>13</a>
 <a name='L14'></a><a href='#L14'>14</a>
 <a name='L15'></a><a href='#L15'>15</a>
-<a name='L16'></a><a href='#L16'>16</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -88,24 +93,34 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">22x</span>
-<span class="cline-any cline-yes">111x</span>
-<span class="cline-any cline-yes">122x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import type { NextFunction, Request, Response } from 'express';
 &nbsp;
-type AsyncHandler = (req: Request, res: Response, next: NextFunction) =&gt; Promise&lt;unknown&gt;;
+type AsyncHandler = (req: Request, res: Response, next: NextFunction) =&gt; void | Promise&lt;unknown&gt;;
 &nbsp;
 /**
- * Wraps an async route handler so rejected promises are forwarded to next()
- * (the Express error handler) instead of becoming unhandled rejections.
+ * Wraps a route handler so any thrown error or rejected promise is forwarded to
+ * next() (the Express error handler) instead of becoming an unhandled rejection.
+ *
+ * Accepts both synchronous handlers (returning void) and async handlers
+ * (returning a Promise) — `Promise.resolve` normalises the return value so the
+ * `.catch` applies uniformly. This lets handlers stay synchronous when they have
+ * no awaits without tripping the lint `require-await` rule.
  *
  * Mirrors the pattern used in modules/auth/auth.routes.ts.
  */
-export function wrap(handler: AsyncHandler) {
-  return (req: Request, res: Response, next: NextFunction): void =&gt; {
-    handler(req, res, next).catch(next);
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >w</span>rap(</span>handler: AsyncHandler) {
+<span class="cstat-no" title="statement not covered" >  return <span class="fstat-no" title="function not covered" >(r</span>eq: Request, res: Response, next: NextFunction): void =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >    Promise.resolve(handler(req, res, next)).catch(next);</span>
   };
 }
 &nbsp;</pre></td></tr></table></pre>
@@ -115,7 +130,7 @@ export function wrap(handler: AsyncHandler) {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-27T12:57:54.233Z
+                at 2026-07-09T04:39:21.145Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -6,15 +6,16 @@ import {
   type BriefStatus,
 } from '@/api/aiCampaignBrain';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
 import {
   ArrowLeft,
   FileText,
-  AlertCircle,
   AlertTriangle,
   Check,
   X,
@@ -86,17 +87,10 @@ export function CampaignBriefPage() {
         }
       />
 
-      {isLoading && (
-        <div className="flex h-64 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-slate-700" />
-        </div>
-      )}
+      {isLoading && <LoadingSpinner />}
 
       {error && !isLoading && (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-6 py-10 text-center">
-          <AlertCircle className="h-8 w-8 text-red-400" />
-          <p className="font-semibold text-red-700">Could not load the campaign brief</p>
-        </div>
+        <ErrorState message="Could not load the campaign brief" />
       )}
 
       {!isLoading && !error && !brief && (

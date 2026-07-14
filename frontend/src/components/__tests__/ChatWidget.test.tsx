@@ -27,14 +27,26 @@ vi.mock('@/api/agentPlans', () => ({
   useCancelPlan: vi.fn(() => ({ mutateAsync: vi.fn() })),
 }));
 
+const mockActionInboxItemMutate = vi.fn();
+
+vi.mock('@/api/aiInbox', () => ({
+  useActionInboxItem: vi.fn(() => ({
+    mutate: mockActionInboxItemMutate,
+    isPending: false,
+    isError: false,
+  })),
+}));
+
 import { useChatHistory, useSendChatMessage } from '@/api/chat';
 import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
+import { useActionInboxItem } from '@/api/aiInbox';
 
 const useChatHistoryMock = useChatHistory as unknown as ReturnType<typeof vi.fn>;
 const useSendChatMessageMock = useSendChatMessage as unknown as ReturnType<typeof vi.fn>;
 const usePlanMock = usePlan as unknown as ReturnType<typeof vi.fn>;
 const useApprovePlanMock = useApprovePlan as unknown as ReturnType<typeof vi.fn>;
 const useCancelPlanMock = useCancelPlan as unknown as ReturnType<typeof vi.fn>;
+const useActionInboxItemMock = useActionInboxItem as unknown as ReturnType<typeof vi.fn>;
 
 describe('ChatWidget', () => {
   beforeEach(() => {
@@ -57,6 +69,12 @@ describe('ChatWidget', () => {
     usePlanMock.mockReturnValue({ data: null, isLoading: false });
     useApprovePlanMock.mockReturnValue({ mutateAsync: vi.fn() });
     useCancelPlanMock.mockReturnValue({ mutateAsync: vi.fn() });
+    mockActionInboxItemMutate.mockReset();
+    useActionInboxItemMock.mockReturnValue({
+      mutate: mockActionInboxItemMutate,
+      isPending: false,
+      isError: false,
+    });
   });
 
   it('renders the Open copilot toggle button', () => {
@@ -149,7 +167,7 @@ describe('ChatWidget', () => {
     expect(screen.getByText(/Copilot request failed\./)).toBeInTheDocument();
   });
 
-  it('renders an Approval created card when the response has require_approval outcome', async () => {
+  it('renders in-chat Approve/Reject buttons when the response has require_approval outcome', async () => {
     const user = userEvent.setup();
     mockMutateAsync.mockResolvedValueOnce({
       conversationId: 'conv-1',
@@ -157,6 +175,7 @@ describe('ChatWidget', () => {
       action: {
         name: 'lead.pause',
         policy: { outcome: 'require_approval', reason: 'risky' },
+        inboxItemId: 'inbox-item-1',
       },
     });
 
@@ -167,8 +186,121 @@ describe('ChatWidget', () => {
     await user.type(input, 'pause this lead');
     await user.click(screen.getByRole('button', { name: '' }));
 
-    expect(await screen.findByText('Approval created')).toBeInTheDocument();
-    expect(await screen.findByText(/lead\.pause is waiting in AI Inbox\./)).toBeInTheDocument();
+    expect(await screen.findByText(/needs your approval/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/lead\.pause/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument();
+    expect(screen.queryByText(/AI Inbox/)).not.toBeInTheDocument();
+  });
+
+  it('approves the linked inbox item in chat without navigating to the AI Inbox', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValueOnce({
+      conversationId: 'conv-1',
+      reply: 'OK, requesting approval',
+      action: {
+        name: 'scraper.run',
+        policy: { outcome: 'require_approval', reason: 'risky' },
+        inboxItemId: 'inbox-item-1',
+      },
+    });
+    mockActionInboxItemMutate.mockImplementation((_input, options) => {
+      options?.onSuccess?.();
+    });
+
+    renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+
+    const input = screen.getByPlaceholderText(/ask copilot/i);
+    await user.type(input, 'run my scraper');
+    await user.click(screen.getByRole('button', { name: '' }));
+
+    const approveButton = await screen.findByRole('button', { name: /approve/i });
+    await user.click(approveButton);
+
+    expect(mockActionInboxItemMutate).toHaveBeenCalledWith(
+      { id: 'inbox-item-1', action: 'approve' },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(await screen.findByText(/approved and running/i)).toBeInTheDocument();
+  });
+
+  it('rejects the linked inbox item in chat', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValueOnce({
+      conversationId: 'conv-1',
+      reply: 'OK, requesting approval',
+      action: {
+        name: 'campaign.launch',
+        policy: { outcome: 'require_approval', reason: 'risky' },
+        inboxItemId: 'inbox-item-2',
+      },
+    });
+    mockActionInboxItemMutate.mockImplementation((_input, options) => {
+      options?.onSuccess?.();
+    });
+
+    renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+
+    const input = screen.getByPlaceholderText(/ask copilot/i);
+    await user.type(input, 'launch the campaign');
+    await user.click(screen.getByRole('button', { name: '' }));
+
+    const rejectButton = await screen.findByRole('button', { name: /reject/i });
+    await user.click(rejectButton);
+
+    expect(mockActionInboxItemMutate).toHaveBeenCalledWith(
+      { id: 'inbox-item-2', action: 'reject' },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(await screen.findByText(/rejected\./i)).toBeInTheDocument();
+  });
+
+  it('falls back to an AI Inbox pointer when no linked inbox item id is available', async () => {
+    const user = userEvent.setup();
+    mockMutateAsync.mockResolvedValueOnce({
+      conversationId: 'conv-1',
+      reply: 'OK, requesting approval',
+      action: {
+        name: 'lead.pause',
+        policy: { outcome: 'require_approval', reason: 'risky' },
+        inboxItemId: null,
+      },
+    });
+
+    renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+
+    const input = screen.getByPlaceholderText(/ask copilot/i);
+    await user.type(input, 'pause this lead');
+    await user.click(screen.getByRole('button', { name: '' }));
+
+    expect(await screen.findByText(/Open the AI Inbox to review it\./)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
+  });
+
+  it('renders pipe-delimited table rows as readable text instead of raw pipes', async () => {
+    const user = userEvent.setup();
+    useChatHistoryMock.mockReturnValue({
+      data: [
+        {
+          role: 'assistant',
+          content:
+            '| Business Name | Rating |\n|---|---|\n| Uday Xerox | 5.0 |',
+          createdAt: '2026-07-03T00:00:00Z',
+        },
+      ],
+      refetch: mockRefetch,
+      isLoading: false,
+    });
+
+    renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+
+    expect(await screen.findByText(/Business Name · Rating/)).toBeInTheDocument();
+    expect(await screen.findByText(/Uday Xerox · 5\.0/)).toBeInTheDocument();
+    expect(screen.queryByText(/^\|/)).not.toBeInTheDocument();
   });
 
   it('renders PlanPreview when the response creates a plan', async () => {

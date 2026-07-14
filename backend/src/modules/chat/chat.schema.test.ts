@@ -127,6 +127,20 @@ describe('chat.schema', () => {
         expect(result.pageContext?.visibleRecords).toHaveLength(25);
       });
 
+      it('accepts a visibleRecord with an empty subtitle and status', () => {
+        const result = sendChatMessageSchema.parse({
+          conversationId: 'conv-1',
+          message: 'hi',
+          pageContext: {
+            route: '/leads',
+            visibleRecords: [
+              { type: 'lead' as const, id: VALID_UUID, name: 'Lead', subtitle: '', status: '' },
+            ],
+          },
+        });
+        expect(result.pageContext?.visibleRecords).toHaveLength(1);
+      });
+
       it('rejects pageContext with more than 25 visibleRecords', () => {
         const records = Array.from({ length: 26 }, (_, i) => ({
           type: 'lead' as const,

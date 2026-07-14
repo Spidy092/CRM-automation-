@@ -10,6 +10,8 @@ import {
   getOutreachReportHandler,
   getPipelineReportHandler,
   getSalesRepReportHandler,
+  getCampaignAnalyticsReportHandler,
+  getIntegrationHealthReportHandler,
   exportReportHandler,
   downloadExportHandler,
 } from './reports.controller';
@@ -47,6 +49,16 @@ router.get(
   '/reps',
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   wrap(getSalesRepReportHandler),
+);
+router.get(
+  '/campaigns',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getCampaignAnalyticsReportHandler),
+);
+router.get(
+  '/integrations',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getIntegrationHealthReportHandler),
 );
 router.post(
   '/export',

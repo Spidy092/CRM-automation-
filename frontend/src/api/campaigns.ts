@@ -14,6 +14,7 @@ export interface Campaign {
   target_countries: string[];
   sequence_id: string | null;
   pipeline_id: string | null;
+  trigger_stage_id: string | null;
   ai_personalization_enabled: boolean;
   created_by: string;
   launched_at: string | null;
@@ -60,6 +61,7 @@ export interface CreateCampaignInput {
   target_countries?: string[];
   sequence_id?: string;
   pipeline_id?: string;
+  trigger_stage_id?: string | null;
   ai_personalization_enabled?: boolean;
 }
 
@@ -70,6 +72,7 @@ export interface UpdateCampaignInput {
   target_countries?: string[];
   sequence_id?: string;
   pipeline_id?: string;
+  trigger_stage_id?: string | null;
   ai_personalization_enabled?: boolean;
 }
 
@@ -115,6 +118,45 @@ export function useCampaignStats(id: string) {
       return response.data.data;
     },
     enabled: !!id,
+  });
+}
+
+export interface CampaignLeadProgress {
+  lead_id: string;
+  business_name: string | null;
+  contact_name: string | null;
+  lead_status: string;
+  latest_step: number | null;
+  step_status: string | null;
+  step_time: string | null;
+  step_error: string | null;
+}
+
+export function useCampaignLeads(campaignId: string) {
+  return useQuery({
+    queryKey: ['campaigns', campaignId, 'leads'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<CampaignLeadProgress[]>>(`/campaigns/${campaignId}/leads`);
+      return response.data.data;
+    },
+    enabled: Boolean(campaignId),
+  });
+}
+
+export function useRetryLeadOutreachStep() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ campaignId, leadId }: { campaignId: string; leadId: string }) => {
+      const response = await apiClient.post<ApiResponse<{ enqueued: boolean }>>(
+        `/campaigns/${campaignId}/leads/${leadId}/retry`,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { campaignId }) => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'leads'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'stats'] });
+    },
   });
 }
 

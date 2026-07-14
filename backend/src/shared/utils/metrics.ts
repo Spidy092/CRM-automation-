@@ -149,10 +149,13 @@ export function incAgentAction(labels: {
   });
 }
 
-export function observeAgentActionDuration(labels: {
-  action: string;
-  riskTier: string;
-}, durationSec: number): void {
+export function observeAgentActionDuration(
+  labels: {
+    action: string;
+    riskTier: string;
+  },
+  durationSec: number,
+): void {
   agentActionDurationSeconds.observe(
     { action: labels.action, risk_tier: labels.riskTier },
     durationSec,

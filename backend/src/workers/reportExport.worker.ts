@@ -16,8 +16,15 @@ import {
   findOutreachReport,
   findPipelineReport,
   findSalesRepReport,
+  findCampaignAnalytics,
+  findIntegrationHealth,
 } from '../modules/reports/reports.repository';
-import { type DashboardMetrics, type ReportListFilters } from '../modules/reports/reports.types';
+import {
+  type DashboardMetrics,
+  type ReportListFilters,
+  type CampaignAnalyticsRow,
+  type IntegrationHealthRow,
+} from '../modules/reports/reports.types';
 
 export function startReportExportWorker(): Worker {
   const worker = new Worker(
@@ -123,6 +130,32 @@ export async function handleReportExport(
         actorRole,
       )) as unknown as Array<Record<string, unknown>>;
       break;
+    case 'campaigns': {
+      const campaignItems = await findCampaignAnalytics(buildFilters(filters), actorId, actorRole);
+      rows = campaignItems.map((row: CampaignAnalyticsRow) => ({
+        date: row.date,
+        campaignId: row.campaignId,
+        campaignName: row.campaignName,
+        channel: row.channel,
+        leadsTargeted: row.leadsTargeted,
+        leadsConverted: row.leadsConverted,
+        conversionRate: formatNumber(row.conversionRate),
+      }));
+      break;
+    }
+    case 'integrations': {
+      const integrationItems = await findIntegrationHealth();
+      rows = integrationItems.map((row: IntegrationHealthRow) => ({
+        integrationId: row.integrationId,
+        name: row.name,
+        displayName: row.displayName,
+        status: row.status,
+        enabled: row.enabled,
+        lastTestedAt: row.lastTestedAt,
+        successRate: formatNumber(row.successRate),
+      }));
+      break;
+    }
     default:
       throw new AppError(`Unknown report type: ${reportType}`, 400);
   }
@@ -192,6 +225,10 @@ function flattenDashboardMetrics(metrics: DashboardMetrics): Array<Record<string
       outreach: point.outreach,
     })),
   ];
+}
+
+function formatNumber(value: number): string {
+  return Number(value).toFixed(2);
 }
 
 function generateCsv(rows: Array<Record<string, unknown>>): string {

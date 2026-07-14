@@ -42,6 +42,14 @@ export type AgentActionName =
   | 'campaign.stats'
   | 'assignment.override'
   | 'report.dashboard'
+  | 'template.list'
+  | 'template.create'
+  | 'sequence.create'
+  | 'campaign.create'
+  | 'campaign.add_leads'
+  | 'pipeline.list'
+  | 'sequence.list'
+  | 'scraper.list'
   | 'scraper.run'
   | 'outreach.send_manual'
   | 'ai.decision.recompute'
@@ -55,10 +63,7 @@ export interface AgentActor {
   ipAddress?: string | null;
 }
 
-export function toAgentActor(
-  user: AuthenticatedUser,
-  ipAddress?: string | null,
-): AgentActor {
+export function toAgentActor(user: AuthenticatedUser, ipAddress?: string | null): AgentActor {
   return {
     id: user.id,
     role: user.role,
@@ -130,7 +135,9 @@ export type AgentPolicyDecision =
   | { outcome: 'require_approval'; reason: string; assignTo: string }
   | { outcome: 'reject'; reason: string };
 
-export interface AgentActionDefinition<TArgs extends Record<string, unknown> = Record<string, unknown>> {
+export interface AgentActionDefinition<
+  TArgs extends Record<string, unknown> = Record<string, unknown>,
+> {
   name: AgentActionName;
   description: string;
   riskTier: AgentRiskTier;

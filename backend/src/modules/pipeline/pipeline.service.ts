@@ -32,7 +32,7 @@ interface Actor {
   ipAddress?: string | null;
 }
 
-export async function getAllPipelines(): Promise<Pipeline[]> {
+export async function getAllPipelines(): Promise<PipelineWithStages[]> {
   return findPipelines();
 }
 

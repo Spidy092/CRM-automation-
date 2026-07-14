@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { apiClient } from '@/api/client';
-import { PipelinePage } from '../PipelinePage';
+import { PipelineManagePage } from '../PipelineManagePage';
 
 vi.mock('@/api/client', () => {
   const genericData = Object.assign([
@@ -73,9 +73,9 @@ vi.mock('@/api/client', () => {
   };
 });
 
-describe('PipelinePage', () => {
+describe('PipelineManagePage', () => {
   it('renders successfully', async () => {
-    const { container } = renderWithProviders(<PipelinePage />);
+    const { container } = renderWithProviders(<PipelineManagePage />);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(container).toBeTruthy();
   });
@@ -91,7 +91,7 @@ describe('PipelinePage', () => {
   }
 
   it('shows a success toast after creating a pipeline', async () => {
-    renderWithProviders(<PipelinePage />);
+    renderWithProviders(<PipelineManagePage />);
     await new Promise(resolve => setTimeout(resolve, 50));
 
     await openFormAndSubmit();
@@ -104,7 +104,7 @@ describe('PipelinePage', () => {
       response: { data: { success: false, error: 'Pipeline name already exists' } },
     });
 
-    renderWithProviders(<PipelinePage />);
+    renderWithProviders(<PipelineManagePage />);
     await new Promise(resolve => setTimeout(resolve, 50));
 
     await openFormAndSubmit();

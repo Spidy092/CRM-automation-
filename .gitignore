@@ -18,6 +18,9 @@
 postgres-data/
 redis-data/
 
+# User-uploaded files (template attachments etc.) — local disk storage, never commit
+backend/uploads/
+
 # Logs
 *.log
 npm-debug.log*

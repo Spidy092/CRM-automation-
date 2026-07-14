@@ -209,7 +209,17 @@ export async function handleWhatsAppStatus(
 
     const result = await pool.query(
       `UPDATE outreach_logs SET status = $1, updated_at = NOW()
-       WHERE external_msg_id = $2 AND status != $1
+       WHERE external_msg_id = $2
+         AND status != $1
+         AND status NOT IN ('replied', 'failed', 'bounced')
+         AND CASE
+           WHEN $1 = 'sent'      THEN status IN ('queued')
+           WHEN $1 = 'delivered'  THEN status IN ('queued', 'sent')
+           WHEN $1 = 'opened'     THEN status IN ('queued', 'sent', 'delivered')
+           WHEN $1 = 'clicked'    THEN status IN ('queued', 'sent', 'delivered', 'opened')
+           WHEN $1 = 'replied'    THEN status IN ('queued', 'sent', 'delivered', 'opened', 'clicked')
+           ELSE true
+         END
        RETURNING lead_id`,
       [logStatus, externalId],
     );
@@ -346,7 +356,17 @@ export async function handleTwilioStatus(payload: Record<string, unknown>): Prom
 
   await pool.query(
     `UPDATE outreach_logs SET status = $1, updated_at = NOW()
-     WHERE external_msg_id = $2 AND status != $1`,
+     WHERE external_msg_id = $2
+       AND status != $1
+       AND status NOT IN ('replied', 'failed', 'bounced')
+       AND CASE
+         WHEN $1 = 'sent'      THEN status IN ('queued')
+         WHEN $1 = 'delivered'  THEN status IN ('queued', 'sent')
+         WHEN $1 = 'opened'     THEN status IN ('queued', 'sent', 'delivered')
+         WHEN $1 = 'clicked'    THEN status IN ('queued', 'sent', 'delivered', 'opened')
+         WHEN $1 = 'replied'    THEN status IN ('queued', 'sent', 'delivered', 'opened', 'clicked')
+         ELSE true
+       END`,
     [logStatus, `tw:${messageSid}`],
   );
 
@@ -376,6 +396,7 @@ export async function handleSendGridEvents(events: unknown[]): Promise<WebhookRe
     const externalId = sgMessageId.includes('.') ? sgMessageId.split('.')[0] : sgMessageId;
 
     let logStatus: string;
+    let setClickedAt = false;
     switch (eventName) {
       case 'delivered':
         logStatus = 'delivered';
@@ -384,7 +405,8 @@ export async function handleSendGridEvents(events: unknown[]): Promise<WebhookRe
         logStatus = 'opened';
         break;
       case 'click':
-        logStatus = 'replied';
+        logStatus = 'clicked';
+        setClickedAt = true;
         break;
       case 'bounce':
       case 'dropped':
@@ -410,9 +432,23 @@ export async function handleSendGridEvents(events: unknown[]): Promise<WebhookRe
         logStatus = eventName;
     }
 
+    // Forward-only status guard: prevent regression and never overwrite terminal states.
+    const clickedAtSet = setClickedAt ? ', clicked_at = NOW()' : '';
     const result = await pool.query(
-      `UPDATE outreach_logs SET status = $1, updated_at = NOW()
-       WHERE external_msg_id = $2 AND status != $1`,
+      `UPDATE outreach_logs
+       SET status = $1, updated_at = NOW()${clickedAtSet}
+       WHERE external_msg_id = $2
+         AND status != $1
+         AND status NOT IN ('replied', 'failed', 'bounced')
+         AND CASE
+           WHEN $1 = 'sent'      THEN status IN ('queued')
+           WHEN $1 = 'delivered'  THEN status IN ('queued', 'sent')
+           WHEN $1 = 'opened'     THEN status IN ('queued', 'sent', 'delivered')
+           WHEN $1 = 'clicked'    THEN status IN ('queued', 'sent', 'delivered', 'opened')
+           WHEN $1 = 'replied'    THEN status IN ('queued', 'sent', 'delivered', 'opened', 'clicked')
+           ELSE true
+         END
+       RETURNING lead_id`,
       [logStatus, `sg:${externalId}`],
     );
     if (result.rowCount && result.rowCount > 0) updated++;
@@ -497,5 +533,78 @@ export async function handleGoogleAdsLeadForm(
     action: 'lead_created',
     leadId: created?.id,
     details: `New lead from Google Ads ${leadId}`,
+  };
+}
+
+// ── Website Contact Form ──────────────────────────────────────────────────
+
+/**
+ * Handle website contact form submission.
+ * Expected body: { name, email, phone?, company?, message?, source? }
+ */
+export async function handleWebsiteForm(payload: Record<string, unknown>): Promise<WebhookResult> {
+  const name = (payload.name as string) ?? '';
+  const email = (payload.email as string) ?? '';
+  const phone = (payload.phone as string) ?? '';
+  const company = (payload.company as string) ?? '';
+  const message = (payload.message as string) ?? '';
+
+  if (!name && !email && !phone) {
+    return { action: 'noop', details: 'No identifying fields (name, email, phone)' };
+  }
+
+  logger.info('Website form submission', { name, email, phone });
+
+  // Dedup by email or phone within website_form source
+  const existing = email
+    ? await queryOne<{ id: string }>(
+        `SELECT id FROM leads WHERE source_platform = 'website_form' AND email = $1 AND deleted_at IS NULL LIMIT 1`,
+        [email.toLowerCase()],
+      )
+    : phone
+      ? await queryOne<{ id: string }>(
+          `SELECT id FROM leads WHERE source_platform = 'website_form' AND phone = $1 AND deleted_at IS NULL LIMIT 1`,
+          [phone],
+        )
+      : null;
+
+  if (existing) {
+    // Append message as note if provided
+    if (message) {
+      await pool.query(
+        `UPDATE leads SET notes = COALESCE(notes, '') || E'\n---\n' || $1, updated_at = NOW()
+         WHERE id = $2 AND deleted_at IS NULL`,
+        [message, existing.id],
+      );
+    }
+    logger.info('Website form lead updated', { leadId: existing.id });
+    return {
+      action: 'lead_updated',
+      leadId: existing.id,
+      details: `Existing lead updated from website form`,
+    };
+  }
+
+  const contactName = name || `Website Lead ${email || phone.slice(-4)}`;
+  const businessName = company || contactName;
+
+  const created = await queryOne<{ id: string }>(
+    `INSERT INTO leads (business_name, contact_name, phone, email, source_platform, status, notes)
+     VALUES ($1, $2, $3, $4, 'website_form', 'active', $5)
+     RETURNING id`,
+    [
+      businessName,
+      contactName,
+      phone || '',
+      email || `form_${Date.now()}@placeholder.local`,
+      message || null,
+    ],
+  );
+
+  logger.info('Website form lead created', { leadId: created?.id });
+  return {
+    action: 'lead_created',
+    leadId: created?.id,
+    details: `New lead from website form`,
   };
 }

@@ -21,6 +21,7 @@ import { authenticatedLimiter } from './shared/middleware/rateLimiter';
 import { authRoutes } from './modules/auth/auth.routes';
 import { customFieldsRoutes } from './modules/custom-fields/customFields.routes';
 import { leadsRoutes } from './modules/leads/leads.routes';
+import { activitiesRoutes } from './modules/activities';
 import { usersRoutes } from './modules/users';
 import { pipelineRoutes } from './modules/pipeline/pipeline.routes';
 import { campaignsRoutes } from './modules/campaigns/campaigns.routes';
@@ -30,6 +31,7 @@ import { integrationsRoutes } from './modules/integrations/integrations.routes';
 import { templatesRoutes } from './modules/templates/templates.routes';
 import { outreachRoutes } from './modules/outreach/outreach.routes';
 import { reportsRoutes } from './modules/reports/reports.routes';
+import { teamMetricsRoutes } from './modules/team-metrics';
 import { scraperRoutes } from './modules/scraper';
 import { webhooksRoutes } from './webhooks/webhooks.routes';
 import { aiSettingsRoutes } from './modules/ai-settings/ai-settings.routes';
@@ -42,6 +44,11 @@ import agentRoutes from './modules/agent/agent.routes';
 import chatRoutes from './modules/chat/chat.routes';
 import { planRoutes } from './modules/agent-planner';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
+import { trackingRoutes } from './modules/tracking/tracking.routes';
+import { formsRoutes } from './modules/forms/forms.routes';
+import { abTestRoutes } from './modules/ab-testing/ab-testing.routes';
+import { templateAbRoutes } from './modules/ab-testing/template-ab.routes';
+import { schedulingRoutes } from './modules/scheduling/scheduling.routes';
 
 const app: Application = express();
 const PORT = process.env.PORT ?? 3000;
@@ -109,10 +116,23 @@ app.get('/metrics', (_req, res) => {
     });
 });
 
+// ── Uploaded file serving (template attachments) ─────────────────────────────
+// Cross-Origin-Resource-Policy is relaxed only for this path — the frontend
+// (a different origin in dev) needs to load these as <img>/download links.
+app.use(
+  '/uploads',
+  express.static(path.resolve(__dirname, '../uploads'), {
+    setHeaders: (res) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  }),
+);
+
 // ── API Routes (v1) ───────────────────────────────────────────────────────────
 app.use('/api/v1/auth', authenticatedLimiter, authRoutes);
 app.use('/api/v1/custom-fields', authenticatedLimiter, customFieldsRoutes);
 app.use('/api/v1/leads', leadsRoutes);
+app.use('/api/v1/leads/:leadId/activities', authenticatedLimiter, activitiesRoutes);
 app.use('/api/v1/users', authenticatedLimiter, usersRoutes);
 app.use('/api/v1/pipelines', pipelineRoutes);
 app.use('/api/v1/campaigns', campaignsRoutes);
@@ -122,6 +142,7 @@ app.use('/api/v1/integrations', authenticatedLimiter, integrationsRoutes);
 app.use('/api/v1/templates', authenticatedLimiter, templatesRoutes);
 app.use('/api/v1/outreach', authenticatedLimiter, outreachRoutes);
 app.use('/api/v1/reports', reportsRoutes);
+app.use('/api/v1/team', teamMetricsRoutes);
 app.use('/api/v1/ai-settings', aiSettingsRoutes);
 app.use('/api/v1/scraper', scraperRoutes);
 app.use('/api/v1/events', notificationsRoutes);
@@ -132,6 +153,13 @@ app.use('/api/v1/ai-reply', authenticate, aiReplyRoutes);
 app.use('/api/v1/agent', authenticatedLimiter, agentRoutes);
 app.use('/api/v1/chat', authenticatedLimiter, chatRoutes);
 app.use('/api/v1/chat/plans', authenticatedLimiter, planRoutes);
+app.use('/api/v1/forms', formsRoutes);
+app.use('/api/v1/ab-testing', abTestRoutes);
+app.use('/api/v1/template-ab', templateAbRoutes);
+app.use('/api/v1/scheduling', schedulingRoutes);
+
+// ── Public Tracking (no auth — called by email clients) ───────────────────
+app.use('/track', trackingRoutes);
 
 // ── Public Webhooks (no auth, signature verification in handlers) ───────────
 app.use('/webhooks', webhooksRoutes);

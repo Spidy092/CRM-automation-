@@ -10,6 +10,7 @@ export type OutreachStatus =
   | 'sent'
   | 'delivered'
   | 'opened'
+  | 'clicked'
   | 'replied'
   | 'failed'
   | 'bounced';

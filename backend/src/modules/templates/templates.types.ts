@@ -1,5 +1,20 @@
 import { MessageChannel, TemplateApprovalStatus } from '../../shared/types';
 
+/** A file attached to a template — sent as an email attachment or WhatsApp media. */
+export interface TemplateAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** Public URL the frontend/connectors use to reference the file. */
+  url: string;
+  /** Absolute path on disk — server-only, stripped before the API response. */
+  storagePath: string;
+}
+
+/** `TemplateAttachment` shape sent to the frontend — no server-only fields. */
+export type TemplateAttachmentResponse = Omit<TemplateAttachment, 'storagePath'>;
+
 /** Raw row shape from the `templates` table. */
 export interface TemplateRow {
   id: string;
@@ -8,6 +23,7 @@ export interface TemplateRow {
   subject: string | null;
   body: string;
   variables: string[];
+  attachments: TemplateAttachment[];
   approval_status: TemplateApprovalStatus;
   approved_by: string | null;
   approved_at: string | null;
@@ -25,6 +41,7 @@ export interface TemplateResponse {
   subject: string | null;
   body: string;
   variables: string[];
+  attachments: TemplateAttachmentResponse[];
   approval_status: TemplateApprovalStatus;
   approved_by: string | null;
   approved_at: string | null;

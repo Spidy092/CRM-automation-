@@ -1,21 +1,44 @@
+import { randomUUID } from 'crypto';
+import { unlink, writeFile, mkdir } from 'fs/promises';
+import path from 'path';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { logger } from '../../shared/utils/logger';
 import { clampLimit, encodeCursor } from '../../shared/utils/pagination';
 import {
+  appendTemplateAttachment,
   deleteTemplate,
   findTemplateById,
   findTemplates,
   insertTemplate,
+  removeTemplateAttachment as removeTemplateAttachmentRepo,
   setApprovalStatus,
   updateTemplate as updateTemplateRepo,
 } from './templates.repository';
 import {
   TemplateActor,
   TemplateApprovalInput,
+  TemplateAttachment,
   TemplateInput,
   TemplateListFilters,
   TemplateResponse,
 } from './templates.types';
+
+// ── Attachments ──────────────────────────────────────────────────────────────
+
+const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads/templates');
+const MAX_ATTACHMENTS_PER_TEMPLATE = 3;
+const ALLOWED_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'application/pdf',
+]);
+
+function publicBaseUrl(): string {
+  return process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
+}
 
 function toResponse(row: {
   id: string;
@@ -24,6 +47,7 @@ function toResponse(row: {
   subject: string | null;
   body: string;
   variables: string[];
+  attachments: TemplateAttachment[];
   approval_status: string;
   approved_by: string | null;
   approved_at: string | null;
@@ -39,6 +63,8 @@ function toResponse(row: {
     subject: row.subject,
     body: row.body,
     variables: row.variables,
+    // storagePath is server-only — never send an absolute disk path to the client.
+    attachments: (row.attachments ?? []).map(({ storagePath: _storagePath, ...rest }) => rest),
     approval_status: row.approval_status as TemplateResponse['approval_status'],
     approved_by: row.approved_by,
     approved_at: row.approved_at,
@@ -175,6 +201,18 @@ export async function removeTemplate(id: string, actor: TemplateActor): Promise<
 
   await deleteTemplate(id);
 
+  await Promise.all(
+    (before.attachments ?? []).map((a) =>
+      unlink(a.storagePath).catch((err) =>
+        logger.warn('failed to delete template attachment file', {
+          templateId: id,
+          attachmentId: a.id,
+          error: (err as Error).message,
+        }),
+      ),
+    ),
+  );
+
   await writeAuditLog({
     userId: actor.id,
     action: 'template.deleted',
@@ -183,4 +221,95 @@ export async function removeTemplate(id: string, actor: TemplateActor): Promise<
     oldValue: { name: before.name, channel: before.channel },
     ipAddress: actor.ipAddress ?? null,
   });
+}
+
+export async function addTemplateAttachment(
+  id: string,
+  file: { originalname: string; mimetype: string; size: number; buffer: Buffer },
+  actor: TemplateActor,
+): Promise<TemplateResponse> {
+  const before = await findTemplateById(id);
+  if (!before) throw new AppError('Template not found', 404);
+
+  if (before.approval_status === 'approved' && actor.role !== 'admin') {
+    throw new AppError('Approved templates may only be edited by admin', 403);
+  }
+  if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    throw new AppError(
+      `Unsupported file type "${file.mimetype}". Allowed: PNG, JPEG, WEBP, GIF, PDF.`,
+      400,
+    );
+  }
+  if ((before.attachments ?? []).length >= MAX_ATTACHMENTS_PER_TEMPLATE) {
+    throw new AppError(
+      `A template may have at most ${MAX_ATTACHMENTS_PER_TEMPLATE} attachments`,
+      400,
+    );
+  }
+
+  const attachmentId = randomUUID();
+  const ext = path.extname(file.originalname) || '';
+  const diskFilename = `${attachmentId}${ext}`;
+  await mkdir(UPLOAD_DIR, { recursive: true });
+  const storagePath = path.join(UPLOAD_DIR, diskFilename);
+  await writeFile(storagePath, file.buffer);
+
+  const attachment: TemplateAttachment = {
+    id: attachmentId,
+    filename: file.originalname,
+    mimeType: file.mimetype,
+    sizeBytes: file.size,
+    url: `${publicBaseUrl()}/uploads/templates/${diskFilename}`,
+    storagePath,
+  };
+
+  const row = await appendTemplateAttachment(id, attachment);
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'template.attachment_added',
+    entityType: 'template',
+    entityId: id,
+    newValue: { filename: attachment.filename, mimeType: attachment.mimeType },
+    ipAddress: actor.ipAddress ?? null,
+  });
+
+  return toResponse(row);
+}
+
+export async function removeTemplateAttachment(
+  id: string,
+  attachmentId: string,
+  actor: TemplateActor,
+): Promise<TemplateResponse> {
+  const before = await findTemplateById(id);
+  if (!before) throw new AppError('Template not found', 404);
+
+  if (before.approval_status === 'approved' && actor.role !== 'admin') {
+    throw new AppError('Approved templates may only be edited by admin', 403);
+  }
+
+  const existing = (before.attachments ?? []).find((a) => a.id === attachmentId);
+  if (!existing) throw new AppError('Attachment not found', 404);
+
+  const row = await removeTemplateAttachmentRepo(id, attachmentId);
+
+  await unlink(existing.storagePath).catch((err) =>
+    logger.warn('failed to delete template attachment file', {
+      templateId: id,
+      attachmentId,
+      error: (err as Error).message,
+    }),
+  );
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'template.attachment_removed',
+    entityType: 'template',
+    entityId: id,
+    oldValue: { filename: existing.filename },
+    ipAddress: actor.ipAddress ?? null,
+  });
+
+  return toResponse(row);
 }

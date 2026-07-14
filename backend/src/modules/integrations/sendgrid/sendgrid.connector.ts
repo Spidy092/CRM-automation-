@@ -1,9 +1,11 @@
+import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { decryptJson } from '../../../shared/utils/encryption';
 import { AppError } from '../../../shared/middleware/errorHandler';
 import { findByName } from '../integrations.repository';
 import { findCredentialsById } from '../integrations.repository';
 import { loggedFetch, type ConnectorResult } from '../connector.base';
+import { logger } from '../../../shared/utils/logger';
 
 /**
  * SendGrid v3 Mail Send connector.
@@ -36,6 +38,12 @@ export const sendgridCredentialsSchema = z
 
 export type SendgridCredentials = z.infer<typeof sendgridCredentialsSchema>;
 
+export interface SendEmailAttachment {
+  filename: string;
+  mimeType: string;
+  storagePath: string;
+}
+
 export interface SendEmailInput {
   leadId: string;
   campaignId?: string | null;
@@ -43,6 +51,7 @@ export interface SendEmailInput {
   subject: string;
   htmlBody: string;
   textBody?: string;
+  attachments?: SendEmailAttachment[];
 }
 
 export interface SendEmailOutput {
@@ -77,6 +86,35 @@ export async function sendEmail(input: SendEmailInput): Promise<ConnectorResult<
   const creds = await loadCredentials();
   const url = 'https://api.sendgrid.com/v3/mail/send';
 
+  // SendGrid attachments are sent as base64 content, not a URL — read each
+  // file from local disk. A file that fails to read is skipped (logged) so
+  // one bad attachment doesn't block the whole send.
+  const attachments = input.attachments
+    ? (
+        await Promise.all(
+          input.attachments.map(async (a) => {
+            try {
+              const content = await readFile(a.storagePath);
+              return {
+                content: content.toString('base64'),
+                filename: a.filename,
+                type: a.mimeType,
+                disposition: 'attachment',
+              };
+            } catch (err) {
+              logger.warn('SendGrid: failed to read attachment, skipping', {
+                lead_id: input.leadId,
+                campaign_id: input.campaignId,
+                filename: a.filename,
+                error: (err as Error).message,
+              });
+              return null;
+            }
+          }),
+        )
+      ).filter((a): a is NonNullable<typeof a> => a !== null)
+    : undefined;
+
   const body = {
     personalizations: [{ to: [{ email: input.to }] }],
     from: { email: creds.fromEmail, name: creds.fromName },
@@ -85,6 +123,7 @@ export async function sendEmail(input: SendEmailInput): Promise<ConnectorResult<
       { type: 'text/plain', value: input.textBody ?? stripHtml(input.htmlBody) },
       { type: 'text/html', value: input.htmlBody },
     ],
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
   };
 
   const res = await loggedFetch<unknown>(

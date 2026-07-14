@@ -26,6 +26,7 @@ const baseLeadSchema = z.object({
   custom_fields: z.record(z.string(), z.unknown()).optional().nullable(),
   tags: z.array(z.string()).optional(),
   notes: z.string().optional().nullable(),
+  deal_value: z.number().min(0).optional().nullable(),
 });
 
 export const createLeadSchema = baseLeadSchema;
@@ -33,7 +34,7 @@ export const createLeadSchema = baseLeadSchema;
 export const updateLeadSchema = baseLeadSchema.partial();
 
 export const listLeadsQuerySchema = z.object({
-  limit: z.coerce.number().int().positive().max(100).optional(),
+  limit: z.coerce.number().int().positive().max(1000).optional(),
   cursor: z.string().optional(),
   status: statusEnum.optional(),
   classification: classificationEnum.optional(),
@@ -41,6 +42,7 @@ export const listLeadsQuerySchema = z.object({
   industry: z.string().max(100).optional(),
   country: z.string().max(100).optional(),
   assigned_to: z.string().uuid().optional(),
+  pipeline_id: z.string().uuid().optional(),
   search: z.string().max(255).optional(),
   tags: z.string().max(255).optional(), // comma-separated
 });

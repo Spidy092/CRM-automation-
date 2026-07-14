@@ -1,9 +1,5 @@
 import { pool, queryOne } from '../../shared/utils/db';
-import type {
-  AgentActionRow,
-  AgentActionStatus,
-  CreateAgentActionInput,
-} from './agent.types';
+import type { AgentActionRow, AgentActionStatus, CreateAgentActionInput } from './agent.types';
 
 function parseRow(row: AgentActionRow): AgentActionRow {
   return {

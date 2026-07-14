@@ -87,4 +87,3 @@ export async function getLeadCampaignContext(leadId: string): Promise<{
     aiMinConfidence: row.ai_min_confidence ?? 70,
   };
 }
-

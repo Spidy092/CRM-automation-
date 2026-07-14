@@ -95,6 +95,20 @@ export async function deleteSequenceHandler(
   }
 }
 
+export async function getSequenceStatsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = req.params;
+    const stats = await outreachService.getSequenceStats(id);
+    sendSuccess(res, stats);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // ── Outreach Logs / Timeline ────────────────────────────────────────────────
 
 export async function getLeadTimelineHandler(

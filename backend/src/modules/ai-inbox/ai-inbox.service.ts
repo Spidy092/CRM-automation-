@@ -9,6 +9,7 @@ import {
   createInboxItem,
   findInboxItems,
   findInboxItemById,
+  findPendingInboxItemByAgentActionId,
   actionInboxItem,
   countInboxItems,
   expireGuardedItems,
@@ -39,6 +40,12 @@ export async function listItems(opts: ListInboxItemsOptions): Promise<{
     countInboxItems(opts.assigned_to),
   ]);
   return { items, total };
+}
+
+export async function findPendingItemForAgentAction(
+  agentActionId: string,
+): Promise<AiInboxItem | null> {
+  return findPendingInboxItemByAgentActionId(agentActionId);
 }
 
 export async function actionItem(

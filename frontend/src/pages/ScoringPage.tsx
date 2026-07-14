@@ -10,6 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Trash2, Plus, Save } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 
@@ -78,14 +81,12 @@ export function ScoringPage() {
   };
 
   if (isConfigLoading || isRulesLoading) {
-    return <div>Loading...</div>;
+    return <LoadingSpinner />;
   }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-900">Lead Scoring</h1>
-      </div>
+      <PageHeader title="Lead Scoring" eyebrow="Automation" />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Global Configuration */}
@@ -187,9 +188,11 @@ export function ScoringPage() {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-slate-500 text-center py-4">
-                  No scoring rules defined yet.
-                </p>
+                <EmptyState
+                  icon={<Plus className="h-6 w-6" />}
+                  title="No scoring rules yet"
+                  description="Create your first scoring rule to start evaluating leads."
+                />
               )}
             </div>
           </CardContent>

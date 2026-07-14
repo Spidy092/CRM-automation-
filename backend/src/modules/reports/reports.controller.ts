@@ -2,7 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { sendSuccess } from '../../shared/utils/response';
-import { listReportsQuerySchema, exportReportSchema } from './reports.schema';
+import {
+  listReportsQuerySchema,
+  exportReportSchema,
+  campaignAnalyticsQuerySchema,
+  integrationHealthQuerySchema,
+} from './reports.schema';
 import {
   listReports,
   getDashboardMetrics,
@@ -10,6 +15,8 @@ import {
   getOutreachReport,
   getPipelineReport,
   getSalesRepReport,
+  getCampaignAnalyticsReport,
+  getIntegrationHealthReport,
   enqueueExportJob,
 } from './reports.service';
 import { ReportListFilters, ExportJobInput } from './reports.types';
@@ -131,6 +138,40 @@ export async function getSalesRepReportHandler(
     };
     const result = await getSalesRepReport(filters, actorFromReq(req));
     sendSuccess(res, result.items, 200, result.meta);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaignAnalyticsReportHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const parsed = campaignAnalyticsQuerySchema.parse(req.query);
+    const filters: ReportListFilters = {
+      limit: parsed.limit,
+      offset: parsed.offset,
+      startDate: parsed.startDate,
+      endDate: parsed.endDate,
+    };
+    const result = await getCampaignAnalyticsReport(filters, actorFromReq(req));
+    sendSuccess(res, result.items, 200, result.meta);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getIntegrationHealthReportHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    integrationHealthQuerySchema.parse(req.query);
+    const rows = await getIntegrationHealthReport(actorFromReq(req));
+    sendSuccess(res, rows);
   } catch (err) {
     next(err);
   }

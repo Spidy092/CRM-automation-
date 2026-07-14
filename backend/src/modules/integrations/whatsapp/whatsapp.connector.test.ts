@@ -111,4 +111,58 @@ describe('whatsapp sendMessage', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toBe('HTTP 500');
   });
+
+  it('builds an image media message with the body as caption when media is an image', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: true, status: 200, externalId: 'wamid.3', latencyMs: 9 });
+
+    await sendMessage({
+      leadId: 'l1',
+      to: '+12025550000',
+      body: 'Check this out',
+      media: { url: 'http://x/flyer.png', mimeType: 'image/png', filename: 'flyer.png' },
+    });
+
+    const [, init] = mockLoggedFetch.mock.calls[0];
+    const payload = JSON.parse(init.body as string);
+    expect(payload.type).toBe('image');
+    expect(payload.image).toEqual({ link: 'http://x/flyer.png', caption: 'Check this out' });
+  });
+
+  it('builds a document media message with a filename when media is not an image', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: true, status: 200, externalId: 'wamid.4', latencyMs: 9 });
+
+    await sendMessage({
+      leadId: 'l1',
+      to: '+12025550000',
+      body: 'Your invoice',
+      media: { url: 'http://x/invoice.pdf', mimeType: 'application/pdf', filename: 'invoice.pdf' },
+    });
+
+    const [, init] = mockLoggedFetch.mock.calls[0];
+    const payload = JSON.parse(init.body as string);
+    expect(payload.type).toBe('document');
+    expect(payload.document).toEqual({
+      link: 'http://x/invoice.pdf',
+      filename: 'invoice.pdf',
+      caption: 'Your invoice',
+    });
+  });
+
+  it('prefers media over a template when both are set', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: true, status: 200, externalId: 'wamid.5', latencyMs: 9 });
+
+    await sendMessage({
+      leadId: 'l1',
+      to: '+12025550000',
+      body: 'hi',
+      templateName: 'welcome',
+      media: { url: 'http://x/flyer.png', mimeType: 'image/png', filename: 'flyer.png' },
+    });
+
+    const [, init] = mockLoggedFetch.mock.calls[0];
+    expect(JSON.parse(init.body as string).type).toBe('image');
+  });
 });

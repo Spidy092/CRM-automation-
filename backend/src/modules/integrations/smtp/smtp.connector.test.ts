@@ -133,4 +133,23 @@ describe('smtp sendEmail', () => {
     if (!res.ok) expect(res.retryable).toBe(false);
     expect(mockSendMail).not.toHaveBeenCalled();
   });
+
+  it('passes attachments through to nodemailer using the local storage path', async () => {
+    primeValidCreds();
+    mockSendMail.mockResolvedValue({ messageId: '<id@host>' });
+
+    await sendEmail({
+      leadId: 'l1',
+      to: 'dest@x.com',
+      subject: 'Hi',
+      htmlBody: '<p>Hello</p>',
+      attachments: [{ filename: 'flyer.png', mimeType: 'image/png', storagePath: '/x/flyer.png' }],
+    });
+
+    expect(mockSendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [{ filename: 'flyer.png', path: '/x/flyer.png', contentType: 'image/png' }],
+      }),
+    );
+  });
 });

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { wrap } from '../../shared/utils/asyncHandler';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
+import { templateAttachmentUpload } from '../../shared/middleware/upload';
 import {
   listTemplatesHandler,
   getTemplateHandler,
@@ -9,6 +10,8 @@ import {
   updateTemplateHandler,
   approveTemplateHandler,
   deleteTemplateHandler,
+  addTemplateAttachmentHandler,
+  removeTemplateAttachmentHandler,
 } from './templates.controller';
 
 const router = Router();
@@ -25,5 +28,17 @@ router.post('/', authorize('admin', 'marketing'), wrap(createTemplateHandler));
 router.put('/:id', authorize('admin', 'marketing'), wrap(updateTemplateHandler));
 router.post('/:id/approve', authorize('admin', 'marketing'), wrap(approveTemplateHandler));
 router.delete('/:id', authorize('admin', 'marketing'), wrap(deleteTemplateHandler));
+
+router.post(
+  '/:id/attachments',
+  authorize('admin', 'marketing'),
+  templateAttachmentUpload.single('file'),
+  wrap(addTemplateAttachmentHandler),
+);
+router.delete(
+  '/:id/attachments/:attachmentId',
+  authorize('admin', 'marketing'),
+  wrap(removeTemplateAttachmentHandler),
+);
 
 export { router as templatesRoutes };

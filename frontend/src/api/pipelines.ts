@@ -46,7 +46,7 @@ export function usePipelines() {
   return useQuery({
     queryKey: ['pipelines'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiResponse<Pipeline[]>>('/pipelines');
+      const response = await apiClient.get<ApiResponse<PipelineWithStages[]>>('/pipelines');
       return response.data.data;
     },
   });
@@ -115,6 +115,27 @@ export function useMoveLead() {
         stage_id: stageId,
       });
       return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+    },
+  });
+}
+
+export function useBulkMoveLead() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ leadIds, stageId }: { leadIds: string[]; stageId: string }) => {
+      await Promise.all(
+        leadIds.map((leadId) =>
+          apiClient.post<ApiResponse<{ message: string }>>('/pipelines/move-lead', {
+            lead_id: leadId,
+            stage_id: stageId,
+          })
+        )
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });

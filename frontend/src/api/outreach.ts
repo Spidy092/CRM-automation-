@@ -14,6 +14,8 @@ export interface SequenceStep {
 export interface Sequence {
   id: string;
   name: string;
+  description: string | null;
+  is_active: boolean;
   steps: SequenceStep[];
   created_by: string;
   created_at: string;
@@ -22,7 +24,15 @@ export interface Sequence {
 
 export interface CreateSequenceInput {
   name: string;
+  description?: string | null;
+  is_active?: boolean;
   steps: SequenceStep[];
+}
+
+export interface SequenceEnrollmentStats {
+  currently_in: number;
+  completed: number;
+  removed: number;
 }
 
 // ── Outreach log types ─────────────────────────────────────────────────────
@@ -110,6 +120,21 @@ export function useSequence(id: string) {
       return response.data.data;
     },
     enabled: !!id,
+  });
+}
+
+export function useSequenceStats(id: string) {
+  return useQuery({
+    queryKey: ['sequences', id, 'stats'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<SequenceEnrollmentStats>>(
+        `/outreach/sequences/${id}/stats`,
+      );
+      return response.data.data;
+    },
+    enabled: !!id,
+    // Refresh every 60s so counts stay reasonably live
+    refetchInterval: 60_000,
   });
 }
 

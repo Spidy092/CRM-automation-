@@ -2,11 +2,29 @@ import { pool } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { Pipeline, PipelineStage, PipelineWithStages } from './pipeline.types';
 
-export async function findPipelines(): Promise<Pipeline[]> {
+export async function findPipelines(): Promise<PipelineWithStages[]> {
   const result = await pool.query<Pipeline>(
     'SELECT * FROM pipelines ORDER BY is_default DESC, created_at DESC',
   );
-  return result.rows;
+  const pipelines = result.rows;
+
+  const stagesResult = await pool.query<PipelineStage>(
+    'SELECT * FROM pipeline_stages ORDER BY position',
+  );
+
+  const stagesByPipeline = stagesResult.rows.reduce(
+    (acc, stage) => {
+      if (!acc[stage.pipeline_id]) acc[stage.pipeline_id] = [];
+      acc[stage.pipeline_id].push(stage);
+      return acc;
+    },
+    {} as Record<string, PipelineStage[]>,
+  );
+
+  return pipelines.map((p) => ({
+    ...p,
+    stages: stagesByPipeline[p.id] || [],
+  }));
 }
 
 export async function findPipelineById(id: string): Promise<Pipeline | null> {

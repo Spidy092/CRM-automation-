@@ -18,6 +18,40 @@ export async function findActiveCampaignsByPipeline(pipelineId: string): Promise
   return result.rows;
 }
 
+/**
+ * Campaigns that explicitly target this specific stage (stage-level trigger).
+ */
+export async function findActiveCampaignsByStage(stageId: string): Promise<Campaign[]> {
+  const result = await pool.query<Campaign>(
+    `SELECT * FROM campaigns
+     WHERE trigger_stage_id = $1
+       AND status = 'active'
+       AND sequence_id IS NOT NULL
+       AND deleted_at IS NULL`,
+    [stageId],
+  );
+  return result.rows;
+}
+
+/**
+ * Campaigns linked to a pipeline but with no specific trigger stage set —
+ * these are "catch-all" campaigns that enroll on any stage move.
+ */
+export async function findActiveCampaignsByPipelineNoStage(
+  pipelineId: string,
+): Promise<Campaign[]> {
+  const result = await pool.query<Campaign>(
+    `SELECT * FROM campaigns
+     WHERE pipeline_id = $1
+       AND trigger_stage_id IS NULL
+       AND status = 'active'
+       AND sequence_id IS NOT NULL
+       AND deleted_at IS NULL`,
+    [pipelineId],
+  );
+  return result.rows;
+}
+
 export async function findCampaignById(id: string): Promise<Campaign | null> {
   const result = await pool.query<Campaign>(
     'SELECT * FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
@@ -34,8 +68,14 @@ export async function insertCampaign(
     target_countries: string[];
     sequence_id?: string;
     pipeline_id?: string;
+    trigger_stage_id?: string | null;
     ai_personalization_enabled?: boolean;
     autonomy_level?: string;
+    ab_test_enabled?: boolean;
+    ab_test_metric?: string;
+    ab_test_min_samples?: number;
+    ab_test_confidence?: number;
+    ab_test_auto_promote?: boolean;
   },
   createdBy: string,
 ): Promise<Campaign> {
@@ -43,8 +83,11 @@ export async function insertCampaign(
   // migration 1750000000022 stored a malformed default ('''guarded''') that
   // violates campaigns_autonomy_level_check. Default to the intended 'guarded'.
   const result = await pool.query<Campaign>(
-    `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id, ai_personalization_enabled, autonomy_level, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id,
+       trigger_stage_id, ai_personalization_enabled, autonomy_level,
+       ab_test_enabled, ab_test_metric, ab_test_min_samples, ab_test_confidence, ab_test_auto_promote,
+       created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
     [
       data.name,
       data.tone,
@@ -52,8 +95,14 @@ export async function insertCampaign(
       data.target_countries,
       data.sequence_id || null,
       data.pipeline_id || null,
+      data.trigger_stage_id ?? null,
       data.ai_personalization_enabled ?? false,
       data.autonomy_level ?? 'guarded',
+      data.ab_test_enabled ?? false,
+      data.ab_test_metric ?? 'open_rate',
+      data.ab_test_min_samples ?? 100,
+      data.ab_test_confidence ?? 95,
+      data.ab_test_auto_promote ?? true,
       createdBy,
     ],
   );
@@ -69,7 +118,13 @@ export async function updateCampaign(
     target_countries?: string[];
     sequence_id?: string;
     pipeline_id?: string;
+    trigger_stage_id?: string | null;
     ai_personalization_enabled?: boolean;
+    ab_test_enabled?: boolean;
+    ab_test_metric?: string;
+    ab_test_min_samples?: number;
+    ab_test_confidence?: number;
+    ab_test_auto_promote?: boolean;
   },
 ): Promise<Campaign> {
   const fields: string[] = [];
@@ -100,9 +155,33 @@ export async function updateCampaign(
     fields.push(`pipeline_id = $${paramIndex++}`);
     values.push(data.pipeline_id);
   }
+  if ('trigger_stage_id' in data) {
+    fields.push(`trigger_stage_id = $${paramIndex++}`);
+    values.push(data.trigger_stage_id ?? null);
+  }
   if (data.ai_personalization_enabled !== undefined) {
     fields.push(`ai_personalization_enabled = $${paramIndex++}`);
     values.push(data.ai_personalization_enabled);
+  }
+  if (data.ab_test_enabled !== undefined) {
+    fields.push(`ab_test_enabled = $${paramIndex++}`);
+    values.push(data.ab_test_enabled);
+  }
+  if (data.ab_test_metric !== undefined) {
+    fields.push(`ab_test_metric = $${paramIndex++}`);
+    values.push(data.ab_test_metric);
+  }
+  if (data.ab_test_min_samples !== undefined) {
+    fields.push(`ab_test_min_samples = $${paramIndex++}`);
+    values.push(data.ab_test_min_samples);
+  }
+  if (data.ab_test_confidence !== undefined) {
+    fields.push(`ab_test_confidence = $${paramIndex++}`);
+    values.push(data.ab_test_confidence);
+  }
+  if (data.ab_test_auto_promote !== undefined) {
+    fields.push(`ab_test_auto_promote = $${paramIndex++}`);
+    values.push(data.ab_test_auto_promote);
   }
 
   values.push(id);
@@ -203,6 +282,70 @@ export async function findCampaignLeads(campaignId: string): Promise<string[]> {
     [campaignId],
   );
   return result.rows.map((r) => r.lead_id);
+}
+
+export interface CampaignLeadProgressRow {
+  lead_id: string;
+  contact_name: string | null;
+  business_name: string | null;
+  lead_status: string;
+  latest_step: number | null;
+  step_status: string | null;
+  step_time: string | null;
+  step_error: string | null;
+}
+
+export async function findCampaignLeadsWithProgress(
+  campaignId: string,
+): Promise<CampaignLeadProgressRow[]> {
+  const result = await pool.query<CampaignLeadProgressRow>(
+    `SELECT
+      l.id as lead_id,
+      l.contact_name,
+      l.business_name,
+      l.status as lead_status,
+      ol.step_number as latest_step,
+      ol.status as step_status,
+      ol.created_at as step_time,
+      ol.error_message as step_error
+    FROM campaign_leads cl
+    JOIN leads l ON cl.lead_id = l.id
+    LEFT JOIN LATERAL (
+      SELECT step_number, status, created_at, error_message
+      FROM outreach_logs
+      WHERE lead_id = cl.lead_id AND campaign_id = cl.campaign_id
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) ol ON true
+    WHERE cl.campaign_id = $1`,
+    [campaignId],
+  );
+  return result.rows;
+}
+
+export interface LatestOutreachLogRow {
+  id: string;
+  step_number: number;
+  channel: 'whatsapp' | 'email' | 'sms' | 'phone_call';
+  template_id: string | null;
+  status: string;
+  error_message: string | null;
+}
+
+/** Most recent outreach_logs row for a specific lead within a campaign — used to retry a failed send. */
+export async function findLatestOutreachLogForLead(
+  campaignId: string,
+  leadId: string,
+): Promise<LatestOutreachLogRow | null> {
+  const result = await pool.query<LatestOutreachLogRow>(
+    `SELECT id, step_number, channel, template_id, status, error_message
+     FROM outreach_logs
+     WHERE campaign_id = $1 AND lead_id = $2
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [campaignId, leadId],
+  );
+  return result.rows[0] ?? null;
 }
 
 export interface CampaignLeadRow {

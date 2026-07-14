@@ -10,7 +10,9 @@ jest.mock('./campaigns.repository', () => ({
   addLeadsToCampaign: jest.fn(),
   removeLeadFromCampaign: jest.fn(),
   findCampaignLeads: jest.fn(),
+  findCampaignLeadsWithProgress: jest.fn(),
   findCampaignLeadRows: jest.fn(),
+  findLatestOutreachLogForLead: jest.fn(),
   getCampaignStats: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
@@ -44,8 +46,9 @@ import {
   resumeCampaign,
   addLeadsToCampaign,
   removeLeadFromCampaign,
-  findCampaignLeads,
+  findCampaignLeadsWithProgress,
   findCampaignLeadRows,
+  findLatestOutreachLogForLead,
   getCampaignStats,
 } from './campaigns.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -60,12 +63,14 @@ import {
   deleteCampaignById,
   getAllCampaigns,
   getCampaignById,
+  getCampaignAutomationPreview,
   getCampaignLeads,
   getStats,
   launchCampaignById,
   pauseCampaignById,
   removeLead,
   resumeCampaignById,
+  retryLeadOutreachStep,
   updateCampaignById,
 } from './campaigns.service';
 
@@ -236,11 +241,17 @@ describe('addLeads / removeLead', () => {
 });
 
 describe('getCampaignLeads / getStats', () => {
-  it('returns lead ids for a campaign', async () => {
+  it('returns lead rows for a campaign', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
-    (findCampaignLeads as jest.Mock).mockResolvedValue(['lead-1', 'lead-2']);
+    (findCampaignLeadsWithProgress as jest.Mock).mockResolvedValue([
+      { lead_id: 'lead-1', progress: 0 },
+      { lead_id: 'lead-2', progress: 50 },
+    ]);
     const res = await getCampaignLeads('camp-1');
-    expect(res).toEqual(['lead-1', 'lead-2']);
+    expect(res).toEqual([
+      { lead_id: 'lead-1', progress: 0 },
+      { lead_id: 'lead-2', progress: 50 },
+    ]);
   });
 
   it('throws 404 when campaign missing for getCampaignLeads', async () => {
@@ -320,6 +331,91 @@ describe('launch / pause / resume — additional status variants', () => {
   it('resume throws 404 when campaign missing', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(null);
     await expect(resumeCampaignById('x', actor)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('retryLeadOutreachStep', () => {
+  const activeCampaign = { ...baseCampaign, status: 'active' as const, sequence_id: 'seq-1' };
+  const failedLog = {
+    id: 'log-1',
+    step_number: 2,
+    channel: 'email' as const,
+    template_id: 'tmpl-1',
+    status: 'failed',
+    error_message: 'SendGrid credentials not set',
+  };
+
+  it('re-enqueues the latest failed step', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(failedLog);
+
+    const result = await retryLeadOutreachStep('camp-1', 'lead-1', actor);
+
+    expect(result).toEqual({ enqueued: true });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      {
+        leadId: 'lead-1',
+        campaignId: 'camp-1',
+        sequenceId: 'seq-1',
+        stepNumber: 2,
+        channel: 'email',
+        templateId: 'tmpl-1',
+        mockMode: false,
+        aiPersonalizationEnabled: false,
+      },
+      { jobIdSuffix: expect.stringMatching(/^retry-\d+$/) },
+    );
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'campaign.outreach.retried' }),
+    );
+  });
+
+  it('throws 404 when campaign missing', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(null);
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toBeInstanceOf(AppError);
+  });
+
+  it('refuses when campaign has no sequence', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...activeCampaign, sequence_id: null });
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toThrow(
+      'Campaign has no outreach sequence',
+    );
+  });
+
+  it('refuses when campaign is draft', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...activeCampaign, status: 'draft' });
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toThrow(
+      'Campaign must be active or paused',
+    );
+  });
+
+  it('refuses when there is no failed log for the lead', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(null);
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toThrow(
+      'No failed send found for this lead',
+    );
+  });
+
+  it('refuses when the latest log is not failed', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue({ ...failedLog, status: 'sent' });
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toThrow(
+      'No failed send found for this lead',
+    );
+  });
+
+  it('refuses when the template is no longer approved', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(failedLog);
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      id: 'tmpl-1',
+      channel: 'email',
+      approval_status: 'pending',
+    });
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toThrow(
+      'Template is no longer approved',
+    );
   });
 });
 
@@ -411,6 +507,88 @@ describe('launchCampaignById — outreach enqueueing', () => {
     const res = await launchCampaignById('camp-1', actor);
     expect(res.campaign.status).toBe('active');
     expect(enqueueOutreachDispatch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('getCampaignAutomationPreview — full-sequence validation', () => {
+  const twoStepSequence = {
+    id: 'seq-1',
+    steps: [
+      { stepNumber: 1, channel: 'email', templateId: 't1', delayHours: 0 },
+      { stepNumber: 2, channel: 'sms', templateId: 't2', delayHours: 24 },
+    ],
+  };
+
+  beforeEach(() => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, sequence_id: 'seq-1' });
+    (findSequenceById as jest.Mock).mockResolvedValue(twoStepSequence);
+  });
+
+  it('flags an unapproved template on a later step', async () => {
+    (findTemplateById as jest.Mock).mockImplementation(async (id: string) =>
+      id === 't1'
+        ? { id: 't1', name: 'Intro Email', channel: 'email', approval_status: 'approved' }
+        : { id: 't2', name: 'SMS Nudge', channel: 'sms', approval_status: 'pending' },
+    );
+    (findByName as jest.Mock).mockResolvedValue({ is_enabled: true, last_test_status: 'ok' });
+
+    const preview = await getCampaignAutomationPreview('camp-1');
+    expect(preview.templateIssues).toEqual(['Step 2: template "SMS Nudge" is not approved.']);
+  });
+
+  it('flags a channel mismatch on a later step', async () => {
+    (findTemplateById as jest.Mock).mockImplementation(async (id: string) =>
+      id === 't1'
+        ? { id: 't1', name: 'Intro Email', channel: 'email', approval_status: 'approved' }
+        : { id: 't2', name: 'Wrong Channel', channel: 'email', approval_status: 'approved' },
+    );
+    (findByName as jest.Mock).mockResolvedValue({ is_enabled: true, last_test_status: 'ok' });
+
+    const preview = await getCampaignAutomationPreview('camp-1');
+    expect(preview.templateIssues).toEqual([
+      'Step 2: template channel (email) does not match the sequence step (sms).',
+    ]);
+  });
+
+  it('flags a missing template on a later step', async () => {
+    (findTemplateById as jest.Mock).mockImplementation(async (id: string) =>
+      id === 't1'
+        ? { id: 't1', name: 'Intro Email', channel: 'email', approval_status: 'approved' }
+        : null,
+    );
+    (findByName as jest.Mock).mockResolvedValue({ is_enabled: true, last_test_status: 'ok' });
+
+    const preview = await getCampaignAutomationPreview('camp-1');
+    expect(preview.templateIssues).toEqual(['Step 2: template was not found.']);
+  });
+
+  it('flags a missing connector for a later-step channel', async () => {
+    (findTemplateById as jest.Mock).mockImplementation(async (id: string) =>
+      id === 't1'
+        ? { id: 't1', name: 'Intro Email', channel: 'email', approval_status: 'approved' }
+        : { id: 't2', name: 'SMS Nudge', channel: 'sms', approval_status: 'approved' },
+    );
+    (findByName as jest.Mock).mockImplementation(async (name: string) =>
+      name === 'twilio' ? null : { is_enabled: true, last_test_status: 'ok' },
+    );
+
+    const preview = await getCampaignAutomationPreview('camp-1');
+    expect(preview.templateIssues).toEqual([]);
+    expect(preview.connectorIssues).toEqual(['No ready connector configured for sms.']);
+  });
+
+  it('reports no issues when every step is approved and connected', async () => {
+    (findTemplateById as jest.Mock).mockImplementation(async (id: string) =>
+      id === 't1'
+        ? { id: 't1', name: 'Intro Email', channel: 'email', approval_status: 'approved' }
+        : { id: 't2', name: 'SMS Nudge', channel: 'sms', approval_status: 'approved' },
+    );
+    (findByName as jest.Mock).mockResolvedValue({ is_enabled: true, last_test_status: 'ok' });
+
+    const preview = await getCampaignAutomationPreview('camp-1');
+    expect(preview.templateIssues).toEqual([]);
+    expect(preview.connectorIssues).toEqual([]);
+    expect(preview.firstStep).toEqual({ stepNumber: 1, channel: 'email', templateId: 't1', delayHours: 0 });
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { CampaignFormPage } from '../CampaignFormPage';
 
@@ -72,10 +72,52 @@ vi.mock('@/api/client', () => {
   };
 });
 
-describe('CampaignFormPage', () => {
-  it('renders successfully', async () => {
-    const { container } = renderWithProviders(<CampaignFormPage />);
-    await new Promise(resolve => setTimeout(resolve, 50));
-    expect(container).toBeTruthy();
+describe('CampaignFormPage (wizard)', () => {
+  it('renders the step indicator with all four steps', async () => {
+    renderWithProviders(<CampaignFormPage />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /1\s*Basics/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /2\s*Pipeline/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /3\s*Sequence/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /4\s*Review & Launch/i })).toBeInTheDocument();
+  });
+
+  it('starts on Basics and blocks Next until a name is entered', async () => {
+    renderWithProviders(<CampaignFormPage />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Campaign Name/i)).toBeInTheDocument();
+    });
+
+    const nextButton = screen.getByRole('button', { name: /Next/i });
+    expect(nextButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/Campaign Name/i), { target: { value: 'Q3 Push' } });
+    expect(nextButton).not.toBeDisabled();
+  });
+
+  it('walks through pipeline and sequence steps to review', async () => {
+    renderWithProviders(<CampaignFormPage />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Campaign Name/i)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/Campaign Name/i), { target: { value: 'Q3 Push' } });
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+
+    // Step 2: pipeline trigger
+    expect(screen.getByText(/Pipeline Auto-Enrollment/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+
+    // Step 3: sequence — warns that launch is blocked without one
+    expect(screen.getByText(/Outreach Sequence/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot launch/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+
+    // Step 4: review + readiness check
+    expect(screen.getByRole('heading', { name: 'Readiness Check' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Save draft & check readiness/i })).toBeInTheDocument();
+    // Launch is blocked because no sequence is selected
+    expect(screen.getByRole('button', { name: /Save & Launch/i })).toBeDisabled();
   });
 });

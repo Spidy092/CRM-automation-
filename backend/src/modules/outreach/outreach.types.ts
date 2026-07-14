@@ -13,6 +13,8 @@ export interface SequenceStep {
 export interface SequenceRow {
   id: string;
   name: string;
+  description: string | null;
+  is_active: boolean;
   steps: SequenceStep[];
   created_by: string;
   created_at: string;
@@ -21,7 +23,18 @@ export interface SequenceRow {
 
 export interface SequenceInput {
   name: string;
+  description?: string | null;
+  is_active?: boolean;
   steps: SequenceStep[];
+}
+
+export interface SequenceEnrollmentStats {
+  /** Leads currently inside a campaign that uses this sequence (not yet completed all steps). */
+  currently_in: number;
+  /** Leads that have a completed outreach log for the final step of this sequence. */
+  completed: number;
+  /** Leads that were removed from a campaign using this sequence (lead status paused/won/lost/opted_out). */
+  removed: number;
 }
 
 // ── Outreach Logs ─────────────────────────────────────────────────────────
@@ -39,7 +52,9 @@ export interface OutreachLogRow {
   sent_at: string | null;
   delivered_at: string | null;
   opened_at: string | null;
+  clicked_at: string | null;
   replied_at: string | null;
+  click_url: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;

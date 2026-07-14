@@ -1,11 +1,14 @@
+import * as React from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useLead, useLeadActivity, usePauseLead, useDeleteLead, useEnrichLead } from '@/api/leads';
+import { useLead, useLeadActivities, useCreateLeadActivity, usePauseLead, useDeleteLead, useEnrichLead } from '@/api/leads';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { useToast } from '@/components/ui/Toast';
-import type { LeadStatus } from '@/types';
+import type { ActivityType, Lead, LeadStatus } from '@/types';
 import {
   ArrowLeft,
   Edit,
@@ -21,6 +24,15 @@ import {
   User,
   Activity,
   Sparkles,
+  Phone,
+  Mail,
+  FileText,
+  ArrowRightLeft,
+  UserCheck,
+  Send,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardCheck,
 } from 'lucide-react';
 
 const statusTones: Record<LeadStatus, StatusTone> = {
@@ -31,22 +43,240 @@ const statusTones: Record<LeadStatus, StatusTone> = {
   opted_out: 'gray',
 };
 
-const channelIcons: Record<string, string> = {
-  whatsapp: '💬',
-  email: '✉️',
-  sms: '📱',
-  phone_call: '📞',
+const activityTypeIcons: Record<import('@/types').ActivityType, React.ReactNode> = {
+  call: <Phone className="h-3.5 w-3.5" />,
+  whatsapp: <MessageSquare className="h-3.5 w-3.5" />,
+  email: <Mail className="h-3.5 w-3.5" />,
+  note: <FileText className="h-3.5 w-3.5" />,
+  status_change: <ArrowRightLeft className="h-3.5 w-3.5" />,
+  assignment_change: <UserCheck className="h-3.5 w-3.5" />,
 };
 
-function classifyActivity(action: string | null): string {
-  if (!action) return 'Outreach';
-  if (action === 'lead.created') return 'Lead created';
-  if (action === 'lead.updated') return 'Lead updated';
-  if (action === 'lead.stage_moved') return 'Stage changed';
-  if (action === 'lead.paused') return 'Outreach paused';
-  if (action === 'lead.resumed') return 'Outreach resumed';
-  if (action === 'lead.deleted') return 'Lead deleted';
-  return action.replace(/\./g, ' ');
+const activityTypeLabels: Record<import('@/types').ActivityType, string> = {
+  call: 'Call',
+  whatsapp: 'WhatsApp',
+  email: 'Email',
+  note: 'Note',
+  status_change: 'Status change',
+  assignment_change: 'Assignment change',
+};
+
+
+type LeadActionKind = 'link' | 'activity' | 'complete';
+type LeadOutcome = 'reached' | 'no_answer' | 'interested' | 'not_interested' | 'wrong_contact';
+
+interface LeadActionItem {
+  id: string;
+  title: string;
+  description: string;
+  tone: StatusTone;
+  buttonLabel: string;
+  kind: LeadActionKind;
+  to?: string;
+  activityType?: Exclude<ActivityType, 'status_change' | 'assignment_change'>;
+  icon: React.ReactNode;
+}
+
+interface LeadOutcomeOption {
+  id: LeadOutcome;
+  label: string;
+  nextStep: string;
+  tone: StatusTone;
+  icon: React.ReactNode;
+}
+
+const outcomeOptions: LeadOutcomeOption[] = [
+  {
+    id: 'reached',
+    label: 'Reached',
+    nextStep: 'Keep the lead active and continue qualification.',
+    tone: 'green',
+    icon: <Phone className="h-4 w-4" />,
+  },
+  {
+    id: 'no_answer',
+    label: 'No answer',
+    nextStep: 'Log the attempt, then follow up later.',
+    tone: 'amber',
+    icon: <ClockIcon />,
+  },
+  {
+    id: 'interested',
+    label: 'Interested',
+    nextStep: 'Review AI profile and move toward qualification.',
+    tone: 'blue',
+    icon: <Sparkles className="h-4 w-4" />,
+  },
+  {
+    id: 'not_interested',
+    label: 'Not interested',
+    nextStep: 'Pause outreach if needed and keep the reason in history.',
+    tone: 'red',
+    icon: <Pause className="h-4 w-4" />,
+  },
+  {
+    id: 'wrong_contact',
+    label: 'Wrong contact',
+    nextStep: 'Update contact fields before sending more outreach.',
+    tone: 'gray',
+    icon: <Edit className="h-4 w-4" />,
+  },
+];
+
+function ClockIcon() {
+  return <Activity className="h-4 w-4" />;
+}
+
+function getLeadActionPlan(lead: Lead, activityCount: number): LeadActionItem[] {
+  const actions: LeadActionItem[] = [];
+  const hasEmail = Boolean(lead.email);
+  const hasPhone = Boolean(lead.phone);
+  const isHot = lead.classification === 'hot' || lead.lead_score >= 80;
+
+  if (lead.status === 'opted_out') {
+    return [
+      {
+        id: 'opted-out',
+        title: 'Contact is opted out',
+        description: 'Keep this lead out of outreach. Use notes only for internal context.',
+        tone: 'gray',
+        buttonLabel: 'Add note below',
+        kind: 'complete',
+        icon: <AlertCircle className="h-4 w-4" />,
+      },
+    ];
+  }
+
+  if (!hasEmail && !hasPhone) {
+    actions.push({
+      id: 'missing-contact',
+      title: 'Add contact details',
+      description: 'This lead cannot enter email, SMS, WhatsApp, or call follow-up until email or phone is added.',
+      tone: 'red',
+      buttonLabel: 'Fix fields',
+      kind: 'link',
+      to: `/leads/${lead.id}/edit`,
+      icon: <FileText className="h-4 w-4" />,
+    });
+  }
+
+  if (!lead.pipeline_stage_id) {
+    actions.push({
+      id: 'pipeline-stage',
+      title: 'Place in pipeline',
+      description: 'Assign a stage so the next sales outcome is visible on the board.',
+      tone: 'amber',
+      buttonLabel: 'Open pipeline',
+      kind: 'link',
+      to: '/pipelines',
+      icon: <GitBranch className="h-4 w-4" />,
+    });
+  }
+
+  if (isHot && hasPhone) {
+    actions.push({
+      id: 'call-hot-lead',
+      title: 'Call this hot lead',
+      description: 'High-score leads should get a direct touch before automated nurture.',
+      tone: 'green',
+      buttonLabel: 'Log call',
+      kind: 'activity',
+      activityType: 'call',
+      icon: <Phone className="h-4 w-4" />,
+    });
+  }
+
+  if (!isHot && hasEmail) {
+    actions.push({
+      id: 'email-lead',
+      title: 'Send a light follow-up',
+      description: 'Use an approved template or campaign sequence instead of writing from scratch.',
+      tone: 'blue',
+      buttonLabel: 'Log email',
+      kind: 'activity',
+      activityType: 'email',
+      icon: <Mail className="h-4 w-4" />,
+    });
+  }
+
+  if (hasPhone && !actions.some((action) => action.activityType === 'call')) {
+    actions.push({
+      id: 'whatsapp-lead',
+      title: 'Start WhatsApp follow-up',
+      description: 'Use this when the lead is ready for a short conversational touch.',
+      tone: 'cyan',
+      buttonLabel: 'Log WhatsApp',
+      kind: 'activity',
+      activityType: 'whatsapp',
+      icon: <MessageSquare className="h-4 w-4" />,
+    });
+  }
+
+  if (activityCount === 0) {
+    actions.push({
+      id: 'first-note',
+      title: 'Capture first context',
+      description: 'Add a short note so the next rep understands why this lead matters.',
+      tone: 'violet',
+      buttonLabel: 'Add note below',
+      kind: 'complete',
+      icon: <ClipboardCheck className="h-4 w-4" />,
+    });
+  }
+
+  if (actions.length === 0) {
+    actions.push({
+      id: 'ready',
+      title: 'Lead is ready for normal follow-up',
+      description: 'Contact details, pipeline state, and activity history are present.',
+      tone: 'green',
+      buttonLabel: 'Open AI profile',
+      kind: 'link',
+      to: `/leads/${lead.id}/ai`,
+      icon: <CheckCircle2 className="h-4 w-4" />,
+    });
+  }
+
+  return actions.slice(0, 3);
+}
+
+function classifyActivity(type: import('@/types').ActivityType, metadata: Record<string, unknown>): string {
+  if (type === 'status_change') {
+    const from = String(metadata?.from ?? '—');
+    const to = String(metadata?.to ?? '—');
+    return `Status changed from ${from} to ${to}`;
+  }
+  if (type === 'assignment_change') {
+    const from = String(metadata?.from ?? '—');
+    const to = String(metadata?.to ?? '—');
+    return `Assignment changed from ${from} to ${to}`;
+  }
+  if (type === 'note') {
+    const outcomeLabel = metadata?.outcome_label;
+    if (outcomeLabel) {
+      return `Outcome · ${String(outcomeLabel)}`;
+    }
+    const quickAction = metadata?.quick_action_type;
+    const direction = metadata?.direction;
+    if (quickAction) {
+      const label = activityTypeLabels[quickAction as ActivityType] ?? String(quickAction);
+      return direction ? `${label} · ${String(direction)}` : label;
+    }
+    return String(metadata?.note ?? '');
+  }
+  if (type === 'call') {
+    const direction = String(metadata?.direction ?? '');
+    return direction ? `Call · ${direction}` : 'Call';
+  }
+  if (type === 'whatsapp') {
+    const direction = String(metadata?.direction ?? '');
+    return direction ? `WhatsApp · ${direction}` : 'WhatsApp';
+  }
+  if (type === 'email') {
+    const direction = String(metadata?.direction ?? '');
+    return direction ? `Email · ${direction}` : 'Email';
+  }
+  return activityTypeLabels[type];
 }
 
 function timeAgo(iso: string): string {
@@ -60,16 +290,182 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+
+function LeadOutcomeBar({
+  onSelectOutcome,
+  isSaving,
+}: {
+  onSelectOutcome: (outcome: LeadOutcomeOption) => void;
+  isSaving: boolean;
+}) {
+  return (
+    <Card className="overflow-hidden border-slate-200">
+      <CardHeader className="border-b bg-white">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">What happened?</h3>
+            <p className="text-sm text-slate-500">Record the outcome so the next step is obvious</p>
+          </div>
+          <StatusBadge tone="violet">outcome</StatusBadge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-2 p-4 sm:grid-cols-2 xl:grid-cols-5">
+        {outcomeOptions.map((outcome) => (
+          <button
+            key={outcome.id}
+            type="button"
+            disabled={isSaving}
+            onClick={() => onSelectOutcome(outcome)}
+            className="flex min-h-28 flex-col rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="flex items-center justify-between gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700">
+                {outcome.icon}
+              </span>
+              <StatusBadge tone={outcome.tone}>{outcome.label}</StatusBadge>
+            </span>
+            <span className="mt-3 text-xs leading-5 text-slate-500">{outcome.nextStep}</span>
+          </button>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LeadActionPlan({
+  actions,
+  onLogActivity,
+  isLogging,
+}: {
+  actions: LeadActionItem[];
+  onLogActivity: (type: Exclude<ActivityType, 'status_change' | 'assignment_change'>) => void;
+  isLogging: boolean;
+}) {
+  return (
+    <Card className="overflow-hidden border-slate-200">
+      <CardHeader className="border-b bg-slate-50/70">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Recommended next actions</h3>
+            <p className="text-sm text-slate-500">A short path from lead review to follow-up</p>
+          </div>
+          <StatusBadge tone="blue">guided flow</StatusBadge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 p-4 md:grid-cols-3">
+        {actions.map((action) => (
+          <div key={action.id} className="flex min-h-40 flex-col rounded-lg border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+                {action.icon}
+              </div>
+              <StatusBadge tone={action.tone}>{action.tone}</StatusBadge>
+            </div>
+            <div className="mt-3 flex-1">
+              <p className="text-sm font-semibold text-slate-900">{action.title}</p>
+              <p className="mt-1 text-sm text-slate-500">{action.description}</p>
+            </div>
+            {action.kind === 'link' && action.to ? (
+              <Button variant="outline" size="sm" asChild className="mt-4 justify-between">
+                <Link to={action.to}>
+                  {action.buttonLabel}
+                  <ArrowRight className="ml-2 h-3.5 w-3.5" />
+                </Link>
+              </Button>
+            ) : action.kind === 'activity' && action.activityType ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4 justify-between"
+                disabled={isLogging}
+                onClick={() => onLogActivity(action.activityType!)}
+              >
+                {action.buttonLabel}
+                <ArrowRight className="ml-2 h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" className="mt-4 justify-between" disabled>
+                {action.buttonLabel}
+                <CheckCircle2 className="ml-2 h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
 
   const { data: lead, isLoading: leadLoading, error: leadError } = useLead(id!);
-  const { data: activity = [], isLoading: activityLoading } = useLeadActivity(id!, 50);
+  const { data: activitiesPage, isLoading: activityLoading } = useLeadActivities(id!, { limit: 50 });
+  const createActivity = useCreateLeadActivity();
   const pauseLead = usePauseLead();
   const deleteLead = useDeleteLead();
   const enrichLead = useEnrichLead();
+
+  const [noteText, setNoteText] = React.useState('');
+
+  const activities = activitiesPage?.items ?? [];
+
+  const handleQuickActivity = async (type: Exclude<ActivityType, 'status_change' | 'assignment_change'>) => {
+    if (!id || createActivity.isPending) return;
+    const label = activityTypeLabels[type];
+    try {
+      await createActivity.mutateAsync({
+        leadId: id,
+        input: {
+          type: 'note',
+          metadata: {
+            note: `${label} follow-up logged from recommended actions.`,
+            quick_action_type: type,
+            direction: 'outgoing',
+            source: 'next_action_panel',
+          },
+        },
+      });
+      showToast(`${label} logged.`, 'success');
+    } catch {
+      showToast(`Failed to log ${label.toLowerCase()}.`, 'error');
+    }
+  };
+
+  const handleSubmitNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id || !noteText.trim() || createActivity.isPending) return;
+    try {
+      await createActivity.mutateAsync({ leadId: id, input: { type: 'note', metadata: { note: noteText.trim() } } });
+      setNoteText('');
+      showToast('Note added.', 'success');
+    } catch {
+      showToast('Failed to add note.', 'error');
+    }
+  };
+
+  const handleOutcome = async (outcome: LeadOutcomeOption) => {
+    if (!id || createActivity.isPending) return;
+    try {
+      await createActivity.mutateAsync({
+        leadId: id,
+        input: {
+          type: 'note',
+          metadata: {
+            note: `${outcome.label}: ${outcome.nextStep}`,
+            outcome: outcome.id,
+            outcome_label: outcome.label,
+            source: 'quick_outcome_bar',
+          },
+        },
+      });
+      showToast(`${outcome.label} saved.`, 'success');
+    } catch {
+      showToast('Failed to save outcome.', 'error');
+    }
+  };
 
   const handlePause = async () => {
     if (!lead) return;
@@ -95,11 +491,7 @@ export function LeadDetailPage() {
   };
 
   if (leadLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-slate-700" />
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
   if (leadError || !lead) {
@@ -116,6 +508,7 @@ export function LeadDetailPage() {
 
   const scoreColor =
     lead.lead_score >= 70 ? 'text-emerald-700' : lead.lead_score >= 40 ? 'text-amber-700' : 'text-slate-700';
+  const actionPlan = getLeadActionPlan(lead, activities.length);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -163,6 +556,17 @@ export function LeadDetailPage() {
           { label: 'Classification', value: lead.classification ?? '—' },
           { label: 'Source', value: lead.source_platform?.replace(/_/g, ' ') ?? '—' },
         ]}
+      />
+
+      <LeadActionPlan
+        actions={actionPlan}
+        isLogging={createActivity.isPending}
+        onLogActivity={handleQuickActivity}
+      />
+
+      <LeadOutcomeBar
+        isSaving={createActivity.isPending}
+        onSelectOutcome={handleOutcome}
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -292,55 +696,57 @@ export function LeadDetailPage() {
         <div className="lg:col-span-2">
           <Card>
             <CardHeader>
-              <h3 className="text-sm font-semibold text-slate-900">Activity timeline</h3>
+              <h3 className="text-sm font-semibold text-slate-900">Activity Timeline</h3>
             </CardHeader>
             <CardContent>
+              <form onSubmit={handleSubmitNote} className="mb-6 flex flex-col gap-3">
+                <Textarea
+                  placeholder="Add a note..."
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  rows={3}
+                  disabled={createActivity.isPending}
+                />
+                <div className="flex justify-end">
+                  <Button type="submit" size="sm" disabled={!noteText.trim() || createActivity.isPending}>
+                    <Send className="mr-2 h-4 w-4" />
+                    Add note
+                  </Button>
+                </div>
+              </form>
+
               {activityLoading && (
                 <div className="flex h-32 items-center justify-center">
                   <div className="h-6 w-6 animate-spin rounded-full border-4 border-slate-300 border-t-slate-700" />
                 </div>
               )}
 
-              {!activityLoading && activity.length === 0 && (
+              {!activityLoading && activities.length === 0 && (
                 <div className="flex flex-col items-center gap-2 py-10 text-center text-slate-500">
                   <Activity className="h-8 w-8 text-slate-300" />
                   <p className="text-sm">No activity yet</p>
                 </div>
               )}
 
-              {!activityLoading && activity.length > 0 && (
+              {!activityLoading && activities.length > 0 && (
                 <div className="relative">
                   <div className="absolute left-4 top-0 bottom-0 w-px bg-slate-200" />
                   <ul className="space-y-4 pl-10">
-                    {activity.map((entry) => (
+                    {activities.map((entry) => (
                       <li key={entry.id} className="relative">
-                        <div className="absolute -left-6 flex h-4 w-4 items-center justify-center rounded-full bg-white ring-2 ring-slate-200">
-                          {entry.kind === 'outreach' ? (
-                            <span className="text-[10px]">{channelIcons[entry.channel ?? ''] ?? '📤'}</span>
-                          ) : (
-                            <div className="h-2 w-2 rounded-full bg-slate-400" />
-                          )}
+                        <div className="absolute -left-6 flex h-6 w-6 items-center justify-center rounded-full bg-white ring-2 ring-slate-200">
+                          {activityTypeIcons[entry.type]}
                         </div>
                         <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-slate-900">
-                              {entry.kind === 'outreach'
-                                ? `${channelIcons[entry.channel ?? ''] ?? ''} ${entry.channel ?? 'outreach'} · ${entry.status ?? ''}`
-                                : classifyActivity(entry.action)}
+                              {activityTypeLabels[entry.type]}
                             </p>
-                            {entry.kind === 'outreach' && entry.status && (
-                              <StatusBadge
-                                tone={
-                                  entry.status === 'delivered' || entry.status === 'opened' || entry.status === 'replied'
-                                    ? 'green'
-                                    : entry.status === 'failed' || entry.status === 'bounced'
-                                    ? 'red'
-                                    : 'gray'
-                                }
-                                className="mt-1"
-                              >
-                                {entry.status}
-                              </StatusBadge>
+                            <p className="text-sm text-slate-700">
+                              {classifyActivity(entry.type, entry.metadata)}
+                            </p>
+                            {entry.user_name && (
+                              <p className="mt-1 text-xs text-slate-500">by {entry.user_name}</p>
                             )}
                           </div>
                           <time className="shrink-0 text-xs text-slate-400">{timeAgo(entry.created_at)}</time>

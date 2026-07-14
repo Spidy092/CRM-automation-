@@ -17,7 +17,7 @@ const metricTone = {
 
 export function PageHeader({ title, description, eyebrow, actions, metrics }: PageHeaderProps) {
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           {eyebrow && (

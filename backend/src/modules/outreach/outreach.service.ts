@@ -5,6 +5,7 @@ import {
   OutreachActor,
   OutreachLogInput,
   OutreachLogRow,
+  SequenceEnrollmentStats,
   SequenceInput,
   SequenceRow,
   TaskInput,
@@ -20,6 +21,7 @@ import {
   findTaskById,
   findTasks,
   findTimelineByLead,
+  getSequenceEnrollmentStats,
   insertOutreachLog,
   insertSequence,
   insertTask,
@@ -60,6 +62,8 @@ export async function createSequence(
 ): Promise<SequenceRow> {
   const row = await insertSequence({
     name: input.name,
+    description: input.description ?? null,
+    is_active: input.is_active ?? true,
     steps: input.steps,
     created_by: actor.id,
   });
@@ -84,6 +88,8 @@ export async function updateSequence(
 
   const row = await updateSequenceRepo(id, {
     name: input.name,
+    ...('description' in input ? { description: input.description ?? null } : {}),
+    ...(input.is_active !== undefined ? { is_active: input.is_active } : {}),
     steps: input.steps,
   });
 
@@ -92,12 +98,18 @@ export async function updateSequence(
     action: 'sequence.updated',
     entityType: 'sequence',
     entityId: id,
-    oldValue: { name: before.name, steps: before.steps },
-    newValue: { name: row.name, steps: row.steps },
+    oldValue: { name: before.name, steps: before.steps, is_active: before.is_active },
+    newValue: { name: row.name, steps: row.steps, is_active: row.is_active },
     ipAddress: actor.ipAddress ?? null,
   });
 
   return toSequenceResponse(row);
+}
+
+export async function getSequenceStats(id: string): Promise<SequenceEnrollmentStats> {
+  const seq = await findSequenceById(id);
+  if (!seq) throw new AppError('Sequence not found', 404);
+  return getSequenceEnrollmentStats(id);
 }
 
 export async function removeSequence(id: string, actor: OutreachActor): Promise<void> {

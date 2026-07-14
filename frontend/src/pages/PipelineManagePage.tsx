@@ -6,6 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
 
 interface StageInput {
@@ -15,7 +18,7 @@ interface StageInput {
   is_terminal_lost: boolean;
 }
 
-export function PipelinePage() {
+export function PipelineManagePage() {
   const { data: pipelines, isLoading } = usePipelines();
   const createPipeline = useCreatePipeline();
   const updatePipeline = useUpdatePipeline();
@@ -133,18 +136,21 @@ export function PipelinePage() {
   };
 
   if (isLoading) {
-    return <div>Loading...</div>;
+    return <LoadingSpinner />;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Pipelines</h1>
-        <Button onClick={() => (showForm ? resetForm() : setShowForm(true))}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Pipeline
-        </Button>
-      </div>
+      <PageHeader
+        title="Pipelines"
+        eyebrow="CRM"
+        actions={
+          <Button onClick={() => (showForm ? resetForm() : setShowForm(true))}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create Pipeline
+          </Button>
+        }
+      />
 
       {showForm && (
         <Card>
@@ -175,7 +181,7 @@ export function PipelinePage() {
                     id="is_default"
                     checked={isDefault}
                     onChange={(e) => setIsDefault(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-slate-300"
                   />
                   <Label htmlFor="is_default">Set as default pipeline</Label>
                 </div>
@@ -214,7 +220,7 @@ export function PipelinePage() {
                 <div className="space-y-2">
                   {stages.map((stage, index) => (
                     <div key={index} className="flex items-center gap-2 rounded-lg border p-3">
-                      <GripVertical className="h-4 w-4 text-gray-400" />
+                      <GripVertical className="h-4 w-4 text-slate-400" />
                       <Input
                         value={stage.name}
                         onChange={(e) => handleStageChange(index, 'name', e.target.value)}
@@ -224,11 +230,11 @@ export function PipelinePage() {
                       />
                       <div className="flex items-center space-x-2">
                         <label className="flex items-center space-x-1 text-sm">
-                          <input type="checkbox" checked={stage.is_terminal_won} onChange={(e) => handleStageChange(index, 'is_terminal_won', e.target.checked)} className="h-3 w-3 rounded border-gray-300" />
+                          <input type="checkbox" checked={stage.is_terminal_won} onChange={(e) => handleStageChange(index, 'is_terminal_won', e.target.checked)} className="h-3 w-3 rounded border-slate-300" />
                           <span>Won</span>
                         </label>
                         <label className="flex items-center space-x-1 text-sm">
-                          <input type="checkbox" checked={stage.is_terminal_lost} onChange={(e) => handleStageChange(index, 'is_terminal_lost', e.target.checked)} className="h-3 w-3 rounded border-gray-300" />
+                          <input type="checkbox" checked={stage.is_terminal_lost} onChange={(e) => handleStageChange(index, 'is_terminal_lost', e.target.checked)} className="h-3 w-3 rounded border-slate-300" />
                           <span>Lost</span>
                         </label>
                       </div>
@@ -299,11 +305,11 @@ export function PipelinePage() {
         ))}
 
         {(!pipelines || pipelines.length === 0) && (
-          <Card className="col-span-full">
-            <CardContent className="flex h-40 items-center justify-center text-sm text-gray-500">
-              No pipelines created yet. Create your first pipeline to get started.
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={<Plus className="h-6 w-6" />}
+            title="No pipelines yet"
+            description="Create your first pipeline to get started."
+          />
         )}
       </div>
     </div>

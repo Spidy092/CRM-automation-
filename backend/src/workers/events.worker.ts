@@ -18,7 +18,8 @@ import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/u
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import {
-  findActiveCampaignsByPipeline,
+  findActiveCampaignsByStage,
+  findActiveCampaignsByPipelineNoStage,
   addLeadsToCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import {
@@ -155,18 +156,35 @@ export async function handleStageMoved(
 
   logger.info('lead.stage_moved', { leadId, toStageId, pipelineId });
 
+  // ── Two-level campaign lookup ────────────────────────────────────────────
+  // 1. Stage-specific: campaigns with trigger_stage_id = toStageId (precise match).
+  // 2. Pipeline catch-all: campaigns linked to the pipeline with no stage filter.
+  //    Only runs when pipelineId is known; missing pipelineId only skips level 2.
+
+  const stageCampaigns = await findActiveCampaignsByStage(toStageId);
+
+  const pipelineCampaigns = pipelineId
+    ? await findActiveCampaignsByPipelineNoStage(pipelineId)
+    : [];
+
   if (!pipelineId) {
-    logger.warn('lead.stage_moved: pipelineId missing from payload, skipping auto-enrollment', {
+    logger.warn('lead.stage_moved: pipelineId missing — pipeline catch-all campaigns skipped', {
       leadId,
       toStageId,
     });
-    return;
   }
 
-  const campaigns = await findActiveCampaignsByPipeline(pipelineId);
+  // De-duplicate: stage-specific campaigns take precedence; pipeline-level ones
+  // fill in any that weren't already matched at the stage level.
+  const seenIds = new Set(stageCampaigns.map((c) => c.id));
+  const campaigns = [...stageCampaigns, ...pipelineCampaigns.filter((c) => !seenIds.has(c.id))];
 
   if (campaigns.length === 0) {
-    logger.info('lead.stage_moved: no active campaigns for pipeline', { leadId, pipelineId });
+    logger.info('lead.stage_moved: no matching active campaigns', {
+      leadId,
+      toStageId,
+      pipelineId,
+    });
     return;
   }
 
@@ -216,6 +234,7 @@ export async function handleStageMoved(
         campaignId: campaign.id,
         pipelineId,
         toStageId,
+        triggerStageId: campaign.trigger_stage_id ?? null,
         firstStepNumber: firstStep.stepNumber,
         action: nextBestAction?.action,
       });
@@ -251,6 +270,7 @@ export async function handleStageMoved(
       campaignId: campaign.id,
       pipelineId,
       toStageId,
+      triggerStageId: campaign.trigger_stage_id ?? null,
       firstStepNumber: firstStep.stepNumber,
       channel: firstStep.channel,
     });
@@ -299,11 +319,14 @@ async function routeByNextBestAction(options: {
     const channel = channelSwitchActions[nextBestAction.action];
     const actor = await resolveAssignedLeadActor(leadId);
     if (!actor) {
-      logger.warn('lead.stage_moved: no assigned actor for next_best_action outreach, routing to review', {
-        leadId,
-        campaignId: campaign.id,
-        action: nextBestAction.action,
-      });
+      logger.warn(
+        'lead.stage_moved: no assigned actor for next_best_action outreach, routing to review',
+        {
+          leadId,
+          campaignId: campaign.id,
+          action: nextBestAction.action,
+        },
+      );
       await createReviewInboxItemForLead({ leadId, campaignId: campaign.id, nextBestAction });
       return true;
     }
@@ -351,7 +374,11 @@ async function routeByNextBestAction(options: {
       confidence: nextBestAction.confidence,
     });
 
-    if (['escalate_to_rep', 'move_to_nurture', 'call', 'request_review'].includes(nextBestAction.action)) {
+    if (
+      ['escalate_to_rep', 'move_to_nurture', 'call', 'request_review'].includes(
+        nextBestAction.action,
+      )
+    ) {
       await createReviewInboxItemForLead({ leadId, campaignId: campaign.id, nextBestAction });
     }
     return true;
@@ -359,7 +386,6 @@ async function routeByNextBestAction(options: {
 
   return false;
 }
-
 
 async function resolveAssignedLeadActor(leadId: string): Promise<AgentActor | null> {
   const lead = await findLeadById(leadId).catch(() => null);
@@ -388,7 +414,8 @@ async function createReviewInboxItemForLead(options: {
     assignedTo: lead.assigned_to,
     leadId: options.leadId,
     campaignId: options.campaignId,
-    itemType: options.nextBestAction.action === 'escalate_to_rep' ? 'lead_handoff' : 'approve_response',
+    itemType:
+      options.nextBestAction.action === 'escalate_to_rep' ? 'lead_handoff' : 'approve_response',
     title: `Review AI next action: ${options.nextBestAction.action}`,
     summary: options.nextBestAction.reason,
     urgencyScore: Math.min(100, Math.max(40, options.nextBestAction.confidence)),

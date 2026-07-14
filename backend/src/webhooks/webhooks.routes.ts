@@ -8,6 +8,7 @@ import {
   verifySendGridSignature,
   verifyGoogleAdsSecret,
 } from './webhook-verifiers';
+import { verifyFacebookSignature } from './facebook-verifier';
 import {
   handleWhatsAppMessage,
   handleWhatsAppStatus,
@@ -15,7 +16,9 @@ import {
   handleTwilioStatus,
   handleSendGridEvents,
   handleGoogleAdsLeadForm,
+  handleWebsiteForm,
 } from './webhook-handlers';
+import { handleFacebookLeadAd } from './facebook-handlers';
 
 const router = Router();
 
@@ -292,6 +295,106 @@ router.post(
     }
   }),
 );
+
+// ── Website Contact Form Webhook ──────────────────────────────────────────
+// POST /webhooks/website-form
+// Receives contact form submissions from the website.
+router.post(
+  '/website-form',
+  wrap(async (req: Request, res: Response) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+
+      const googleLeadId = `webform_${Date.now()}`;
+      const { duplicate, id: eventId } = await ensureWebhookEvent(
+        'website-form',
+        googleLeadId,
+        body,
+        undefined,
+      );
+
+      if (!duplicate) {
+        const result = await handleWebsiteForm(body);
+        await markWebhookProcessed(eventId, result.leadId);
+      }
+
+      res.status(200).send('OK');
+    } catch (err) {
+      logger.error('Website form webhook error', { error: (err as Error).message });
+      res.status(200).send('OK');
+    }
+  }),
+);
+
+// ── Facebook Lead Ads Webhook ─────────────────────────────────────────────
+// POST /webhooks/facebook
+// Receives Lead Ads form submissions from Facebook/Meta.
+router.post(
+  '/facebook',
+  wrap(async (req: Request, res: Response) => {
+    try {
+      const rawBody = JSON.stringify(req.body);
+      const signature = req.headers['x-hub-signature-256'] as string | undefined;
+      const appSecret = process.env.FACEBOOK_APP_SECRET ?? process.env.WHATSAPP_APP_SECRET ?? '';
+
+      if (appSecret && !verifyFacebookSignature(rawBody, signature, appSecret)) {
+        logger.warn('Facebook Lead Ads webhook signature verification failed');
+        res.status(401).send('Invalid signature');
+        return;
+      }
+
+      const body = req.body as Record<string, unknown>;
+      const entry = (body.entry as unknown[])?.[0] as Record<string, unknown> | undefined;
+      const change = ((entry?.changes as unknown[])?.[0] as Record<string, unknown>)?.value as
+        | Record<string, unknown>
+        | undefined;
+
+      const leadgenId = (change?.leadgen_id as string) ?? `fb_${Date.now()}`;
+
+      const { duplicate, id: eventId } = await ensureWebhookEvent(
+        'facebook',
+        `lead:${leadgenId}`,
+        body,
+        signature,
+      );
+      if (duplicate) {
+        res.status(200).send('OK');
+        return;
+      }
+
+      const result = await handleFacebookLeadAd(body);
+      await markWebhookProcessed(eventId, result.leadId);
+
+      logger.info('Facebook Lead Ads webhook processed', {
+        leadgenId,
+        action: result.action,
+        leadId: result.leadId,
+      });
+
+      res.status(200).send('OK');
+    } catch (err) {
+      logger.error('Facebook Lead Ads webhook error', { error: (err as Error).message });
+      res.status(200).send('OK'); // Facebook requires 200
+    }
+  }),
+);
+
+// ── Facebook Verification (GET /webhooks/facebook) ─────────────────────────
+// Meta requires a GET endpoint for webhook verification during setup.
+router.get('/facebook', (req: Request, res: Response): void => {
+  const mode = req.query['hub.mode'] as string | undefined;
+  const token = req.query['hub.verify_token'] as string | undefined;
+  const challenge = req.query['hub.challenge'] as string | undefined;
+  const expectedToken = process.env.FACEBOOK_VERIFY_TOKEN ?? process.env.WHATSAPP_VERIFY_TOKEN;
+
+  if (mode === 'subscribe' && token === expectedToken && challenge) {
+    logger.info('Facebook Lead Ads webhook verified');
+    res.status(200).send(challenge);
+  } else {
+    logger.warn('Facebook Lead Ads webhook verification failed', { mode, token });
+    res.status(403).send('Verification failed');
+  }
+});
 
 // ── WhatsApp Verification (GET /webhooks/whatsapp) ─────────────────────────
 // Facebook/Meta requires a GET endpoint for webhook verification during setup.
