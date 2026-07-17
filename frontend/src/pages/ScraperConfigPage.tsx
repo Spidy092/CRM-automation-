@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   RotateCcw,
   Users,
+  Compass,
 } from 'lucide-react';
 import {
   useScraperConfigs,
@@ -34,6 +35,7 @@ import {
   useScraperStatsSummary,
   useScraperRunLeads,
   useRetryFailedScrape,
+  useDiscoverPages,
 } from '@/api/scraper';
 import type { ScraperSourceType, ScraperConfig } from '@/types';
 
@@ -98,6 +100,260 @@ function getPlaceholderConfig(sourceType: ScraperSourceType): Record<string, unk
 interface WebScrapeExtras {
   onAutoDetect: () => void;
   detecting: boolean;
+}
+
+/**
+ * URL field shared by web_scrape and browser_scrape: accepts one URL per
+ * line so a single source can scrape many sites in one run instead of
+ * needing a separate config per URL — same pattern as the Google Places
+ * multi-query field above. Also offers "Discover Pages", which renders the
+ * first URL and lists its nav links so the user can see what pages exist
+ * before deciding which ones to scrape, instead of guessing URLs by hand.
+ */
+function UrlListField({
+  config,
+  onChange,
+}: {
+  config: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+}) {
+  const { showToast } = useToast();
+  const discoverMutation = useDiscoverPages();
+  const [showDiscovered, setShowDiscovered] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const currentUrls = Array.isArray(config.url)
+    ? (config.url as string[])
+    : config.url
+      ? [config.url as string]
+      : [];
+
+  function handleDiscover() {
+    const rootUrl = currentUrls[0];
+    if (!rootUrl) {
+      showToast('Enter at least one URL first, then click Discover Pages.', 'error');
+      return;
+    }
+    discoverMutation.mutate(rootUrl, {
+      onSuccess: (pages) => {
+        setShowDiscovered(true);
+        setSelected(new Set(pages.filter((p) => !currentUrls.includes(p.url)).map((p) => p.url)));
+        if (pages.length === 0) {
+          showToast('No other pages found — the site may only have this one page.', 'success');
+        }
+      },
+      onError: (error) => showToast(getApiErrorMessage(error, 'Could not discover pages.'), 'error'),
+    });
+  }
+
+  function toggleSelected(url: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  function handleAddSelected() {
+    const merged = Array.from(new Set([...currentUrls, ...selected]));
+    onChange('url', merged.length > 1 ? merged : (merged[0] ?? ''));
+    setShowDiscovered(false);
+    setSelected(new Set());
+  }
+
+  return (
+    <div className="col-span-2">
+      <div className="mb-1 flex items-center justify-between">
+        <label className="block text-xs font-medium text-slate-500">
+          URL(s) * <span className="text-slate-300">— one per line</span>
+        </label>
+        <button
+          type="button"
+          onClick={handleDiscover}
+          disabled={discoverMutation.isPending}
+          className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+        >
+          {discoverMutation.isPending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Compass className="h-3 w-3" />
+          )}
+          Discover Pages
+        </button>
+      </div>
+      <textarea
+        value={currentUrls.join('\n')}
+        onChange={(e) => {
+          const lines = e.target.value.split('\n').map((l) => l.trimStart());
+          const urls = lines.filter((l) => l.trim().length > 0);
+          onChange('url', urls.length > 1 ? urls : (lines[0] ?? ''));
+        }}
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+        rows={3}
+        placeholder={'https://example.com/businesses\nhttps://example.org/contact'}
+      />
+      <p className="mt-1 text-xs text-slate-400">
+        Each line is scraped separately and results are merged into one run. Discover Pages
+        renders the first URL above and lists its other pages so you can pick which to add —
+        useful for single-page apps where you can&apos;t just guess the URLs.
+      </p>
+
+      {showDiscovered && discoverMutation.data && discoverMutation.data.length > 0 && (
+        <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-xs font-medium text-slate-600">
+            Found {discoverMutation.data.length} page(s) — check the ones to add:
+          </p>
+          <div className="max-h-40 space-y-1 overflow-y-auto">
+            {discoverMutation.data.map((p) => {
+              const alreadyAdded = currentUrls.includes(p.url);
+              return (
+                <label key={p.url} className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(p.url)}
+                    onChange={() => toggleSelected(p.url)}
+                    disabled={alreadyAdded}
+                  />
+                  <span className={alreadyAdded ? 'text-slate-400' : 'text-slate-700'}>
+                    {p.label}
+                    {alreadyAdded ? ' (already added)' : ''}
+                  </span>
+                  <span className="truncate text-slate-400">{p.url}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDiscovered(false)}
+              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleAddSelected}
+              disabled={selected.size === 0}
+              className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Add Selected ({selected.size})
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Deep-crawl options shared by web_scrape and browser_scrape. When enabled,
+ * the scraper follows same-site links from the listed URLs (BFS up to the
+ * chosen depth) and maxPages becomes the total page budget for the run, so
+ * the separate "Pages per URL" pagination field is hidden by the callers.
+ */
+function DeepCrawlFields({
+  config,
+  onChange,
+  maxPagesCap,
+}: {
+  config: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  maxPagesCap: number;
+}) {
+  const enabled = config.followLinks === true;
+
+  function patternsValue(key: 'includePatterns' | 'excludePatterns'): string {
+    const raw = config[key];
+    return Array.isArray(raw) ? (raw as string[]).join(', ') : '';
+  }
+
+  function onPatternsChange(key: 'includePatterns' | 'excludePatterns', value: string) {
+    const patterns = value
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    onChange(key, patterns.length > 0 ? patterns : undefined);
+  }
+
+  return (
+    <div className="col-span-2 rounded-lg border border-slate-200 p-3">
+      <label className="flex items-center gap-2 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange('followLinks', e.target.checked)}
+          className="h-4 w-4 rounded border-slate-300"
+        />
+        <span className="font-medium">Deep crawl</span>
+        <span className="text-xs text-slate-400">
+          — automatically follow links on the site, like a crawler
+        </span>
+      </label>
+
+      {enabled && (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Link Depth</label>
+            <input
+              type="number"
+              value={(config.maxDepth as number) ?? 2}
+              onChange={(e) => onChange('maxDepth', parseInt(e.target.value) || 2)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              min={1}
+              max={5}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              1 = only pages linked from your URLs, 2 = their links too, and so on.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Page Budget</label>
+            <input
+              type="number"
+              value={(config.maxPages as number) ?? 1}
+              onChange={(e) => onChange('maxPages', parseInt(e.target.value) || 1)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              min={1}
+              max={maxPagesCap}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              Total pages crawled in one run (max {maxPagesCap}).
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Include Patterns <span className="text-slate-300">— optional, comma-separated</span>
+            </label>
+            <input
+              type="text"
+              value={patternsValue('includePatterns')}
+              onChange={(e) => onPatternsChange('includePatterns', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="/contact, /about, /team"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Exclude Patterns <span className="text-slate-300">— optional, comma-separated</span>
+            </label>
+            <input
+              type="text"
+              value={patternsValue('excludePatterns')}
+              onChange={(e) => onPatternsChange('excludePatterns', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="/blog, /careers, ?sort="
+            />
+          </div>
+          <p className="col-span-2 text-xs text-slate-400">
+            Only followed links containing an include pattern (when set) and no exclude pattern
+            are crawled. Stays on the same site and respects robots.txt.
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function getConfigFields(
@@ -302,16 +558,7 @@ function getConfigFields(
             </p>
           </div>
 
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-slate-500 mb-1">URL *</label>
-            <input
-              type="url"
-              value={(config.url as string) ?? ''}
-              onChange={(e) => onChange('url', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="https://example.com/businesses"
-            />
-          </div>
+          <UrlListField config={config} onChange={onChange} />
 
           {mode === 'selectors' && (
             <>
@@ -362,17 +609,28 @@ function getConfigFields(
             </>
           )}
 
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Max Pages</label>
-            <input
-              type="number"
-              value={(config.maxPages as number) ?? 1}
-              onChange={(e) => onChange('maxPages', parseInt(e.target.value) || 1)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              min={1}
-              max={10}
-            />
-          </div>
+          <DeepCrawlFields config={config} onChange={onChange} maxPagesCap={100} />
+
+          {config.followLinks !== true && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Pages per URL <span className="text-slate-300">— pagination, not URL count</span>
+              </label>
+              <input
+                type="number"
+                value={(config.maxPages as number) ?? 1}
+                onChange={(e) => onChange('maxPages', parseInt(e.target.value) || 1)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                min={1}
+                max={100}
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Only for paginated listings (tries <code>?page=2</code>, <code>?page=3</code>...
+                after each URL above). Leave at 1 unless a single URL has multiple pages of
+                results — every URL you listed above is scraped regardless of this setting.
+              </p>
+            </div>
+          )}
 
           {mode === 'smart' && (
             <div className="col-span-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
@@ -471,16 +729,7 @@ function getConfigFields(
             </div>
           </div>
 
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-slate-500 mb-1">URL *</label>
-            <input
-              type="url"
-              value={(config.url as string) ?? ''}
-              onChange={(e) => onChange('url', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="https://example.com/businesses"
-            />
-          </div>
+          <UrlListField config={config} onChange={onChange} />
 
           <div className="col-span-2">
             <label className="block text-xs font-medium text-slate-500 mb-1">
@@ -541,17 +790,28 @@ function getConfigFields(
               max={15000}
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Max Pages</label>
-            <input
-              type="number"
-              value={(config.maxPages as number) ?? 1}
-              onChange={(e) => onChange('maxPages', parseInt(e.target.value) || 1)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              min={1}
-              max={5}
-            />
-          </div>
+          <DeepCrawlFields config={config} onChange={onChange} maxPagesCap={30} />
+
+          {config.followLinks !== true && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Pages per URL <span className="text-slate-300">— pagination, not URL count</span>
+              </label>
+              <input
+                type="number"
+                value={(config.maxPages as number) ?? 1}
+                onChange={(e) => onChange('maxPages', parseInt(e.target.value) || 1)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                min={1}
+                max={30}
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Only for paginated listings (tries <code>?page=2</code>, <code>?page=3</code>...
+                after each URL above). Leave at 1 unless a single URL has multiple pages of
+                results — every URL you listed above is scraped regardless of this setting.
+              </p>
+            </div>
+          )}
 
           <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
             Renders the page with a real headless Chrome before extracting — use this instead of

@@ -5,6 +5,7 @@ import {
   getRunLeadsHandler,
   retryFailedHandler,
   getStatsSummaryHandler,
+  discoverPagesHandler,
 } from './scraper.controller';
 import * as service from './scraper.service';
 
@@ -121,6 +122,33 @@ describe('Scraper Controller', () => {
       await getStatsSummaryHandler(req as Request, res as Response, (() => {}) as any);
 
       expect(service.getStatsSummary).toHaveBeenCalledWith(24);
+    });
+  });
+
+  describe('discoverPagesHandler', () => {
+    it('returns discovered pages for a valid URL', async () => {
+      req.body = { url: 'https://example.com/' };
+      (service.discoverPages as jest.Mock).mockResolvedValue([
+        { url: 'https://example.com/', label: 'Home' },
+      ]);
+
+      await discoverPagesHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.discoverPages).toHaveBeenCalledWith('https://example.com/');
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: [{ url: 'https://example.com/', label: 'Home' }],
+      });
+    });
+
+    it('forwards errors to next', async () => {
+      req.body = { url: 'not-a-url' };
+      const next = jest.fn();
+
+      await discoverPagesHandler(req as Request, res as Response, next as any);
+
+      expect(next).toHaveBeenCalled();
+      expect(service.discoverPages).not.toHaveBeenCalled();
     });
   });
 });

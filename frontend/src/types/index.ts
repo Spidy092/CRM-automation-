@@ -388,3 +388,10 @@ export interface ScraperRunLeadsResult {
   /** Existing leads this run's records matched (skipped, not re-created). */
   duplicateLeads: Lead[];
 }
+
+/** A same-site page discovered by crawling a site's rendered nav links. */
+export interface DiscoveredPage {
+  url: string;
+  /** Nav link text, or the page path when no link text is available. */
+  label: string;
+}

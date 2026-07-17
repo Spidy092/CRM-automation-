@@ -12,6 +12,7 @@ import {
   triggerScrapeHandler,
   listLogsHandler,
   detectSelectorsHandler,
+  discoverPagesHandler,
   getRunLeadsHandler,
   retryFailedHandler,
   getStatsSummaryHandler,
@@ -42,6 +43,10 @@ router.get(
 
 // AI-assisted selector detection — admin only (calls the configured LLM)
 router.post('/detect-selectors', authorize('admin'), wrap(detectSelectorsHandler));
+
+// Discover a site's pages by rendering it and reading its nav links — admin
+// only (launches a real headless browser).
+router.post('/discover-pages', authorize('admin'), wrap(discoverPagesHandler));
 
 // Only admin can create/update/delete scraper configs
 router.post('/', authorize('admin'), wrap(createConfigHandler));

@@ -30,6 +30,7 @@ jest.mock('./scraper.controller', () => ({
   retryFailedHandler: (req: any, res: any) => res.status(200).json({ success: true, data: {} }),
   getStatsSummaryHandler: (req: any, res: any) =>
     res.status(200).json({ success: true, data: { windowHours: 24 } }),
+  discoverPagesHandler: (req: any, res: any) => res.status(200).json({ success: true, data: [] }),
 }));
 
 describe('Scraper Routes', () => {
@@ -69,5 +70,12 @@ describe('Scraper Routes', () => {
     // which would instead return getConfigHandler's `{ data: {} }` body.
     const res = await request(app).get('/scraper/stats/summary');
     expect(res.body).toEqual({ success: true, data: { windowHours: 24 } });
+  });
+
+  it('POST /scraper/discover-pages', async () => {
+    const res = await request(app)
+      .post('/scraper/discover-pages')
+      .send({ url: 'https://example.com/' });
+    expect(res.status).toBe(200);
   });
 });

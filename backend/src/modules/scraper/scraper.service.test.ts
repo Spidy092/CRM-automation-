@@ -7,6 +7,7 @@ import {
   listConfigs,
   getLogsByConfig,
   detectSelectors,
+  discoverPages,
   getLeadsForRun,
   retryFailedItems,
   getStatsSummary,
@@ -50,6 +51,7 @@ const puppeteerPageMock = {
   goto: jest.fn(),
   waitForSelector: jest.fn(),
   content: jest.fn(),
+  $$eval: jest.fn(),
 };
 const puppeteerBrowserMock = {
   newPage: jest.fn(() => Promise.resolve(puppeteerPageMock)),
@@ -698,6 +700,49 @@ describe('Scraper Service', () => {
       expect(result.recordsFound).toBe(0);
     });
 
+    it('scrapes multiple URLs given as an array and merges results', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ url: ['http://a.example.com', 'http://b.example.com'] }),
+      );
+      const htmlA = `<div class="card"><span class="name">Acme</span><span class="phone">+15550001111</span></div>`;
+      const htmlB = `<div class="card"><span class="name">Beta</span><span class="phone">+15550002222</span></div>`;
+      // robots.txt is fetched once per URL as well as the page itself —
+      // route by URL rather than call order.
+      const fetchMock = jest.fn((url: string) => {
+        if (url.includes('robots.txt')) return Promise.resolve(htmlResponse(''));
+        if (url.startsWith('http://a.example.com')) return Promise.resolve(htmlResponse(htmlA));
+        return Promise.resolve(htmlResponse(htmlB));
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(2);
+      expect(fetchMock).toHaveBeenCalledWith('http://a.example.com', expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith('http://b.example.com', expect.anything());
+    });
+
+    it('dedupes the same contact found more than once in one run before importing', async () => {
+      jest.useFakeTimers();
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 3, mode: 'smart', selectors: undefined }),
+      );
+      const html = `<html><body><a href="mailto:hi@acme.com">Email</a></body></html>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+
+      const promise = runScrape('1', mockActor);
+      await jest.runAllTimersAsync();
+      const result = await promise;
+
+      // Same page content repeated across 3 "pages" (no real pagination) —
+      // should collapse to a single lead, not 3.
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledTimes(1);
+      jest.useRealTimers();
+    });
+
     it('fails when url is missing', async () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         activeConfig('web_scrape', { selectors: { business_name: '.n' } }),
@@ -859,6 +904,154 @@ describe('Scraper Service', () => {
     });
   });
 
+  describe('runScrape web_scrape deep crawl', () => {
+    const ROOT = 'http://site.example.com';
+
+    function crawlConfig(extra: Record<string, unknown> = {}) {
+      return activeConfig('web_scrape', {
+        url: ROOT,
+        mode: 'smart',
+        followLinks: true,
+        maxDepth: 2,
+        maxPages: 10,
+        crawlDelayMs: 1,
+        ...extra,
+      });
+    }
+
+    const rootHtml = `<html><body>
+      <a href="/contact">Contact</a>
+      <a href="/about">About</a>
+      <a href="http://other.example.org/page">External</a>
+      <a href="mailto:root@site.example.com">Mail</a>
+    </body></html>`;
+    const contactHtml =
+      '<html><body><a href="mailto:contact@site.example.com">C</a></body></html>';
+    const aboutHtml = '<html><body><a href="mailto:about@site.example.com">A</a></body></html>';
+
+    function routedFetch() {
+      return jest.fn((url: string) => {
+        if (url.includes('robots.txt')) return Promise.resolve(htmlResponse(''));
+        if (url.includes('/contact')) return Promise.resolve(htmlResponse(contactHtml));
+        if (url.includes('/about')) return Promise.resolve(htmlResponse(aboutHtml));
+        if (url.startsWith('http://other.example.org')) {
+          return Promise.resolve(htmlResponse('<html></html>'));
+        }
+        return Promise.resolve(htmlResponse(rootHtml));
+      });
+    }
+
+    it('follows same-site links and imports leads from every crawled page', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(crawlConfig());
+      const fetchMock = routedFetch();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(3);
+      expect(fetchMock).toHaveBeenCalledWith('http://site.example.com/contact', expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith('http://site.example.com/about', expect.anything());
+      // Cross-origin links are never followed.
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'http://other.example.org/page',
+        expect.anything(),
+      );
+    });
+
+    it('fetches robots.txt only once per origin via the per-run cache', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(crawlConfig());
+      const fetchMock = routedFetch();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      await runScrape('1', mockActor);
+
+      const robotsCalls = fetchMock.mock.calls.filter((c) =>
+        String(c[0]).includes('robots.txt'),
+      );
+      expect(robotsCalls).toHaveLength(1);
+    });
+
+    it('stops when the total page budget is reached', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(crawlConfig({ maxPages: 2 }));
+      const fetchMock = routedFetch();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(2);
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'http://site.example.com/about',
+        expect.anything(),
+      );
+    });
+
+    it('skips links matching excludePatterns', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        crawlConfig({ excludePatterns: ['/about'] }),
+      );
+      const fetchMock = routedFetch();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.recordsFound).toBe(2);
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'http://site.example.com/about',
+        expect.anything(),
+      );
+    });
+
+    it('only follows links matching includePatterns when set', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        crawlConfig({ includePatterns: ['/contact'] }),
+      );
+      const fetchMock = routedFetch();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.recordsFound).toBe(2);
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'http://site.example.com/about',
+        expect.anything(),
+      );
+    });
+
+    it('continues the crawl when a single page fails', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(crawlConfig());
+      const fetchMock = jest.fn((url: string) => {
+        if (url.includes('robots.txt')) return Promise.resolve(htmlResponse(''));
+        if (url.includes('/contact')) {
+          return Promise.resolve(htmlResponse('', false, 500, 'Server Error'));
+        }
+        if (url.includes('/about')) return Promise.resolve(htmlResponse(aboutHtml));
+        return Promise.resolve(htmlResponse(rootHtml));
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(2);
+    });
+
+    it('fails the run when nothing could be crawled at all', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(crawlConfig());
+      const fetchMock = jest.fn((url: string) => {
+        if (url.includes('robots.txt')) return Promise.resolve(htmlResponse(''));
+        return Promise.resolve(htmlResponse('', false, 500, 'Server Error'));
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('HTTP 500');
+    });
+  });
+
   describe('runScrape browser_scrape', () => {
     function browserConfig(extra: Record<string, unknown> = {}) {
       return activeConfig('browser_scrape', {
@@ -887,6 +1080,33 @@ describe('Scraper Service', () => {
       expect(result.recordsFound).toBe(1);
       expect(puppeteerLaunchMock).toHaveBeenCalled();
       expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('deep crawl follows links found in the rendered DOM', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({ followLinks: true, maxDepth: 1, maxPages: 5 }),
+      );
+      let currentUrl = 'http://example.com/list';
+      puppeteerPageMock.goto.mockImplementation((url: string) => {
+        currentUrl = url;
+        return Promise.resolve({ status: () => 200 });
+      });
+      puppeteerPageMock.content.mockImplementation(() =>
+        Promise.resolve(
+          currentUrl.includes('/contact')
+            ? '<html><body><a href="mailto:contact@example.com">C</a></body></html>'
+            : '<html><body><a href="/contact">Contact</a><a href="mailto:hi@example.com">M</a></body></html>',
+        ),
+      );
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(2);
+      expect(puppeteerPageMock.goto).toHaveBeenCalledWith(
+        'http://example.com/contact',
+        expect.anything(),
+      );
     });
 
     it('tags imported leads with source_platform "browser_scrape", not "web_scrape"', async () => {
@@ -964,6 +1184,68 @@ describe('Scraper Service', () => {
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
       expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('scrapes multiple URLs given as an array and merges results', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({ url: ['http://a.example.com', 'http://b.example.com'] }),
+      );
+      puppeteerPageMock.content
+        .mockResolvedValueOnce('<html><body><a href="mailto:a@acme.com">A</a></body></html>')
+        .mockResolvedValueOnce('<html><body><a href="mailto:b@acme.com">B</a></body></html>');
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(2);
+      expect(puppeteerPageMock.goto).toHaveBeenCalledWith(
+        'http://a.example.com',
+        expect.anything(),
+      );
+      expect(puppeteerPageMock.goto).toHaveBeenCalledWith(
+        'http://b.example.com',
+        expect.anything(),
+      );
+    });
+
+    it('dedupes the same contact found more than once in one run before importing', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig({ maxPages: 3 }));
+      // Same content on every "page" — no real pagination on the target site.
+      puppeteerPageMock.content.mockResolvedValue(
+        '<html><body><a href="mailto:hi@acme.com">Email</a></body></html>',
+      );
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('merges duplicate contacts instead of dropping data — keeps the phone from a later page', async () => {
+      // Regression: a portfolio site repeats the same mailto: link on every
+      // page (Home, Projects, Experience) but the phone number only exists
+      // on /contact. The first-scraped page has no phone; a later page does.
+      // Deduping must not throw away the page that actually had the phone.
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({ url: ['http://site.example.com/', 'http://site.example.com/contact'] }),
+      );
+      puppeteerPageMock.content
+        .mockResolvedValueOnce(
+          '<html><body><a href="mailto:hi@acme.com">Email</a></body></html>',
+        )
+        .mockResolvedValueOnce(
+          '<html><body><a href="mailto:hi@acme.com">Email</a><a href="tel:+919880699054">Call</a></body></html>',
+        );
+      createLeadMock.mockResolvedValue({ id: 'lead-1' });
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledTimes(1);
+      const passedLead = createLeadMock.mock.calls[0][0] as { phone: string };
+      expect(passedLead.phone).toBe('+919880699054');
     });
 
     it('fails with a clear message when PUPPETEER_EXECUTABLE_PATH is unset', async () => {
@@ -1103,6 +1385,67 @@ describe('Scraper Service', () => {
       const result = await getStatsSummary();
 
       expect(result.windowHours).toBe(24);
+    });
+  });
+
+  describe('discoverPages', () => {
+    beforeEach(() => {
+      process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/google-chrome';
+      // Robots.txt is fetched via global.fetch — an empty body has no
+      // Disallow rules, so the crawl is allowed.
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(''));
+      puppeteerPageMock.goto.mockResolvedValue({ status: () => 200 });
+    });
+
+    it('returns same-origin discovered pages including the root, filtering external and non-http links', async () => {
+      puppeteerPageMock.$$eval.mockResolvedValue([
+        { href: 'https://example.com/contact', text: 'Contact' },
+        { href: 'https://example.com/about', text: 'About' },
+        { href: 'https://other.com/x', text: 'External' },
+        { href: 'mailto:hi@example.com', text: 'Email' },
+      ]);
+
+      const result = await discoverPages('https://example.com/');
+
+      expect(result).toEqual([
+        { url: 'https://example.com/', label: 'Home' },
+        { url: 'https://example.com/contact', label: 'Contact' },
+        { url: 'https://example.com/about', label: 'About' },
+      ]);
+      expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('dedupes links that normalize to the same URL (hash fragments, trailing slash)', async () => {
+      puppeteerPageMock.$$eval.mockResolvedValue([
+        { href: 'https://example.com/contact', text: 'Contact' },
+        { href: 'https://example.com/contact#top', text: 'Contact (top)' },
+        { href: 'https://example.com/contact/', text: 'Contact slash' },
+      ]);
+
+      const result = await discoverPages('https://example.com/');
+
+      expect(result.filter((p) => p.label !== 'Home')).toHaveLength(1);
+    });
+
+    it('falls back to the path as the label when a link has no text', async () => {
+      puppeteerPageMock.$$eval.mockResolvedValue([{ href: 'https://example.com/pricing', text: '' }]);
+
+      const result = await discoverPages('https://example.com/');
+
+      expect(result.find((p) => p.url === 'https://example.com/pricing')?.label).toBe('/pricing');
+    });
+
+    it('fails with a clear message when PUPPETEER_EXECUTABLE_PATH is unset', async () => {
+      delete process.env.PUPPETEER_EXECUTABLE_PATH;
+      await expect(discoverPages('https://example.com/')).rejects.toThrow(
+        'PUPPETEER_EXECUTABLE_PATH',
+      );
+    });
+
+    it('closes the browser even when link extraction throws', async () => {
+      puppeteerPageMock.$$eval.mockRejectedValue(new Error('boom'));
+      await expect(discoverPages('https://example.com/')).rejects.toThrow('boom');
+      expect(puppeteerBrowserMock.close).toHaveBeenCalled();
     });
   });
 });

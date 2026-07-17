@@ -6,6 +6,7 @@ import {
   updateScraperConfigSchema,
   listLogsQuerySchema,
   detectSelectorsSchema,
+  discoverPagesSchema,
   statsSummaryQuerySchema,
 } from './scraper.schema';
 import * as scraperService from './scraper.service';
@@ -109,6 +110,20 @@ export async function detectSelectorsHandler(
     const { url } = detectSelectorsSchema.parse(req.body);
     const result = await scraperService.detectSelectors(url);
     sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function discoverPagesHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { url } = discoverPagesSchema.parse(req.body);
+    const pages = await scraperService.discoverPages(url);
+    sendSuccess(res, pages);
   } catch (err) {
     next(err);
   }

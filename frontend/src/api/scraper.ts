@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse } from './client';
 import type {
+  DiscoveredPage,
   ScraperConfig,
   ScraperLog,
   ScraperRunLeadsResult,
@@ -126,6 +127,20 @@ export function useDetectSelectors() {
       const response = await apiClient.post<
         ApiResponse<{ containerSelector: string; selectors: Record<string, string> }>
       >('/scraper/detect-selectors', { url });
+      return response.data.data;
+    },
+  });
+}
+
+/* ─── Discover Pages (crawl nav links so the user can pick which to add) ─── */
+
+export function useDiscoverPages() {
+  return useMutation({
+    mutationFn: async (url: string) => {
+      const response = await apiClient.post<ApiResponse<DiscoveredPage[]>>(
+        '/scraper/discover-pages',
+        { url },
+      );
       return response.data.data;
     },
   });

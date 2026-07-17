@@ -12,6 +12,12 @@ export const sourceTypeEnum = z.enum([
   'linkedin_lead_forms',
 ]);
 
+/** A single URL, or a list of URLs (one per line in the UI) to scrape in one run. */
+const urlOrUrls = z.union([
+  z.string().url('Must be a valid URL'),
+  z.array(z.string().url('Must be a valid URL')).min(1, 'At least one URL is required'),
+]);
+
 export const googlePlacesConfigSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
   location: z.string().optional(),
@@ -34,8 +40,23 @@ export const youtubeConfigSchema = z.object({
   apiKeyRef: z.string().min(1, 'API key reference is required'),
 });
 
+/**
+ * Deep-crawl options shared by web_scrape and browser_scrape. When
+ * followLinks is on, the scraper BFS-crawls same-origin links from each
+ * listed URL up to maxDepth, and maxPages becomes the TOTAL page budget
+ * for the run (instead of pages-per-URL pagination).
+ */
+const deepCrawlFields = {
+  followLinks: z.boolean().optional().default(false),
+  // Link depth from the listed URLs: 1 = only pages linked from them, etc.
+  maxDepth: z.number().int().min(1).max(5).optional().default(2),
+  // Substring filters applied to discovered links (not to the listed URLs).
+  includePatterns: z.array(z.string().min(1)).max(20).optional(),
+  excludePatterns: z.array(z.string().min(1)).max(20).optional(),
+};
+
 export const webScrapeConfigSchema = z.object({
-  url: z.string().url('Must be a valid URL'),
+  url: urlOrUrls,
   // 'smart' = selector-free extraction (regex emails/phones, page title as name).
   // 'selectors' = explicit CSS selector extraction (the original behaviour).
   mode: z.enum(['smart', 'selectors']).optional().default('smart'),
@@ -43,12 +64,13 @@ export const webScrapeConfigSchema = z.object({
   selectors: z.record(z.string(), z.string()).optional(),
   containerSelector: z.string().optional(),
   paginationSelector: z.string().optional(),
-  maxPages: z.number().int().positive().max(10).optional().default(1),
+  maxPages: z.number().int().positive().max(100).optional().default(1),
   headers: z.record(z.string(), z.string()).optional(),
+  ...deepCrawlFields,
 });
 
 export const browserScrapeConfigSchema = z.object({
-  url: z.string().url('Must be a valid URL'),
+  url: urlOrUrls,
   // Same mode split as web_scrape: 'smart' mines emails/phones from the
   // rendered DOM, 'selectors' extracts explicit CSS-targeted fields.
   mode: z.enum(['smart', 'selectors']).optional().default('smart'),
@@ -59,8 +81,9 @@ export const browserScrapeConfigSchema = z.object({
   waitForSelector: z.string().optional(),
   // Extra fixed delay (ms) after navigation, on top of waitForSelector.
   waitMs: z.number().int().min(0).max(15000).optional().default(0),
-  maxPages: z.number().int().positive().max(5).optional().default(1),
+  maxPages: z.number().int().positive().max(30).optional().default(1),
   headers: z.record(z.string(), z.string()).optional(),
+  ...deepCrawlFields,
 });
 
 export const apifyActorConfigSchema = z.object({
@@ -73,6 +96,12 @@ export const apifyActorConfigSchema = z.object({
 
 // Body for the AI "auto-detect selectors" endpoint.
 export const detectSelectorsSchema = z.object({
+  url: z.string().url('Must be a valid URL'),
+});
+
+// Body for the "discover pages" endpoint — crawls a site's rendered nav
+// links so a user can pick which pages to add to a multi-URL source.
+export const discoverPagesSchema = z.object({
   url: z.string().url('Must be a valid URL'),
 });
 

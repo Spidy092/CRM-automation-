@@ -948,6 +948,49 @@ const DEFAULT_BROWSER_TIMEOUT_MS = 30_000;
  * standalone helper so scrapeBrowser can reuse it without touching the
  * existing, already-tested scrapeWeb implementation.
  */
+/**
+ * Collapses leads found more than once within the same run — by email if
+ * present, otherwise by phone, otherwise by business_name+location. Keeps
+ * the first occurrence. Guards against a misconfigured maxPages (or
+ * multiple URLs) re-scraping the same contact and inflating "found" and
+ * "duplicate" counts for what is really a single lead.
+ */
+function dedupeScrapedLeads(leads: ScrapedLead[]): ScrapedLead[] {
+  const byKey = new Map<string, ScrapedLead>();
+  const order: string[] = [];
+  for (const lead of leads) {
+    const key = lead.email
+      ? `email:${lead.email.trim().toLowerCase()}`
+      : lead.phone
+        ? `phone:${lead.phone.trim()}`
+        : `name:${lead.business_name.trim().toLowerCase()}|${(lead.location ?? '').trim().toLowerCase()}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, lead);
+      order.push(key);
+      continue;
+    }
+    // Merge rather than discard: a contact's phone/email/etc. may only
+    // appear on ONE of several pages that share the same contact (e.g. a
+    // portfolio site with a repeated footer email but the phone number only
+    // on /contact). Keeping just the first-seen page would silently drop
+    // real data in favor of whichever page happened to be scraped first.
+    byKey.set(key, {
+      ...existing,
+      phone: existing.phone || lead.phone,
+      email: existing.email || lead.email,
+      website: existing.website ?? lead.website,
+      contact_name: existing.contact_name || lead.contact_name,
+      industry: existing.industry || lead.industry,
+      location: existing.location || lead.location,
+      country: existing.country || lead.country,
+      google_rating: existing.google_rating ?? lead.google_rating,
+      review_count: existing.review_count ?? lead.review_count,
+    });
+  }
+  return order.map((key) => byKey.get(key)!);
+}
+
 function extractLeadsBySelectors(
   html: string,
   selectors: Record<string, string>,
@@ -1011,8 +1054,10 @@ async function scrapeBrowser(
 }> {
   logger.info('scraper browser_scrape: starting');
 
-  const url = String(_config.url ?? '');
-  if (!url) throw new AppError('URL is required for browser scraping', 400);
+  // Accepts a single URL or a list (one per line in the UI), so one source
+  // can scrape many sites in a single run instead of needing one config per URL.
+  const urls = normalizeQueries(_config.url);
+  if (urls.length === 0) throw new AppError('At least one URL is required for browser scraping', 400);
 
   const mode = _config.mode === 'selectors' ? 'selectors' : 'smart';
   const selectors = _config.selectors as Record<string, string> | undefined;
@@ -1029,8 +1074,6 @@ async function scrapeBrowser(
       ? _config.userAgent.trim()
       : DEFAULT_CRAWLER_USER_AGENT;
   const respectRobotsTxt = _config.respectRobotsTxt !== false;
-
-  if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
 
   const executablePath = assertEnvVarConfigured(
     'PUPPETEER_EXECUTABLE_PATH',
@@ -1058,69 +1101,163 @@ async function scrapeBrowser(
 
   const allLeads: ScrapedLead[] = [];
   let pagesFetched = 0;
+  let urlsScraped = 0;
 
   try {
     const page = await browser.newPage();
     await page.setUserAgent({ userAgent });
 
-    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-      const pageUrl = pageNum === 1 ? url : `${url}?page=${pageNum}`;
-      const response = await page.goto(pageUrl, {
-        waitUntil: 'networkidle2',
-        timeout: DEFAULT_BROWSER_TIMEOUT_MS,
-      });
+    const crawl = deepCrawlSettings(_config);
+    if (crawl.followLinks) {
+      // Deep crawl: BFS over same-origin links extracted from the RENDERED
+      // DOM (so SPA navs work). maxPages is the total page budget for the
+      // run, and a single failing page skips forward instead of aborting.
+      const { queue, seen } = seedCrawlQueue(urls);
+      const robotsCache = new Map<string, string | null>();
+      let pagesFailed = 0;
+      let firstError: unknown = null;
 
-      const status = response?.status() ?? 0;
-      if ([401, 403, 429].includes(status)) {
-        throw new AppError(`Target blocked the crawler for ${pageUrl} (HTTP ${status})`, status);
-      }
-      if (status && status >= 400) {
-        logger.warn('scraper browser_scrape: page navigation failed', {
-          page: pageNum,
-          status,
-          url: pageUrl,
-        });
-        break;
-      }
-
-      if (waitForSelector) {
+      while (queue.length > 0 && pagesFetched < maxPages) {
+        const { url: pageUrl, depth } = queue.shift()!;
         try {
-          await page.waitForSelector(waitForSelector, { timeout: DEFAULT_BROWSER_TIMEOUT_MS });
-        } catch {
-          logger.warn('scraper browser_scrape: waitForSelector timed out, reading DOM anyway', {
-            waitForSelector,
+          if (respectRobotsTxt) await assertRobotsAllowed(pageUrl, userAgent, robotsCache);
+          const response = await page.goto(pageUrl, {
+            waitUntil: 'networkidle2',
+            timeout: DEFAULT_BROWSER_TIMEOUT_MS,
+          });
+          const status = response?.status() ?? 0;
+          if (status && status >= 400) {
+            throw new AppError(`Page navigation failed for ${pageUrl} (HTTP ${status})`, status);
+          }
+
+          if (waitForSelector) {
+            try {
+              await page.waitForSelector(waitForSelector, { timeout: DEFAULT_BROWSER_TIMEOUT_MS });
+            } catch {
+              logger.warn('scraper browser_scrape: waitForSelector timed out, reading DOM anyway', {
+                waitForSelector,
+                url: pageUrl,
+              });
+            }
+          }
+          if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+
+          const html = await page.content();
+          assertNoCaptcha(html, pageUrl);
+          pagesFetched++;
+
+          if (mode === 'smart') {
+            allLeads.push(...smartExtract(html, pageUrl, 'browser_scrape'));
+          } else {
+            allLeads.push(
+              ...extractLeadsBySelectors(
+                html,
+                selectors!,
+                _config.containerSelector as string | undefined,
+                'browser_scrape',
+              ),
+            );
+          }
+
+          enqueueDiscoveredLinks(html, pageUrl, depth, crawl, queue, seen);
+        } catch (err) {
+          pagesFailed++;
+          if (!firstError) firstError = err;
+          logger.warn('scraper browser_scrape: deep-crawl page failed, continuing', {
             url: pageUrl,
+            error: err instanceof Error ? err.message : String(err),
           });
         }
       }
-      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
 
-      const html = await page.content();
-      assertNoCaptcha(html, pageUrl);
-      pagesFetched++;
+      if (pagesFetched === 0 && firstError) throw firstError;
 
-      if (mode === 'smart') {
-        allLeads.push(...smartExtract(html, pageUrl, 'browser_scrape'));
-      } else {
-        allLeads.push(
-          ...extractLeadsBySelectors(
-            html,
-            selectors!,
-            _config.containerSelector as string | undefined,
-            'browser_scrape',
-          ),
-        );
+      const stats = await importLeads(dedupeScrapedLeads(allLeads), logId);
+      return {
+        ...stats,
+        rawResponse: {
+          urls,
+          follow_links: true,
+          max_depth: crawl.maxDepth,
+          pages_scraped: pagesFetched,
+          pages_failed: pagesFailed,
+          urls_discovered: seen.size,
+          robots_checked: respectRobotsTxt,
+          rendered: true,
+        },
+      };
+    }
+
+    for (const url of urls) {
+      if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
+
+      for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+        const pageUrl = pageNum === 1 ? url : `${url}?page=${pageNum}`;
+        const response = await page.goto(pageUrl, {
+          waitUntil: 'networkidle2',
+          timeout: DEFAULT_BROWSER_TIMEOUT_MS,
+        });
+
+        const status = response?.status() ?? 0;
+        if ([401, 403, 429].includes(status)) {
+          throw new AppError(`Target blocked the crawler for ${pageUrl} (HTTP ${status})`, status);
+        }
+        if (status && status >= 400) {
+          logger.warn('scraper browser_scrape: page navigation failed', {
+            page: pageNum,
+            status,
+            url: pageUrl,
+          });
+          break;
+        }
+
+        if (waitForSelector) {
+          try {
+            await page.waitForSelector(waitForSelector, { timeout: DEFAULT_BROWSER_TIMEOUT_MS });
+          } catch {
+            logger.warn('scraper browser_scrape: waitForSelector timed out, reading DOM anyway', {
+              waitForSelector,
+              url: pageUrl,
+            });
+          }
+        }
+        if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+
+        const html = await page.content();
+        assertNoCaptcha(html, pageUrl);
+        pagesFetched++;
+
+        if (mode === 'smart') {
+          allLeads.push(...smartExtract(html, pageUrl, 'browser_scrape'));
+        } else {
+          allLeads.push(
+            ...extractLeadsBySelectors(
+              html,
+              selectors!,
+              _config.containerSelector as string | undefined,
+              'browser_scrape',
+            ),
+          );
+        }
       }
+      urlsScraped++;
     }
   } finally {
     await browser.close();
   }
 
-  const stats = await importLeads(allLeads, logId);
+  // Safety net: a misconfigured maxPages against a site with no real
+  // pagination (or the same contact appearing on multiple scraped URLs)
+  // would otherwise re-attempt the same lead N times in one run, inflating
+  // "found" and "duplicate" counts for what is really a single contact.
+  const dedupedLeads = dedupeScrapedLeads(allLeads);
+
+  const stats = await importLeads(dedupedLeads, logId);
   return {
     ...stats,
     rawResponse: {
-      url,
+      urls,
+      urls_scraped: urlsScraped,
       pages_scraped: pagesFetched,
       robots_checked: respectRobotsTxt,
       rendered: true,
@@ -1473,13 +1610,129 @@ export async function detectSelectors(
   return parsed;
 }
 
+const MAX_DISCOVERED_PAGES = 40;
+
+/** Strips hash fragments and a trailing slash so equivalent links dedupe cleanly. */
+function normalizeDiscoveredUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (!['http:', 'https:'].includes(u.protocol)) return null;
+    u.hash = '';
+    let normalized = u.toString();
+    if (normalized.endsWith('/') && normalized !== `${u.origin}/`) {
+      normalized = normalized.slice(0, -1);
+    }
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Renders a page with headless Chrome and extracts same-origin nav links,
+ * so a user can see what pages exist on a site before choosing which ones
+ * to add to a multi-URL scraper source. Uses a real browser (not a plain
+ * fetch) because client-side-routed SPAs have no links in their raw HTML —
+ * the nav only exists after the page hydrates.
+ */
+export async function discoverPages(
+  url: string,
+): Promise<import('./scraper.types').DiscoveredPage[]> {
+  const userAgent = DEFAULT_CRAWLER_USER_AGENT;
+  await assertRobotsAllowed(url, userAgent);
+
+  const executablePath = assertEnvVarConfigured(
+    'PUPPETEER_EXECUTABLE_PATH',
+    'PUPPETEER_EXECUTABLE_PATH',
+  );
+
+  const puppeteer = await import('puppeteer-core');
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+  } catch (err) {
+    throw new AppError(
+      `Could not launch Chrome at PUPPETEER_EXECUTABLE_PATH="${executablePath}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      500,
+    );
+  }
+
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    await browser.close();
+    throw new AppError('Invalid URL', 400);
+  }
+
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent({ userAgent });
+    const response = await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout: DEFAULT_BROWSER_TIMEOUT_MS,
+    });
+
+    const status = response?.status() ?? 0;
+    if ([401, 403, 429].includes(status)) {
+      throw new AppError(`Target blocked the crawler for ${url} (HTTP ${status})`, status);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runs in
+    // the page's browser context, which has no DOM lib types in this (Node) tsconfig.
+    const rawLinks = await page.$$eval('a[href]', (els: any[]) =>
+      els.map((el) => ({
+        href: el.href as string,
+        text: ((el.textContent as string) ?? '').trim(),
+      })),
+    );
+
+    const seen = new Set<string>();
+    const pages: import('./scraper.types').DiscoveredPage[] = [];
+
+    const rootNormalized = normalizeDiscoveredUrl(url);
+    if (rootNormalized) {
+      seen.add(rootNormalized);
+      pages.push({ url: rootNormalized, label: 'Home' });
+    }
+
+    for (const { href, text } of rawLinks) {
+      const normalized = normalizeDiscoveredUrl(href);
+      if (!normalized || !normalized.startsWith(origin) || seen.has(normalized)) continue;
+      seen.add(normalized);
+      const path = normalized.slice(origin.length) || '/';
+      pages.push({ url: normalized, label: text || path });
+      if (pages.length >= MAX_DISCOVERED_PAGES) break;
+    }
+
+    return pages;
+  } finally {
+    await browser.close();
+  }
+}
+
 function pathMatchesRobotsRule(pathname: string, rule: string): boolean {
   if (!rule) return false;
   if (rule === '/') return true;
   return pathname.startsWith(rule);
 }
 
-async function assertRobotsAllowed(pageUrl: string, userAgent: string): Promise<void> {
+/**
+ * @param robotsCache Optional per-run cache of robots.txt text keyed by
+ *   origin (null = unavailable/allow-all), so a deep crawl doesn't re-fetch
+ *   robots.txt for every page on the same site.
+ */
+async function assertRobotsAllowed(
+  pageUrl: string,
+  userAgent: string,
+  robotsCache?: Map<string, string | null>,
+): Promise<void> {
   let parsed: URL;
   try {
     parsed = new URL(pageUrl);
@@ -1487,20 +1740,24 @@ async function assertRobotsAllowed(pageUrl: string, userAgent: string): Promise<
     throw new AppError('URL is required for web scraping', 400);
   }
 
-  const robotsUrl = `${parsed.origin}/robots.txt`;
-  let response: Response;
-  try {
-    response = await fetch(robotsUrl, { headers: { 'User-Agent': userAgent } });
-  } catch (err) {
-    logger.warn('scraper web_scrape: robots.txt fetch failed, allowing crawl', {
-      robotsUrl,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return;
+  let text: string | null;
+  if (robotsCache?.has(parsed.origin)) {
+    text = robotsCache.get(parsed.origin)!;
+  } else {
+    const robotsUrl = `${parsed.origin}/robots.txt`;
+    try {
+      const response = await fetch(robotsUrl, { headers: { 'User-Agent': userAgent } });
+      text = response.ok ? await response.text() : null;
+    } catch (err) {
+      logger.warn('scraper web_scrape: robots.txt fetch failed, allowing crawl', {
+        robotsUrl,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      text = null;
+    }
+    robotsCache?.set(parsed.origin, text);
   }
-  if (!response.ok) return;
-
-  const text = await response.text();
+  if (text === null) return;
   const lines = text.split(/\r?\n/).map((line) => line.split('#')[0]?.trim() ?? '');
   let applies = false;
   const disallowed: string[] = [];
@@ -1542,6 +1799,109 @@ function assertNoCaptcha(html: string, pageUrl: string): void {
   }
 }
 
+// ── Deep Crawl (follow same-site links) ────────────────────────────────────
+
+interface DeepCrawlSettings {
+  followLinks: boolean;
+  maxDepth: number;
+  includePatterns: string[];
+  excludePatterns: string[];
+}
+
+function toStringArray(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+}
+
+function deepCrawlSettings(config: Record<string, unknown>): DeepCrawlSettings {
+  return {
+    followLinks: config.followLinks === true,
+    maxDepth: Math.min(Math.max(Number(config.maxDepth) || 2, 1), 5),
+    includePatterns: toStringArray(config.includePatterns),
+    excludePatterns: toStringArray(config.excludePatterns),
+  };
+}
+
+/** Substring filters applied to discovered links (never to the listed seed URLs). */
+function urlPassesPatterns(url: string, settings: DeepCrawlSettings): boolean {
+  if (settings.excludePatterns.some((p) => url.includes(p))) return false;
+  if (settings.includePatterns.length > 0 && !settings.includePatterns.some((p) => url.includes(p))) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Same-origin links from a page's HTML, resolved against the page URL and
+ * normalized so equivalent links dedupe cleanly. Non-HTML asset links are
+ * skipped by extension since a deep crawl only wants navigable pages.
+ */
+const NON_HTML_EXT_RE = /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|zip|gz|mp4|mp3|webm|woff2?|ttf|eot)$/i;
+
+function extractSameOriginLinks(html: string, pageUrl: string): string[] {
+  let origin: string;
+  try {
+    origin = new URL(pageUrl).origin;
+  } catch {
+    return [];
+  }
+  const $ = cheerio.load(html);
+  const links: string[] = [];
+  const seen = new Set<string>();
+  $('a[href]').each((_i, el) => {
+    const href = $(el).attr('href');
+    if (!href) return;
+    let absolute: string;
+    try {
+      absolute = new URL(href, pageUrl).toString();
+    } catch {
+      return;
+    }
+    const normalized = normalizeDiscoveredUrl(absolute);
+    if (!normalized || !normalized.startsWith(origin) || seen.has(normalized)) return;
+    if (NON_HTML_EXT_RE.test(new URL(normalized).pathname)) return;
+    seen.add(normalized);
+    links.push(normalized);
+  });
+  return links;
+}
+
+/** One page visited (or attempted) during a deep crawl. */
+interface CrawlQueueItem {
+  url: string;
+  depth: number;
+}
+
+/** Seeds the BFS queue with the configured URLs at depth 0. */
+function seedCrawlQueue(urls: string[]): { queue: CrawlQueueItem[]; seen: Set<string> } {
+  const queue: CrawlQueueItem[] = [];
+  const seen = new Set<string>();
+  for (const url of urls) {
+    const normalized = normalizeDiscoveredUrl(url) ?? url;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    queue.push({ url: normalized, depth: 0 });
+  }
+  return { queue, seen };
+}
+
+/** Enqueues a page's unseen same-origin links for the next crawl depth. */
+function enqueueDiscoveredLinks(
+  html: string,
+  pageUrl: string,
+  depth: number,
+  settings: DeepCrawlSettings,
+  queue: CrawlQueueItem[],
+  seen: Set<string>,
+): void {
+  if (depth >= settings.maxDepth) return;
+  for (const link of extractSameOriginLinks(html, pageUrl)) {
+    if (seen.has(link) || !urlPassesPatterns(link, settings)) continue;
+    seen.add(link);
+    queue.push({ url: link, depth: depth + 1 });
+  }
+}
+
 async function scrapeWeb(
   _config: Record<string, unknown>,
   logId: string,
@@ -1556,7 +1916,9 @@ async function scrapeWeb(
 }> {
   logger.info('scraper web_scrape: starting');
 
-  const url = String(_config.url ?? '');
+  // Accepts a single URL or a list (one per line in the UI), so one source
+  // can scrape many sites in a single run instead of needing one config per URL.
+  const urls = normalizeQueries(_config.url);
   const selectors = _config.selectors as Record<string, string> | undefined;
   const maxPages = Number(_config.maxPages) || 1;
   const userAgent =
@@ -1569,92 +1931,172 @@ async function scrapeWeb(
   // original selector-required behaviour (backward compatible).
   const mode = _config.mode === 'smart' ? 'smart' : 'selectors';
 
-  if (!url) throw new AppError('URL is required for web scraping', 400);
+  if (urls.length === 0) throw new AppError('At least one URL is required for web scraping', 400);
   if (mode === 'selectors' && (!selectors || Object.keys(selectors).length === 0)) {
     throw new AppError('CSS selectors are required for web scraping', 400);
   }
 
-  if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
-
   const allLeads: ScrapedLead[] = [];
   let pagesFetched = 0;
+  let urlsScraped = 0;
   const fetchOpts: RequestInit = { headers: { 'User-Agent': userAgent } };
 
-  for (let page = 1; page <= maxPages; page++) {
-    const pageUrl = page === 1 ? url : `${url}?page=${page}`;
-    const response = await fetch(pageUrl, fetchOpts);
-    // Fix: check HTTP status
-    if (!response.ok) {
-      assertNotBlockedResponse(response, pageUrl);
-      logger.warn('scraper web_scrape: page fetch failed', {
-        page,
-        status: response.status,
-        url: pageUrl,
-      });
-      break;
-    }
-    assertNotBlockedResponse(response, pageUrl);
-    const html = await response.text();
-    assertNoCaptcha(html, pageUrl);
-    pagesFetched++;
-    const $ = cheerio.load(html);
+  const crawl = deepCrawlSettings(_config);
+  if (crawl.followLinks) {
+    // Deep crawl: BFS over same-origin links from the seed URLs. maxPages is
+    // the TOTAL page budget here (not pages-per-URL pagination), and a single
+    // failing page skips forward instead of aborting the whole run.
+    const { queue, seen } = seedCrawlQueue(urls);
+    const robotsCache = new Map<string, string | null>();
+    let pagesFailed = 0;
+    let firstError: unknown = null;
 
-    if (mode === 'smart') {
-      // Selector-free extraction: pull emails/phones from the page and use the
-      // page title as the business name. Best for single contact/about pages.
-      allLeads.push(...smartExtract(html, pageUrl, 'web_scrape'));
-    } else {
-      const firstSelector = Object.values(selectors!)[0];
-      if (!firstSelector) continue;
+    while (queue.length > 0 && pagesFetched < maxPages) {
+      const { url: pageUrl, depth } = queue.shift()!;
+      try {
+        if (respectRobotsTxt) await assertRobotsAllowed(pageUrl, userAgent, robotsCache);
+        const response = await fetch(pageUrl, fetchOpts);
+        assertNotBlockedResponse(response, pageUrl);
+        if (!response.ok) {
+          throw new AppError(`Page fetch failed for ${pageUrl} (HTTP ${response.status})`, 502);
+        }
+        const html = await response.text();
+        assertNoCaptcha(html, pageUrl);
+        pagesFetched++;
 
-      const items: Record<string, string>[] = [];
-      const elements = $(firstSelector);
+        if (mode === 'smart') {
+          allLeads.push(...smartExtract(html, pageUrl, 'web_scrape'));
+        } else {
+          allLeads.push(
+            ...extractLeadsBySelectors(
+              html,
+              selectors!,
+              _config.containerSelector as string | undefined,
+              'web_scrape',
+            ),
+          );
+        }
 
-      if (elements.length > 0) {
-        const fieldKeys = Object.keys(selectors!);
-        const containerSelector = _config.containerSelector as string | undefined;
-        const containers = containerSelector ? $(containerSelector) : elements.parent().parent();
-
-        containers.each((_i, container) => {
-          const entry: Record<string, string> = {};
-          for (const key of fieldKeys) {
-            const sel = selectors![key];
-            const el = $(container).find(sel).first();
-            entry[key] = el.text().trim();
-          }
-          if (entry.business_name || entry.phone) {
-            items.push(entry);
-          }
+        enqueueDiscoveredLinks(html, pageUrl, depth, crawl, queue, seen);
+      } catch (err) {
+        pagesFailed++;
+        if (!firstError) firstError = err;
+        logger.warn('scraper web_scrape: deep-crawl page failed, continuing', {
+          url: pageUrl,
+          error: err instanceof Error ? err.message : String(err),
         });
       }
-
-      for (const item of items) {
-        allLeads.push({
-          business_name: item.business_name || 'Unknown Business',
-          phone: item.phone || undefined,
-          email: item.email || undefined,
-          website: item.website || undefined,
-          location: item.location || '',
-          source_platform: 'web_scrape',
-        });
+      if (queue.length > 0 && pagesFetched < maxPages) {
+        await new Promise((r) => setTimeout(r, crawlDelayMs));
       }
     }
 
-    if (page < maxPages && _config.paginationSelector) {
-      const pagEl = $(_config.paginationSelector as string);
-      if (pagEl.length === 0) break;
-    }
+    // Nothing was crawlable at all — surface the real cause instead of a
+    // silent empty run (e.g. robots disallow or the seed site being down).
+    if (pagesFetched === 0 && firstError) throw firstError;
 
-    if (page < maxPages) {
-      await new Promise((r) => setTimeout(r, crawlDelayMs));
-    }
+    const stats = await importLeads(dedupeScrapedLeads(allLeads), logId);
+    return {
+      ...stats,
+      rawResponse: {
+        urls,
+        follow_links: true,
+        max_depth: crawl.maxDepth,
+        pages_scraped: pagesFetched,
+        pages_failed: pagesFailed,
+        urls_discovered: seen.size,
+        robots_checked: respectRobotsTxt,
+      },
+    };
   }
 
-  const stats = await importLeads(allLeads, logId);
+  for (const url of urls) {
+    if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
+
+    for (let page = 1; page <= maxPages; page++) {
+      const pageUrl = page === 1 ? url : `${url}?page=${page}`;
+      const response = await fetch(pageUrl, fetchOpts);
+      // Fix: check HTTP status
+      if (!response.ok) {
+        assertNotBlockedResponse(response, pageUrl);
+        logger.warn('scraper web_scrape: page fetch failed', {
+          page,
+          status: response.status,
+          url: pageUrl,
+        });
+        break;
+      }
+      assertNotBlockedResponse(response, pageUrl);
+      const html = await response.text();
+      assertNoCaptcha(html, pageUrl);
+      pagesFetched++;
+      const $ = cheerio.load(html);
+
+      if (mode === 'smart') {
+        // Selector-free extraction: pull emails/phones from the page and use the
+        // page title as the business name. Best for single contact/about pages.
+        allLeads.push(...smartExtract(html, pageUrl, 'web_scrape'));
+      } else {
+        const firstSelector = Object.values(selectors!)[0];
+        if (!firstSelector) continue;
+
+        const items: Record<string, string>[] = [];
+        const elements = $(firstSelector);
+
+        if (elements.length > 0) {
+          const fieldKeys = Object.keys(selectors!);
+          const containerSelector = _config.containerSelector as string | undefined;
+          const containers = containerSelector ? $(containerSelector) : elements.parent().parent();
+
+          containers.each((_i, container) => {
+            const entry: Record<string, string> = {};
+            for (const key of fieldKeys) {
+              const sel = selectors![key];
+              const el = $(container).find(sel).first();
+              entry[key] = el.text().trim();
+            }
+            if (entry.business_name || entry.phone) {
+              items.push(entry);
+            }
+          });
+        }
+
+        for (const item of items) {
+          allLeads.push({
+            business_name: item.business_name || 'Unknown Business',
+            phone: item.phone || undefined,
+            email: item.email || undefined,
+            website: item.website || undefined,
+            location: item.location || '',
+            source_platform: 'web_scrape',
+          });
+        }
+      }
+
+      if (page < maxPages && _config.paginationSelector) {
+        const pagEl = $(_config.paginationSelector as string);
+        if (pagEl.length === 0) break;
+      }
+
+      if (page < maxPages) {
+        await new Promise((r) => setTimeout(r, crawlDelayMs));
+      }
+    }
+    urlsScraped++;
+  }
+
+  // Safety net: a misconfigured maxPages against a site with no real
+  // pagination (or the same contact appearing on multiple scraped URLs)
+  // would otherwise re-attempt the same lead N times in one run, inflating
+  // "found" and "duplicate" counts for what is really a single contact.
+  const dedupedLeads = dedupeScrapedLeads(allLeads);
+
+  const stats = await importLeads(dedupedLeads, logId);
   return {
     ...stats,
     rawResponse: {
-      url,
+      urls,
+      urls_scraped: urlsScraped,
       pages_scraped: pagesFetched,
       robots_checked: respectRobotsTxt,
     },
