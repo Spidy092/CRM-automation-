@@ -31,7 +31,7 @@ RUN npm prune --omit=dev
 FROM node:20-alpine AS production
 
 # wget is used by the HEALTHCHECK below
-RUN apk add --no-cache wget
+RUN apk add --no-cache wget chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 WORKDIR /app
 
