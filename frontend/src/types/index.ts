@@ -300,16 +300,29 @@ export interface MemberMetrics {
   name: string;
   assigned_count: number;
   contacted_count: number;
-  contacted_pct: number;
-  avg_response_time: number;
+  contacted_pct: number | null;
+  avg_response_time: number | null;
   total_activities: number;
 }
 
 /* ─── Scraper Types ─── */
 
-export type ScraperSourceType = 'google_places' | 'facebook' | 'youtube' | 'web_scrape';
+export type ScraperSourceType =
+  | 'google_places'
+  | 'facebook'
+  | 'youtube'
+  | 'web_scrape'
+  | 'apify_actor'
+  | 'browser_scrape';
 
 export type ScraperLogStatus = 'running' | 'completed' | 'failed' | 'partially_completed';
+
+/**
+ * 'failing' — the source's last (up to) 3 runs all failed.
+ * 'unknown'  — no runs yet.
+ * 'healthy'  — anything else.
+ */
+export type SourceHealth = 'healthy' | 'failing' | 'unknown';
 
 export interface ScraperConfig {
   id: string;
@@ -322,6 +335,12 @@ export interface ScraperConfig {
   created_by: string;
   created_at: string;
   updated_at: string;
+  health: SourceHealth;
+}
+
+export interface FailedScrapeItem {
+  lead: Record<string, unknown>;
+  error: string;
 }
 
 export interface ScraperLog {
@@ -331,10 +350,14 @@ export interface ScraperLog {
   started_at: string;
   completed_at: string | null;
   records_found: number;
+  /** Leads that were newly created — excludes duplicates. */
   records_imported: number;
+  /** Leads that already existed (matched by email/phone) and were skipped. */
+  records_duplicate: number;
   records_failed: number;
   error_message: string | null;
   raw_response: Record<string, unknown> | null;
+  failed_items: FailedScrapeItem[];
   created_at: string;
 }
 
@@ -342,8 +365,26 @@ export interface ScraperRunResult {
   logId: string;
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
   status: ScraperLogStatus;
   /** Human-readable reason when status === 'failed'; null otherwise. */
   errorMessage?: string | null;
+}
+
+export interface ScraperStatsSummary {
+  windowHours: number;
+  totalRuns: number;
+  activeSources: number;
+  recordsFound: number;
+  recordsImported: number;
+  recordsDuplicate: number;
+  recordsFailed: number;
+}
+
+export interface ScraperRunLeadsResult {
+  /** Leads newly created by this run. */
+  newLeads: Lead[];
+  /** Existing leads this run's records matched (skipped, not re-created). */
+  duplicateLeads: Lead[];
 }

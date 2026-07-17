@@ -1,6 +1,16 @@
 import { z } from 'zod';
 
-export const sourceTypeEnum = z.enum(['google_places', 'facebook', 'youtube', 'web_scrape']);
+export const sourceTypeEnum = z.enum([
+  'google_places',
+  'facebook',
+  'youtube',
+  'web_scrape',
+  'apify_actor',
+  'browser_scrape',
+  'meta_lead_forms',
+  'google_ads_lead_forms',
+  'linkedin_lead_forms',
+]);
 
 export const googlePlacesConfigSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
@@ -37,6 +47,30 @@ export const webScrapeConfigSchema = z.object({
   headers: z.record(z.string(), z.string()).optional(),
 });
 
+export const browserScrapeConfigSchema = z.object({
+  url: z.string().url('Must be a valid URL'),
+  // Same mode split as web_scrape: 'smart' mines emails/phones from the
+  // rendered DOM, 'selectors' extracts explicit CSS-targeted fields.
+  mode: z.enum(['smart', 'selectors']).optional().default('smart'),
+  selectors: z.record(z.string(), z.string()).optional(),
+  containerSelector: z.string().optional(),
+  // CSS selector to wait for before reading the DOM — required for content
+  // that renders after an XHR/fetch call (most SPA listing pages).
+  waitForSelector: z.string().optional(),
+  // Extra fixed delay (ms) after navigation, on top of waitForSelector.
+  waitMs: z.number().int().min(0).max(15000).optional().default(0),
+  maxPages: z.number().int().positive().max(5).optional().default(1),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
+export const apifyActorConfigSchema = z.object({
+  // Actor id or tilde-separated "username~actor-name" (e.g. "compass~crawler-google-places").
+  actorId: z.string().min(1, 'Actor id is required'),
+  // Passed through verbatim as the Actor's INPUT — shape is actor-specific.
+  input: z.record(z.unknown()).optional().default({}),
+  maxResults: z.number().int().positive().max(1000).optional().default(100),
+});
+
 // Body for the AI "auto-detect selectors" endpoint.
 export const detectSelectorsSchema = z.object({
   url: z.string().url('Must be a valid URL'),
@@ -64,6 +98,10 @@ export const triggerScrapeSchema = z.object({
 export const listLogsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+});
+
+export const statsSummaryQuerySchema = z.object({
+  hours: z.coerce.number().int().positive().max(720).optional().default(24),
 });
 
 export type CreateScraperConfigInput = z.infer<typeof createScraperConfigSchema>;

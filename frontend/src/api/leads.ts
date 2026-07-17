@@ -18,6 +18,10 @@ interface LeadFilters {
   search?: string;
   limit?: number;
   cursor?: string;
+  /** ISO-8601 datetime — only return leads created at or after this point */
+  created_after?: string;
+  /** When true, only return leads where classification is null */
+  unclassified?: boolean;
 }
 
 interface LeadsPageResult {
@@ -35,6 +39,8 @@ function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams
   if (filters.tags) params.append('tags', filters.tags);
   if (filters.search) params.append('search', filters.search);
   if (filters.limit) params.append('limit', filters.limit.toString());
+  if (filters.created_after) params.append('created_after', filters.created_after);
+  if (filters.unclassified) params.append('unclassified', 'true');
   if (cursor) params.append('cursor', cursor);
   return params;
 }
@@ -291,6 +297,29 @@ export function useEnrichLead() {
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['leads', id] });
+    },
+  });
+}
+
+export function useBulkClassifyLeads() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      ids,
+      classification,
+    }: {
+      ids: string[];
+      classification: 'hot' | 'warm' | 'cold';
+    }) => {
+      const response = await apiClient.post<ApiResponse<{ updated: number }>>(
+        '/leads/bulk-classify',
+        { ids, classification },
+      );
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
     },
   });
 }

@@ -1,13 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderWithProviders } from '@/lib/test-utils';
 import { LeadAIProfilePage } from '../LeadAIProfilePage';
 
 const mockUseProfile = vi.fn();
 const mockUseDecisions = vi.fn();
+const mockUseTriggerResearch = vi.fn();
 
 vi.mock('@/api/aiIntelligence', () => ({
   useLeadAiProfile: () => mockUseProfile(),
   useLeadDecisions: () => mockUseDecisions(),
+  useTriggerLeadResearch: () => mockUseTriggerResearch(),
 }));
 
 const fakeProfile = {
@@ -36,12 +38,17 @@ const fakeProfile = {
 };
 
 describe('LeadAIProfilePage', () => {
+  beforeEach(() => {
+    mockUseTriggerResearch.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  });
+
   it('renders the profile when loaded', () => {
     mockUseProfile.mockReturnValue({ data: fakeProfile, isLoading: false, error: null });
     mockUseDecisions.mockReturnValue({ data: [] });
     renderWithProviders(<LeadAIProfilePage />);
     expect(document.body.textContent).toContain('Lead AI Profile');
     expect(document.body.textContent).toContain('WhatsApp booking automation');
+    expect(document.body.textContent).toContain('Re-run research');
   });
 
   it('renders an empty state when there is no profile', () => {
@@ -49,5 +56,6 @@ describe('LeadAIProfilePage', () => {
     mockUseDecisions.mockReturnValue({ data: [] });
     renderWithProviders(<LeadAIProfilePage />);
     expect(document.body.textContent).toContain('No AI profile yet');
+    expect(document.body.textContent).toContain('Run AI research');
   });
 });

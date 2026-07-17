@@ -25,6 +25,11 @@ jest.mock('./scraper.controller', () => ({
   deleteConfigHandler: (req: any, res: any) => res.status(200).json({ success: true }),
   triggerScrapeHandler: (req: any, res: any) => res.status(200).json({ success: true }),
   listLogsHandler: (req: any, res: any) => res.status(200).json({ success: true, data: [] }),
+  detectSelectorsHandler: (req: any, res: any) => res.status(200).json({ success: true, data: {} }),
+  getRunLeadsHandler: (req: any, res: any) => res.status(200).json({ success: true, data: [] }),
+  retryFailedHandler: (req: any, res: any) => res.status(200).json({ success: true, data: {} }),
+  getStatsSummaryHandler: (req: any, res: any) =>
+    res.status(200).json({ success: true, data: { windowHours: 24 } }),
 }));
 
 describe('Scraper Routes', () => {
@@ -42,5 +47,27 @@ describe('Scraper Routes', () => {
       .post('/scraper')
       .send({ name: 'Test', source_type: 'google_places', config: { query: 't' } });
     expect(res.status).toBe(201);
+  });
+
+  it('GET /scraper/stats/summary', async () => {
+    const res = await request(app).get('/scraper/stats/summary');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /scraper/logs/:logId/leads', async () => {
+    const res = await request(app).get('/scraper/logs/log-1/leads');
+    expect(res.status).toBe(200);
+  });
+
+  it('POST /scraper/logs/:logId/retry-failed', async () => {
+    const res = await request(app).post('/scraper/logs/log-1/retry-failed');
+    expect(res.status).toBe(200);
+  });
+
+  it('routes /scraper/stats/summary to the stats handler, not the :id config handler', async () => {
+    // Regression guard: /stats/summary must not be swallowed by GET /:id,
+    // which would instead return getConfigHandler's `{ data: {} }` body.
+    const res = await request(app).get('/scraper/stats/summary');
+    expect(res.body).toEqual({ success: true, data: { windowHours: 24 } });
   });
 });

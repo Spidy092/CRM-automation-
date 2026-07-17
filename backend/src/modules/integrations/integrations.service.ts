@@ -25,6 +25,12 @@ import * as googleCalendarConnector from './google-calendar/google-calendar.conn
 import * as outlookConnector from './outlook/outlook.connector';
 import * as openwaConnector from './openwa/openwa.connector';
 import * as hunterConnector from './hunter/hunter.service';
+import * as mailchimpConnector from './mailchimp/mailchimp.connector';
+import * as stripeConnector from './stripe/stripe.connector';
+import * as zapierConnector from './zapier/zapier.connector';
+import * as linkedinConnector from './linkedin/linkedin.connector';
+import * as telegramConnector from './telegram/telegram.connector';
+import * as apifyConnector from './apify/apify.connector';
 
 function toPublic(row: Integration | IntegrationPublic): IntegrationPublic {
   // Explicit field projection — keeps `encrypted_credentials` out of the response.
@@ -300,6 +306,48 @@ export async function testIntegration(
         const testRes = await hunterConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Hunter.io connection successful (${testRes.latencyMs}ms).`;
+        break;
+      }
+      case 'mailchimp': {
+        const creds = await mailchimpConnector.loadCredentials();
+        const testRes = await mailchimpConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Mailchimp connection successful (${testRes.latencyMs}ms).`;
+        break;
+      }
+      case 'stripe': {
+        const creds = await stripeConnector.loadCredentials();
+        const testRes = await stripeConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Stripe connection successful (${testRes.latencyMs}ms).`;
+        break;
+      }
+      case 'zapier': {
+        const creds = await zapierConnector.loadCredentials();
+        const testRes = await zapierConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Zapier webhook reachable (${testRes.latencyMs}ms).`;
+        break;
+      }
+      case 'linkedin': {
+        const creds = await linkedinConnector.loadCredentials();
+        const testRes = await linkedinConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `LinkedIn connection successful (${testRes.latencyMs}ms).`;
+        break;
+      }
+      case 'telegram': {
+        const creds = await telegramConnector.loadCredentials();
+        const testRes = await telegramConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Telegram bot connected${testRes.botUsername ? ` (@${testRes.botUsername})` : ''} (${testRes.latencyMs}ms).`;
+        break;
+      }
+      case 'apify': {
+        const creds = await apifyConnector.loadCredentials();
+        const testRes = await apifyConnector.testConnection(creds);
+        if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
+        testMessage = `Apify connected${testRes.username ? ` (${testRes.username})` : ''} (${testRes.latencyMs}ms).`;
         break;
       }
       default:

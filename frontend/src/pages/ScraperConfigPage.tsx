@@ -5,7 +5,24 @@ import { getApiErrorMessage } from '@/lib/apiError';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Search, Globe, Video, Facebook, Plus, Play, Trash2, Eye, X, Loader2, Sparkles } from 'lucide-react';
+import {
+  Search,
+  Globe,
+  Video,
+  Facebook,
+  Plus,
+  Play,
+  Trash2,
+  Eye,
+  X,
+  Loader2,
+  Sparkles,
+  Bot,
+  Chrome,
+  AlertTriangle,
+  RotateCcw,
+  Users,
+} from 'lucide-react';
 import {
   useScraperConfigs,
   useCreateScraperConfig,
@@ -14,6 +31,9 @@ import {
   useTriggerScrape,
   useScraperLogs,
   useDetectSelectors,
+  useScraperStatsSummary,
+  useScraperRunLeads,
+  useRetryFailedScrape,
 } from '@/api/scraper';
 import type { ScraperSourceType, ScraperConfig } from '@/types';
 
@@ -22,6 +42,8 @@ const sourceIcons: Record<ScraperSourceType, React.ReactNode> = {
   facebook: <Facebook className="h-4 w-4" />,
   youtube: <Video className="h-4 w-4" />,
   web_scrape: <Globe className="h-4 w-4" />,
+  apify_actor: <Bot className="h-4 w-4" />,
+  browser_scrape: <Chrome className="h-4 w-4" />,
 };
 
 const sourceLabels: Record<ScraperSourceType, string> = {
@@ -29,6 +51,8 @@ const sourceLabels: Record<ScraperSourceType, string> = {
   facebook: 'Facebook',
   youtube: 'YouTube',
   web_scrape: 'Web Scrape',
+  apify_actor: 'Apify Actor',
+  browser_scrape: 'Browser Scrape (JS sites)',
 };
 
 const sourceColors: Record<ScraperSourceType, string> = {
@@ -36,6 +60,8 @@ const sourceColors: Record<ScraperSourceType, string> = {
   facebook: 'bg-indigo-100 text-indigo-700',
   youtube: 'bg-red-100 text-red-700',
   web_scrape: 'bg-emerald-100 text-emerald-700',
+  apify_actor: 'bg-purple-100 text-purple-700',
+  browser_scrape: 'bg-orange-100 text-orange-700',
 };
 
 interface ConfigForm {
@@ -62,6 +88,10 @@ function getPlaceholderConfig(sourceType: ScraperSourceType): Record<string, unk
       return { query: '', channelId: '', maxResults: 10, apiKeyRef: 'YOUTUBE_API_KEY' };
     case 'web_scrape':
       return { url: '', mode: 'smart', selectors: {}, maxPages: 1 };
+    case 'apify_actor':
+      return { actorId: '', input: {}, maxResults: 100 };
+    case 'browser_scrape':
+      return { url: '', mode: 'smart', selectors: {}, waitForSelector: '', waitMs: 0, maxPages: 1 };
   }
 }
 
@@ -353,6 +383,184 @@ function getConfigFields(
         </>
       );
     }
+    case 'apify_actor':
+      return (
+        <>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">Actor ID *</label>
+            <input
+              type="text"
+              value={(config.actorId as string) ?? ''}
+              onChange={(e) => onChange('actorId', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="compass/crawler-google-places"
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              From the Apify Store URL — e.g. <code>apify.com/compass/crawler-google-places</code> →{' '}
+              <code>compass/crawler-google-places</code>.
+            </p>
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Actor Input (JSON) <span className="text-slate-300">— passed as-is to the Actor</span>
+            </label>
+            <textarea
+              value={config.input ? JSON.stringify(config.input, null, 2) : '{}'}
+              onChange={(e) => {
+                try {
+                  onChange('input', JSON.parse(e.target.value));
+                } catch {
+                  // Allow typing invalid JSON mid-edit
+                }
+              }}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+              rows={5}
+              placeholder='{"searchStringsArray": ["restaurants"], "locationQuery": "Bangalore"}'
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              Field names are actor-specific — check the actor&apos;s Input tab in the Apify Console.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Max Results</label>
+            <input
+              type="number"
+              value={(config.maxResults as number) ?? 100}
+              onChange={(e) => onChange('maxResults', parseInt(e.target.value) || 100)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              min={1}
+              max={1000}
+            />
+          </div>
+          <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+            Requires the Apify integration to be configured with an API token under Integrations.
+            The actor runs on Apify&apos;s infrastructure — results are pulled back into leads when the run
+            completes (synchronous runs are capped at 5 minutes by Apify).
+          </div>
+        </>
+      );
+    case 'browser_scrape': {
+      const mode = (config.mode as string) ?? 'smart';
+      return (
+        <>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">Extraction Mode</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => onChange('mode', 'smart')}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  mode === 'smart'
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                }`}
+              >
+                ✨ Smart (no setup)
+              </button>
+              <button
+                type="button"
+                onClick={() => onChange('mode', 'selectors')}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  mode === 'selectors'
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                }`}
+              >
+                Custom selectors
+              </button>
+            </div>
+          </div>
+
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">URL *</label>
+            <input
+              type="url"
+              value={(config.url as string) ?? ''}
+              onChange={(e) => onChange('url', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="https://example.com/businesses"
+            />
+          </div>
+
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Wait For Selector <span className="text-slate-300">— optional</span>
+            </label>
+            <input
+              type="text"
+              value={(config.waitForSelector as string) ?? ''}
+              onChange={(e) => onChange('waitForSelector', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder=".listing-card"
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              CSS selector to wait for before reading the page — use this for content that loads
+              after the initial page render (most single-page apps).
+            </p>
+          </div>
+
+          {mode === 'selectors' && (
+            <>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-500 mb-1">CSS Selectors (JSON)</label>
+                <textarea
+                  value={config.selectors ? JSON.stringify(config.selectors, null, 2) : ''}
+                  onChange={(e) => {
+                    try {
+                      onChange('selectors', JSON.parse(e.target.value));
+                    } catch {
+                      // Allow typing
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                  rows={4}
+                  placeholder='{"business_name": ".business-name", "phone": ".phone", "email": ".email"}'
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Container Selector</label>
+                <input
+                  type="text"
+                  value={(config.containerSelector as string) ?? ''}
+                  onChange={(e) => onChange('containerSelector', e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder=".listing-card"
+                />
+              </div>
+            </>
+          )}
+
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Extra Wait (ms)</label>
+            <input
+              type="number"
+              value={(config.waitMs as number) ?? 0}
+              onChange={(e) => onChange('waitMs', parseInt(e.target.value) || 0)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              min={0}
+              max={15000}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Max Pages</label>
+            <input
+              type="number"
+              value={(config.maxPages as number) ?? 1}
+              onChange={(e) => onChange('maxPages', parseInt(e.target.value) || 1)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              min={1}
+              max={5}
+            />
+          </div>
+
+          <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+            Renders the page with a real headless Chrome before extracting — use this instead of
+            Web Scrape when the site loads its content with JavaScript. Requires
+            PUPPETEER_EXECUTABLE_PATH to be configured on the server.
+          </div>
+        </>
+      );
+    }
   }
 }
 
@@ -367,13 +575,17 @@ export function ScraperConfigPage() {
   const deleteMutation = useDeleteScraperConfig();
   const triggerMutation = useTriggerScrape();
   const detectMutation = useDetectSelectors();
+  const { data: statsSummary } = useScraperStatsSummary(24);
+  const retryMutation = useRetryFailedScrape();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [showLogs, setShowLogs] = useState<string | null>(null);
+  const [showRunLeads, setShowRunLeads] = useState<string | null>(null);
   const [editConfig, setEditConfig] = useState<{ id: string; form: ConfigForm } | null>(null);
   const [form, setForm] = useState<ConfigForm>(emptyForm);
 
   const { data: logsData } = useScraperLogs(showLogs ?? '');
+  const { data: runLeadsData, isLoading: runLeadsLoading } = useScraperRunLeads(showRunLeads ?? '');
 
   function resetForm() {
     setForm(emptyForm);
@@ -460,6 +672,18 @@ export function ScraperConfigPage() {
     }
   }
 
+  function handleToggleActive(config: ScraperConfig) {
+    updateMutation.mutate(
+      { id: config.id, is_active: !config.is_active },
+      {
+        onSuccess: () =>
+          showToast(config.is_active ? 'Source paused.' : 'Source resumed.', 'success'),
+        onError: (error) =>
+          showToast(getApiErrorMessage(error, 'Failed to update source.'), 'error'),
+      },
+    );
+  }
+
   function handleDelete(config: ScraperConfig) {
     if (!window.confirm(`Delete "${config.name}"? This cannot be undone.`)) return;
     deleteMutation.mutate(config.id, {
@@ -480,8 +704,10 @@ export function ScraperConfigPage() {
             'success',
           );
         } else {
+          const duplicateNote =
+            res.recordsDuplicate > 0 ? `, ${res.recordsDuplicate} already existed` : '';
           showToast(
-            `Scrape complete: imported ${res.recordsImported} of ${res.recordsFound} found.`,
+            `Scrape complete: ${res.recordsImported} new lead${res.recordsImported === 1 ? '' : 's'}${duplicateNote} (${res.recordsFound} found).`,
             'success',
           );
         }
@@ -491,6 +717,22 @@ export function ScraperConfigPage() {
       onError: () => {
         showToast('Could not start the scrape. Please try again.', 'error');
       },
+    });
+  }
+
+  function handleRetryFailed(logId: string) {
+    retryMutation.mutate(logId, {
+      onSuccess: (res) => {
+        if (res.status === 'failed') {
+          showToast(res.errorMessage || 'Retry failed. Open the run logs for details.', 'error');
+        } else {
+          showToast(
+            `Retry complete: ${res.recordsImported} of ${res.recordsFound} previously-failed record(s) imported.`,
+            'success',
+          );
+        }
+      },
+      onError: () => showToast('Could not retry the failed records. Please try again.', 'error'),
     });
   }
 
@@ -527,10 +769,54 @@ export function ScraperConfigPage() {
         }
       />
 
+      {/* 24h Dashboard Summary */}
+      {statsSummary && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Runs (24h)
+            </p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900">{statsSummary.totalRuns}</p>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {statsSummary.activeSources} source{statsSummary.activeSources === 1 ? '' : 's'}
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              New Leads (24h)
+            </p>
+            <p className="mt-1 text-2xl font-semibold text-emerald-600">
+              {statsSummary.recordsImported}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">of {statsSummary.recordsFound} found</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Duplicates (24h)
+            </p>
+            <p className="mt-1 text-2xl font-semibold text-amber-600">
+              {statsSummary.recordsDuplicate}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">already existed</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Failed (24h)
+            </p>
+            <p
+              className={`mt-1 text-2xl font-semibold ${statsSummary.recordsFailed > 0 ? 'text-red-600' : 'text-slate-900'}`}
+            >
+              {statsSummary.recordsFailed}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">records</p>
+          </div>
+        </div>
+      )}
+
       {/* Add Form Modal */}
       {(showAddForm || editConfig) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-slate-900">
                 {editConfig ? 'Edit Source' : 'Add New Source'}
@@ -694,6 +980,15 @@ export function ScraperConfigPage() {
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sourceColors[config.source_type]}`}>
                         {sourceLabels[config.source_type]}
                       </span>
+                      {config.health === 'failing' && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600"
+                          title="The last 3 runs all failed — this source needs attention."
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          Failing
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-slate-400 mt-0.5">
                       {config.is_active ? 'Active' : 'Inactive'}
@@ -705,6 +1000,17 @@ export function ScraperConfigPage() {
                   {isAdmin && (
                     <>
                       <button
+                        onClick={() => handleToggleActive(config)}
+                        disabled={updateMutation.isPending && updateMutation.variables?.id === config.id}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+                          config.is_active
+                            ? 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                            : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                        }`}
+                      >
+                        {config.is_active ? 'Pause' : 'Resume'}
+                      </button>
+                      <button
                         onClick={() => startEdit(config)}
                         className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
                       >
@@ -712,10 +1018,10 @@ export function ScraperConfigPage() {
                       </button>
                       <button
                         onClick={() => handleRun(config)}
-                        disabled={triggerMutation.isPending}
+                        disabled={triggerMutation.isPending && triggerMutation.variables === config.id}
                         className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
-                        {triggerMutation.isPending ? (
+                        {triggerMutation.isPending && triggerMutation.variables === config.id ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
                           <Play className="h-3 w-3" />
@@ -763,17 +1069,131 @@ export function ScraperConfigPage() {
                               }`} />
                               <span className="text-slate-600">{new Date(log.created_at).toLocaleString()}</span>
                             </div>
-                            <div className="flex items-center gap-4 text-xs text-slate-500">
-                              <span>Found: {log.records_found}</span>
-                              <span>Imported: {log.records_imported}</span>
-                              <span className={log.records_failed > 0 ? 'text-red-500' : ''}>
-                                Failed: {log.records_failed}
+                            <div className="flex items-center gap-3 text-xs">
+                              <span
+                                className="text-slate-500"
+                                title="Total records the scraper found on the source, before dedup."
+                              >
+                                Found {log.records_found}
                               </span>
+                              <span
+                                className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700"
+                                title="New leads created in your CRM."
+                              >
+                                +{log.records_imported} new
+                              </span>
+                              {log.records_duplicate > 0 && (
+                                <span
+                                  className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700"
+                                  title="Already existed in your CRM (matched by email or phone) — skipped, not re-created."
+                                >
+                                  {log.records_duplicate} duplicate{log.records_duplicate === 1 ? '' : 's'}
+                                </span>
+                              )}
+                              {log.records_failed > 0 && (
+                                <span
+                                  className="rounded-full bg-red-50 px-2 py-0.5 font-medium text-red-600"
+                                  title="Records that errored while importing — see the error below."
+                                >
+                                  {log.records_failed} failed
+                                </span>
+                              )}
                             </div>
                           </div>
                           {log.status === 'failed' && log.error_message ? (
                             <p className="mt-1.5 pl-5 text-xs text-red-600">{log.error_message}</p>
                           ) : null}
+
+                          {(log.records_imported > 0 ||
+                            log.records_duplicate > 0 ||
+                            log.records_failed > 0) && (
+                            <div className="mt-1.5 pl-5 flex items-center gap-3 text-xs">
+                              {(log.records_imported > 0 || log.records_duplicate > 0) && (
+                                <button
+                                  onClick={() =>
+                                    setShowRunLeads(showRunLeads === log.id ? null : log.id)
+                                  }
+                                  className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+                                >
+                                  <Users className="h-3 w-3" />
+                                  {showRunLeads === log.id ? 'Hide leads' : 'View leads'}
+                                </button>
+                              )}
+                              {log.records_failed > 0 && (
+                                <button
+                                  onClick={() => handleRetryFailed(log.id)}
+                                  disabled={
+                                    retryMutation.isPending && retryMutation.variables === log.id
+                                  }
+                                  className="flex items-center gap-1 text-amber-600 hover:text-amber-700 disabled:opacity-50"
+                                >
+                                  {retryMutation.isPending && retryMutation.variables === log.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-3 w-3" />
+                                  )}
+                                  Retry failed
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {showRunLeads === log.id && (
+                            <div className="mt-2 pl-5 border-t border-slate-200 pt-2 space-y-3">
+                              {runLeadsLoading ? (
+                                <p className="text-xs text-slate-400">Loading leads...</p>
+                              ) : runLeadsData &&
+                                (runLeadsData.newLeads.length > 0 ||
+                                  runLeadsData.duplicateLeads.length > 0) ? (
+                                <>
+                                  {runLeadsData.newLeads.length > 0 && (
+                                    <div>
+                                      <p className="mb-1 text-xs font-medium text-emerald-700">
+                                        New ({runLeadsData.newLeads.length})
+                                      </p>
+                                      <ul className="space-y-1">
+                                        {runLeadsData.newLeads.map((lead) => (
+                                          <li
+                                            key={lead.id}
+                                            className="flex items-center justify-between text-xs"
+                                          >
+                                            <span className="text-slate-700">
+                                              {lead.business_name}
+                                            </span>
+                                            <span className="text-slate-400">{lead.email}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  {runLeadsData.duplicateLeads.length > 0 && (
+                                    <div>
+                                      <p className="mb-1 text-xs font-medium text-amber-700">
+                                        Already existed ({runLeadsData.duplicateLeads.length})
+                                      </p>
+                                      <ul className="space-y-1">
+                                        {runLeadsData.duplicateLeads.map((lead) => (
+                                          <li
+                                            key={lead.id}
+                                            className="flex items-center justify-between text-xs"
+                                          >
+                                            <span className="text-slate-700">
+                                              {lead.business_name}
+                                            </span>
+                                            <span className="text-slate-400">{lead.email}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <p className="text-xs text-slate-400">
+                                  No leads found for this run.
+                                </p>
+                              )}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

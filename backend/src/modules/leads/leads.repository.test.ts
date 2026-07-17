@@ -10,6 +10,8 @@ import {
   findLeads,
   findLeadById,
   findExistingForDedup,
+  findLeadsByScraperLogId,
+  findLeadsByIds,
   insertLead,
   updateLead,
   softDeleteLead,
@@ -50,6 +52,7 @@ const sampleRow: LeadRow = {
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   deleted_at: null,
+  scraper_log_id: null,
 };
 
 beforeEach(() => jest.clearAllMocks());
@@ -165,6 +168,40 @@ describe('findExistingForDedup', () => {
   it('returns null when no duplicate', async () => {
     mockQueryOne.mockResolvedValue(null);
     expect(await findExistingForDedup('a@b.c', '1', 'manual')).toBeNull();
+  });
+});
+
+describe('findLeadsByScraperLogId', () => {
+  it('returns leads created by the given run, newest first', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    const result = await findLeadsByScraperLogId('log-1');
+    expect(result).toEqual([sampleRow]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('scraper_log_id = $1'),
+      ['log-1'],
+    );
+  });
+
+  it('returns an empty array when the run created no leads', async () => {
+    mockQuery.mockResolvedValue([]);
+    expect(await findLeadsByScraperLogId('log-2')).toEqual([]);
+  });
+});
+
+describe('findLeadsByIds', () => {
+  it('returns leads matching the given IDs', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    const result = await findLeadsByIds(['lead-1']);
+    expect(result).toEqual([sampleRow]);
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('id = ANY($1::uuid[])'), [
+      ['lead-1'],
+    ]);
+  });
+
+  it('returns an empty array without querying when given no IDs', async () => {
+    const result = await findLeadsByIds([]);
+    expect(result).toEqual([]);
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
 

@@ -28,6 +28,8 @@ export interface LeadRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  /** The scraper run that created this lead, if any. Null for manual/other sources. */
+  scraper_log_id: string | null;
 }
 
 /** Lead as returned in API responses (google_rating coerced to number). */
@@ -77,6 +79,7 @@ export interface LeadInput {
   tags?: string[];
   notes?: string | null;
   deal_value?: number | null;
+  scraper_log_id?: string | null;
 }
 
 export interface LeadListFilters {
@@ -92,6 +95,10 @@ export interface LeadListFilters {
   pipeline_id?: string;
   search?: string;
   tags?: string[];
+  /** ISO-8601 string — only return leads with created_at >= this value */
+  created_after?: string;
+  /** When true, only return leads where classification IS NULL */
+  unclassified?: boolean;
 }
 
 export interface LeadListResult {

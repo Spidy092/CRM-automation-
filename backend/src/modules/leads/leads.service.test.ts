@@ -5,11 +5,15 @@ jest.mock('./leads.repository', () => ({
   findLeads: jest.fn(),
   findLeadById: jest.fn(),
   findExistingForDedup: jest.fn(),
+  findLeadsByScraperLogId: jest.fn(),
+  findLeadsByIds: jest.fn(),
   insertLead: jest.fn(),
   updateLead: jest.fn(),
   softDeleteLead: jest.fn(),
   updateLeadStatus: jest.fn(),
   runInTransaction: jest.fn(),
+  findActivityForLead: jest.fn(),
+  bulkClassifyLeads: jest.fn(),
 }));
 jest.mock('../activities/activities.repository', () => ({
   createOutboundActivityAndUpdateLead: jest.fn(),
@@ -26,6 +30,8 @@ jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 import {
   createLead,
   getLeadById,
+  getLeadsByScraperLogId,
+  getLeadsByIds,
   listLeads,
   logOutboundActivity,
   setLeadPaused,
@@ -40,6 +46,8 @@ import {
   findExistingForDedup,
   findLeadById,
   findLeads,
+  findLeadsByScraperLogId,
+  findLeadsByIds,
   insertLead,
   softDeleteLead,
   updateLead,
@@ -74,6 +82,7 @@ const baseRow: LeadRow = {
   created_at: '2026-06-19T00:00:00.000Z',
   updated_at: '2026-06-19T00:00:00.000Z',
   deleted_at: null,
+  scraper_log_id: null,
 };
 
 const validInput = {
@@ -190,6 +199,36 @@ describe('getLeadById', () => {
     (findLeadById as jest.Mock).mockResolvedValue(baseRow);
     const res = await getLeadById('lead-1', { id: 'mgr-1', role: 'manager' });
     expect(res.id).toBe('lead-1');
+  });
+});
+
+describe('getLeadsByScraperLogId', () => {
+  it('maps leads created by the given scraper run', async () => {
+    (findLeadsByScraperLogId as jest.Mock).mockResolvedValue([baseRow]);
+    const result = await getLeadsByScraperLogId('log-1');
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('lead-1');
+    expect(findLeadsByScraperLogId).toHaveBeenCalledWith('log-1');
+  });
+
+  it('returns an empty array when the run created no leads', async () => {
+    (findLeadsByScraperLogId as jest.Mock).mockResolvedValue([]);
+    expect(await getLeadsByScraperLogId('log-2')).toEqual([]);
+  });
+});
+
+describe('getLeadsByIds', () => {
+  it('maps leads matching the given IDs', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([baseRow]);
+    const result = await getLeadsByIds(['lead-1']);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('lead-1');
+    expect(findLeadsByIds).toHaveBeenCalledWith(['lead-1']);
+  });
+
+  it('returns an empty array when given no IDs', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([]);
+    expect(await getLeadsByIds([])).toEqual([]);
   });
 });
 

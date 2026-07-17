@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useInfiniteLeads, useDeleteLead, usePauseLead, useBulkPauseLeads } from '@/api/leads';
+import { useInfiniteLeads, useDeleteLead, usePauseLead, useBulkPauseLeads, useBulkClassifyLeads } from '@/api/leads';
 import { useCampaigns, useAddLeadsToCampaign } from '@/api/campaigns';
 import { usePipelines, useBulkMoveLead } from '@/api/pipelines';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,16 @@ import {
   PhoneCall,
   MessageSquareMore,
   Tag,
+  Sparkles,
 } from 'lucide-react';
+
+/** Returns an ISO-8601 UTC string for N days ago (start of that day). */
+function daysAgoIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
 
 const statusTones: Record<LeadStatus, StatusTone> = {
   active: 'green',
@@ -44,8 +53,11 @@ export function LeadsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [classificationFilter, setClassificationFilter] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'all' | 'uncontacted' | 'contacted' | 'hot' | 'replied'>('all');
+  const [dateRange, setDateRange] = useState<'' | 'today' | '7d' | '30d'>('');
+  const [pipelineFilter, setPipelineFilter] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'all' | 'uncontacted' | 'contacted' | 'hot' | 'replied' | 'new'>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkClassification, setBulkClassification] = useState<'hot' | 'warm' | 'cold' | ''>('');
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -54,6 +66,12 @@ export function LeadsPage() {
     return () => clearTimeout(handler);
   }, [search]);
 
+  const createdAfter =
+    dateRange === 'today' ? daysAgoIso(0)
+    : dateRange === '7d'  ? daysAgoIso(7)
+    : dateRange === '30d' ? daysAgoIso(30)
+    : undefined;
+
   const apiFilters = {
     search: debouncedSearch || undefined,
     status: statusFilter || undefined,
@@ -61,6 +79,9 @@ export function LeadsPage() {
     tags: activeTab === 'contacted' ? 'contacted'
          : activeTab === 'replied' ? 'replied'
          : undefined,
+    created_after: createdAfter,
+    unclassified: activeTab === 'new' ? true : undefined,
+    pipeline_id: pipelineFilter || undefined,
   };
 
   const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
@@ -68,6 +89,7 @@ export function LeadsPage() {
   const deleteLead = useDeleteLead();
   const pauseLead = usePauseLead();
   const bulkPause = useBulkPauseLeads();
+  const bulkClassify = useBulkClassifyLeads();
   const { data: campaigns } = useCampaigns();
   const addLeadsToCampaign = useAddLeadsToCampaign();
   const [selectedCampaign, setSelectedCampaign] = useState('');
@@ -82,6 +104,15 @@ export function LeadsPage() {
     ? leads.filter((l) => !l.tags?.includes('contacted'))
     : leads;
   const allSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selected.has(l.id));
+
+  function getPipelineInfo(stageId: string | null) {
+    if (!stageId || !pipelines) return null;
+    for (const p of pipelines) {
+      const stage = p.stages?.find((s) => s.id === stageId);
+      if (stage) return { pipelineName: p.name, stageName: stage.name };
+    }
+    return null;
+  }
 
   function toggleAll() {
     if (allSelected) {
@@ -159,6 +190,19 @@ export function LeadsPage() {
     }
   };
 
+  const handleBulkClassify = async () => {
+    if (!bulkClassification) return;
+    const ids = Array.from(selected);
+    try {
+      const result = await bulkClassify.mutateAsync({ ids, classification: bulkClassification });
+      showToast(`${result?.updated ?? ids.length} leads classified as ${bulkClassification}.`, 'success');
+      setSelected(new Set());
+      setBulkClassification('');
+    } catch {
+      showToast('Bulk classify failed.', 'error');
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -194,11 +238,12 @@ export function LeadsPage() {
           {/* ── Quick-view tabs ── */}
           <div className="flex gap-1 pb-3 border-b border-slate-100 mb-3 overflow-x-auto">
             {([
-              { key: 'all',         label: 'All Leads',    icon: <InboxIcon className="h-3.5 w-3.5" /> },
-              { key: 'uncontacted', label: 'Uncontacted',  icon: <PhoneCall className="h-3.5 w-3.5" /> },
-              { key: 'contacted',   label: 'Contacted',    icon: <MessageSquareMore className="h-3.5 w-3.5" /> },
-              { key: 'hot',         label: 'Hot 🔥',       icon: <Flame className="h-3.5 w-3.5" /> },
-              { key: 'replied',     label: 'Replied',      icon: <Tag className="h-3.5 w-3.5" /> },
+              { key: 'all',         label: 'All Leads',       icon: <InboxIcon className="h-3.5 w-3.5" /> },
+              { key: 'new',         label: 'New ✨',           icon: <Sparkles className="h-3.5 w-3.5" /> },
+              { key: 'uncontacted', label: 'Uncontacted',     icon: <PhoneCall className="h-3.5 w-3.5" /> },
+              { key: 'contacted',   label: 'Contacted',       icon: <MessageSquareMore className="h-3.5 w-3.5" /> },
+              { key: 'hot',         label: 'Hot 🔥',          icon: <Flame className="h-3.5 w-3.5" /> },
+              { key: 'replied',     label: 'Replied',         icon: <Tag className="h-3.5 w-3.5" /> },
             ] as { key: typeof activeTab; label: string; icon: React.ReactNode }[]).map((tab) => (
               <button
                 key={tab.key}
@@ -243,7 +288,7 @@ export function LeadsPage() {
               id="leads-classification-filter"
               value={classificationFilter}
               onChange={(e) => setClassificationFilter(e.target.value)}
-              disabled={activeTab === 'hot'}
+              disabled={activeTab === 'hot' || activeTab === 'new'}
               className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
             >
               <option value="">All Scores</option>
@@ -251,33 +296,76 @@ export function LeadsPage() {
               <option value="warm">🌡️ Warm</option>
               <option value="cold">❄️ Cold</option>
             </select>
+            <select
+              id="leads-pipeline-filter"
+              value={pipelineFilter}
+              onChange={(e) => setPipelineFilter(e.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm max-w-[150px] truncate"
+            >
+              <option value="">All Pipelines</option>
+              {pipelines?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            {/* Date-range quick filter */}
+            <select
+              id="leads-date-filter"
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value as typeof dateRange)}
+              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              title="Filter by date added"
+            >
+              <option value="">All Time</option>
+              <option value="today">📅 Today</option>
+              <option value="7d">📅 Last 7 days</option>
+              <option value="30d">📅 Last 30 days</option>
+            </select>
           </div>
 
           {/* Bulk action toolbar */}
           {selected.size > 0 && (
-            <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mt-3">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mt-3">
               <span className="text-sm font-medium text-blue-700">{selected.size} selected</span>
+
+              {/* Pause / Resume */}
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleBulkPause(true)}
-                  disabled={bulkPause.isPending}
-                >
-                  <Pause className="mr-1.5 h-3.5 w-3.5" />
-                  Pause all
+                <Button variant="outline" size="sm" onClick={() => handleBulkPause(true)} disabled={bulkPause.isPending}>
+                  <Pause className="mr-1.5 h-3.5 w-3.5" /> Pause all
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleBulkPause(false)}
-                  disabled={bulkPause.isPending}
-                >
-                  <Play className="mr-1.5 h-3.5 w-3.5" />
-                  Resume all
+                <Button variant="outline" size="sm" onClick={() => handleBulkPause(false)} disabled={bulkPause.isPending}>
+                  <Play className="mr-1.5 h-3.5 w-3.5" /> Resume all
                 </Button>
               </div>
-              <div className="flex items-center gap-2 ml-4 border-l border-blue-200 pl-4">
+
+              {/* ── Bulk Classify ── */}
+              <div className="flex items-center gap-2 border-l border-blue-200 pl-3">
+                <Sparkles className="h-3.5 w-3.5 text-blue-500" />
+                <select
+                  id="bulk-classify-select"
+                  className="h-8 rounded-md border border-input bg-background px-3 py-1 text-xs"
+                  value={bulkClassification}
+                  onChange={(e) => setBulkClassification(e.target.value as typeof bulkClassification)}
+                >
+                  <option value="">Set score…</option>
+                  <option value="hot">🔥 Hot</option>
+                  <option value="warm">🌡️ Warm</option>
+                  <option value="cold">❄️ Cold</option>
+                </select>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-8"
+                  disabled={!bulkClassification || bulkClassify.isPending}
+                  onClick={handleBulkClassify}
+                >
+                  Apply
+                </Button>
+              </div>
+
+              {/* Add to campaign */}
+              <div className="flex items-center gap-2 border-l border-blue-200 pl-3">
                 <select
                   className="h-8 rounded-md border border-input bg-background px-3 py-1 text-xs"
                   value={selectedCampaign}
@@ -285,22 +373,16 @@ export function LeadsPage() {
                 >
                   <option value="">Select campaign...</option>
                   {campaigns?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
+                    <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="h-8"
-                  disabled={!selectedCampaign || addLeadsToCampaign.isPending}
-                  onClick={handleAddToCampaign}
-                >
+                <Button variant="default" size="sm" className="h-8" disabled={!selectedCampaign || addLeadsToCampaign.isPending} onClick={handleAddToCampaign}>
                   Add
                 </Button>
               </div>
-              <div className="flex items-center gap-2 ml-4 border-l border-blue-200 pl-4">
+
+              {/* Move to pipeline */}
+              <div className="flex items-center gap-2 border-l border-blue-200 pl-3">
                 <select
                   className="h-8 rounded-md border border-input bg-background px-3 py-1 text-xs max-w-xs truncate"
                   value={selectedPipelineStage}
@@ -310,29 +392,17 @@ export function LeadsPage() {
                   {pipelines?.map((p) => (
                     <optgroup key={p.id} label={p.name}>
                       {p.stages?.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
+                        <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </optgroup>
                   ))}
                 </select>
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="h-8"
-                  disabled={!selectedPipelineStage || bulkMoveLead.isPending}
-                  onClick={handleMoveToPipeline}
-                >
+                <Button variant="default" size="sm" className="h-8" disabled={!selectedPipelineStage || bulkMoveLead.isPending} onClick={handleMoveToPipeline}>
                   Move
                 </Button>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="ml-auto h-7 w-7"
-                onClick={() => setSelected(new Set())}
-              >
+
+              <Button variant="ghost" size="icon" className="ml-auto h-7 w-7" onClick={() => setSelected(new Set())}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -382,6 +452,7 @@ export function LeadsPage() {
                     </th>
                     <th className="pb-3 text-left font-medium text-slate-500">Business</th>
                     <th className="pb-3 text-left font-medium text-slate-500">Contact</th>
+                    <th className="pb-3 text-left font-medium text-slate-500">Pipeline / Stage</th>
                     <th className="pb-3 text-left font-medium text-slate-500">Email</th>
                     <th className="pb-3 text-left font-medium text-slate-500">Phone</th>
                     <th className="pb-3 text-left font-medium text-slate-500">Status</th>
@@ -415,6 +486,22 @@ export function LeadsPage() {
                         <div className="text-xs text-slate-400">{lead.industry}</div>
                       </td>
                       <td className="py-3 text-slate-700">{lead.contact_name}</td>
+                      <td className="py-3 pr-2">
+                        {(() => {
+                          const info = getPipelineInfo(lead.pipeline_stage_id);
+                          if (!info) return <span className="text-slate-400 text-xs">—</span>;
+                          return (
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium text-slate-700 truncate max-w-[140px]" title={info.pipelineName}>
+                                {info.pipelineName}
+                              </span>
+                              <span className="text-[10px] text-slate-500 truncate max-w-[140px]" title={info.stageName}>
+                                {info.stageName}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="py-3 text-slate-700">{lead.email}</td>
                       <td className="py-3 text-slate-700">{lead.phone}</td>
                       <td className="py-3">

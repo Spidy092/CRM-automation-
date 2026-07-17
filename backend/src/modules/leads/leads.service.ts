@@ -10,11 +10,14 @@ import {
   findExistingForDedup,
   findLeadById,
   findLeads,
+  findLeadsByScraperLogId,
+  findLeadsByIds,
   insertLead,
   softDeleteLead,
   updateLead,
   updateLeadStatus,
   findActivityForLead,
+  bulkClassifyLeads as repoBulkClassify,
   type LeadActivityEntry,
 } from './leads.repository';
 import {
@@ -108,6 +111,22 @@ export async function getLeadById(id: string, actor: Actor): Promise<LeadRespons
   if (!lead) throw new AppError('Lead not found', 404);
   assertAccess(lead.assigned_to, actor, false);
   return toLeadResponse(lead);
+}
+
+/**
+ * Leads created by a specific scraper run. Read-only, so it does not apply
+ * the sales-rep assignment scope — a rep can see which leads a source
+ * produced even if some were assigned to other reps.
+ */
+export async function getLeadsByScraperLogId(scraperLogId: string): Promise<LeadResponse[]> {
+  const rows = await findLeadsByScraperLogId(scraperLogId);
+  return rows.map(toLeadResponse);
+}
+
+/** Leads matching the given IDs — used to resolve which existing leads a run's duplicates matched. */
+export async function getLeadsByIds(ids: string[]): Promise<LeadResponse[]> {
+  const rows = await findLeadsByIds(ids);
+  return rows.map(toLeadResponse);
 }
 
 export async function listLeads(
@@ -289,6 +308,27 @@ export async function logOutboundActivity(
     type,
     metadata,
   });
+}
+
+/**
+ * Bulk-set the classification on a list of leads.
+ * Admin / Manager only (enforced at route level; service writes the audit log).
+ */
+export async function bulkClassifyLeads(
+  ids: string[],
+  classification: import('../../shared/types').LeadClassification,
+  actor: Actor,
+): Promise<number> {
+  const updated = await repoBulkClassify(ids, classification);
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'lead.bulk_classified',
+    entityType: 'lead',
+    entityId: 'bulk',
+    newValue: { ids, classification, updated },
+    ipAddress: actor.ipAddress ?? null,
+  });
+  return updated;
 }
 
 export { clampLimit, decodeCursor };

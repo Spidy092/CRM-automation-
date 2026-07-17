@@ -12,7 +12,7 @@ import {
   type ChatVisibleRecord,
 } from '@/api/chat';
 import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
-import { useActionInboxItem } from '@/api/aiInbox';
+import { useInbox, useActionInboxItem } from '@/api/aiInbox';
 import { PlanPreview } from './PlanPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -330,21 +330,24 @@ export function buildPageContext(route: string, queryClient: QueryClient): ChatP
   }
 
 
-  if (route.startsWith('/ai-inbox')) {
-    pageTitle = 'AI Inbox';
-    availableActions.push('ai.inbox.action', 'ai.decision.recompute');
-    addCapabilities('Approve AI-proposed actions', 'Reject or snooze inbox items', 'Inspect linked agent action results');
-    queryClient.getQueriesData<InboxData>({ queryKey: ['ai-inbox'] }).forEach(([, data]) => {
-      data?.items?.forEach((item) => addInboxItem(records, item));
-    });
-  }
+  // AI Inbox and AI Decisions are handled entirely through this chat now (no
+  // dedicated nav pages), so their actions/records are always available,
+  // regardless of which route is currently open.
+  availableActions.push('ai.inbox.action', 'ai.decision.recompute', 'ab_test.list', 'ab_test.results');
+  addCapabilities(
+    'Approve, reject, or snooze AI-proposed actions right here in chat',
+    'Audit AI decisions — filter by type, inspect model, confidence, and approval requirement',
+    'List A/B test variants for a template and report on statistical significance',
+  );
+  queryClient.getQueriesData<InboxData>({ queryKey: ['ai-inbox'] }).forEach(([, data]) => {
+    data?.items?.forEach((item) => addInboxItem(records, item));
+  });
+  queryClient.getQueriesData<DecisionsData>({ queryKey: ['ai-decisions'] }).forEach(([, data]) => {
+    data?.items?.forEach((decision) => addAiDecision(records, decision));
+  });
 
   if (route.startsWith('/admin/ai-decisions')) {
     pageTitle = 'AI Decisions';
-    addCapabilities('Audit AI decisions', 'Filter by decision type', 'Inspect model, confidence, and approval requirement');
-    queryClient.getQueriesData<DecisionsData>({ queryKey: ['ai-decisions'] }).forEach(([, data]) => {
-      data?.items?.forEach((decision) => addAiDecision(records, decision));
-    });
   }
 
 
@@ -363,15 +366,121 @@ export function buildPageContext(route: string, queryClient: QueryClient): ChatP
   }
 
   if (route.startsWith('/reports')) {
-    pageTitle = 'Reports';
-    availableActions.push('report.dashboard');
-    addCapabilities('Show dashboard metrics', 'Review lead generation, outreach, pipeline, and sales rep reports', 'Export reports');
+    pageTitle = 'Analytics & Reports';
+    availableActions.push('report.dashboard', 'report.export');
+    addCapabilities(
+      'Show A-to-Z CRM analytics: leads, outreach, pipeline, reps, campaigns, integrations',
+      'Answer questions about top lead sources, best campaigns, top reps, outreach rates, pipeline conversion',
+      'Export any report as CSV',
+    );
+
+    // ── Dashboard KPIs ──────────────────────────────────────────────────
     const metrics = queryClient.getQueryData<DashboardMetrics>(['reports', 'dashboard']);
     if (metrics) {
-      pageMetrics.totalLeads = metrics.totalLeads;
-      pageMetrics.qualifiedLeads = metrics.qualifiedLeads;
-      pageMetrics.totalCampaigns = metrics.totalCampaigns;
-      pageMetrics.activeOutreach = metrics.activeOutreach;
+      pageMetrics.totalLeads        = metrics.totalLeads;
+      pageMetrics.qualifiedLeads    = metrics.qualifiedLeads;
+      pageMetrics.totalCampaigns    = metrics.totalCampaigns;
+      pageMetrics.activeOutreach    = metrics.activeOutreach;
+      pageMetrics.pipelineConvRate  = `${metrics.pipelineConversion.toFixed(1)}%`;
+    }
+
+    // ── Lead generation ─────────────────────────────────────────────────
+    type LeadRow = { date: string; source: string; count: number; qualifiedCount?: number; conversionRate?: number };
+    const leadPages = queryClient.getQueriesData<{ items?: LeadRow[] }>({ queryKey: ['reports', 'leads'] });
+    const leadItems: LeadRow[] = [];
+    leadPages.forEach(([, d]) => d?.items?.forEach((r) => leadItems.push(r)));
+    if (leadItems.length) {
+      const srcMap: Record<string, number> = {};
+      leadItems.forEach((r) => { srcMap[r.source ?? 'Unknown'] = (srcMap[r.source ?? 'Unknown'] ?? 0) + Number(r.count); });
+      const topSrc = Object.entries(srcMap).sort((a, b) => b[1] - a[1])[0];
+      pageMetrics.topLeadSource      = topSrc ? topSrc[0] : null;
+      pageMetrics.topLeadSourceCount = topSrc ? topSrc[1] : null;
+      pageMetrics.leadSourceBreakdown = Object.entries(srcMap).map(([s, c]) => `${s}:${c}`).join(', ');
+    }
+
+    // ── Outreach ────────────────────────────────────────────────────────
+    type OutRow = { date: string; channel: string; sent: number; delivered: number; replied: number; failed: number; responseRate?: number };
+    const outPages = queryClient.getQueriesData<{ items?: OutRow[] }>({ queryKey: ['reports', 'outreach'] });
+    const outItems: OutRow[] = [];
+    outPages.forEach(([, d]) => d?.items?.forEach((r) => outItems.push(r)));
+    if (outItems.length) {
+      const totalSent    = outItems.reduce((s, r) => s + r.sent, 0);
+      const totalReplied = outItems.reduce((s, r) => s + r.replied, 0);
+      const totalFailed  = outItems.reduce((s, r) => s + r.failed, 0);
+      pageMetrics.outreachTotalSent    = totalSent;
+      pageMetrics.outreachTotalReplied = totalReplied;
+      pageMetrics.outreachTotalFailed  = totalFailed;
+      pageMetrics.outreachReplyRate    = totalSent > 0 ? `${((totalReplied / totalSent) * 100).toFixed(1)}%` : '0%';
+      const chMap: Record<string, { sent: number; replied: number }> = {};
+      outItems.forEach((r) => {
+        if (!chMap[r.channel]) chMap[r.channel] = { sent: 0, replied: 0 };
+        chMap[r.channel].sent    += r.sent;
+        chMap[r.channel].replied += r.replied;
+      });
+      pageMetrics.outreachByChannel = Object.entries(chMap)
+        .map(([ch, v]) => `${ch} sent:${v.sent} replied:${v.replied}`)
+        .join(' | ');
+    }
+
+    // ── Pipeline ────────────────────────────────────────────────────────
+    type PipeRow = { stageName: string; leadCount: number; conversionRate: number; avgDays: number; dropOffRate?: number };
+    const pipePages = queryClient.getQueriesData<{ items?: PipeRow[] }>({ queryKey: ['reports', 'pipeline'] });
+    const pipeItems: PipeRow[] = [];
+    pipePages.forEach(([, d]) => d?.items?.forEach((r) => pipeItems.push(r)));
+    if (pipeItems.length) {
+      const topStage = [...pipeItems].sort((a, b) => b.leadCount - a.leadCount)[0];
+      const worstDrop = [...pipeItems].sort((a, b) => (b.dropOffRate ?? 0) - (a.dropOffRate ?? 0))[0];
+      pageMetrics.pipelineStageSummary  = pipeItems.map((r) => `${r.stageName}(${r.leadCount} leads, ${r.conversionRate.toFixed(1)}% conv)`).join(' → ');
+      pageMetrics.topPipelineStage      = topStage?.stageName ?? null;
+      pageMetrics.worstDropOffStage     = worstDrop?.stageName ?? null;
+      pageMetrics.worstDropOffRate      = worstDrop?.dropOffRate != null ? `${worstDrop.dropOffRate.toFixed(1)}%` : null;
+    }
+
+    // ── Sales reps ──────────────────────────────────────────────────────
+    type RepRow = { repId: string; repName: string; leadsAssigned: number; leadsConverted: number; conversionRate: number; avgResponseTime: number; dealsClosed?: number; revenueEstimate?: number };
+    const repPages = queryClient.getQueriesData<{ items?: RepRow[] }>({ queryKey: ['reports', 'reps'] });
+    const repItems: RepRow[] = [];
+    repPages.forEach(([, d]) => d?.items?.forEach((r) => repItems.push(r)));
+    if (repItems.length) {
+      const topRep = [...repItems].sort((a, b) => b.leadsConverted - a.leadsConverted)[0];
+      pageMetrics.topRepName          = topRep?.repName ?? null;
+      pageMetrics.topRepConverted     = topRep?.leadsConverted ?? null;
+      pageMetrics.topRepConvRate      = topRep ? `${topRep.conversionRate.toFixed(1)}%` : null;
+      pageMetrics.repLeaderboard      = repItems.slice(0, 5).map((r) => `${r.repName}:${r.leadsConverted}won`).join(', ');
+    }
+
+    // ── Campaigns ───────────────────────────────────────────────────────
+    type CampRow = { campaignId: string; campaignName: string; leadsTargeted: number; leadsConverted: number; conversionRate: number; channel: string };
+    const campPages = queryClient.getQueriesData<{ data?: CampRow[] }>({ queryKey: ['reports', 'campaigns'] });
+    const campItems: CampRow[] = [];
+    campPages.forEach(([, d]) => d?.data?.forEach((r) => campItems.push(r)));
+    if (campItems.length) {
+      const campMap: Record<string, CampRow> = {};
+      campItems.forEach((r) => {
+        if (!campMap[r.campaignId]) campMap[r.campaignId] = { ...r };
+        else { campMap[r.campaignId].leadsTargeted += r.leadsTargeted; campMap[r.campaignId].leadsConverted += r.leadsConverted; }
+      });
+      const merged = Object.values(campMap);
+      const topCamp = [...merged].sort((a, b) => b.leadsConverted - a.leadsConverted)[0];
+      pageMetrics.topCampaignName      = topCamp?.campaignName ?? null;
+      pageMetrics.topCampaignConverted = topCamp?.leadsConverted ?? null;
+      pageMetrics.campaignSummary      = merged.slice(0, 5).map((c) => `${c.campaignName}:${c.leadsConverted}/${c.leadsTargeted}`).join(', ');
+    }
+
+    // ── Integrations ────────────────────────────────────────────────────
+    type IntRow = { name: string; displayName?: string; status: string; enabled: boolean; successRate: number };
+    const intPages = queryClient.getQueriesData<{ data?: IntRow[] }>({ queryKey: ['reports', 'integrations'] });
+    const intItems: IntRow[] = [];
+    intPages.forEach(([, d]) => d?.data?.forEach((r) => intItems.push(r)));
+    if (intItems.length) {
+      const failing   = intItems.filter((i) => i.status === 'failing');
+      const degraded  = intItems.filter((i) => i.status === 'degraded');
+      const healthy   = intItems.filter((i) => i.status === 'healthy');
+      pageMetrics.integrationsHealthy  = healthy.length;
+      pageMetrics.integrationsFailing  = failing.length;
+      pageMetrics.integrationsDegraded = degraded.length;
+      if (failing.length)  pageMetrics.failingIntegrations  = failing.map((i) => i.displayName ?? i.name).join(', ');
+      if (degraded.length) pageMetrics.degradedIntegrations = degraded.map((i) => i.displayName ?? i.name).join(', ');
     }
   }
 
@@ -561,8 +670,8 @@ function ChatApprovalCard({
   if (!inboxItemId) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-        <span className="font-medium">{actionName}</span> needs approval. Open the AI Inbox to
-        review it.
+        <span className="font-medium">{actionName}</span> needs approval. It will appear below as
+        soon as it&apos;s ready to review.
       </div>
     );
   }
@@ -640,6 +749,92 @@ function ChatApprovalCard({
   );
 }
 
+function PendingApprovalItem({ item }: { item: AiInboxItem }) {
+  const actionInboxItem = useActionInboxItem();
+  const [resolution, setResolution] = useState<'approved' | 'rejected' | null>(null);
+
+  if (resolution) {
+    return (
+      <div
+        className={cn(
+          'flex items-center gap-2 rounded-md border px-3 py-2 text-sm',
+          resolution === 'approved'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            : 'border-slate-200 bg-slate-50 text-slate-600',
+        )}
+      >
+        {resolution === 'approved' ? (
+          <Check className="h-4 w-4 shrink-0" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0" />
+        )}
+        <span>{item.title} {resolution === 'approved' ? 'approved.' : 'rejected.'}</span>
+      </div>
+    );
+  }
+
+  const act = (action: 'approve' | 'reject') => {
+    actionInboxItem.mutate(
+      { id: item.id, action },
+      { onSuccess: () => setResolution(action === 'approve' ? 'approved' : 'rejected') },
+    );
+  };
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      <p className="font-medium">{item.title}</p>
+      {item.summary && <p className="mt-0.5 text-xs text-amber-700">{item.summary}</p>}
+      <div className="mt-2 flex gap-2">
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 gap-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-700"
+          disabled={actionInboxItem.isPending}
+          onClick={() => act('approve')}
+        >
+          {actionInboxItem.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Check className="h-3.5 w-3.5" />
+          )}
+          Approve
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 px-2 text-xs"
+          disabled={actionInboxItem.isPending}
+          onClick={() => act('reject')}
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          Reject
+        </Button>
+      </div>
+      {actionInboxItem.isError && (
+        <p className="mt-1 text-xs text-red-700">Could not update the approval. Try again.</p>
+      )}
+    </div>
+  );
+}
+
+/** Surfaces pending AI Inbox items directly in Copilot chat, on every page —
+ * there is no dedicated AI Inbox nav page, so this is the only place a rep
+ * sees and actions them. */
+function PendingApprovalsPanel({ items }: { items: AiInboxItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        Pending approvals ({items.length})
+      </p>
+      {items.map((item) => (
+        <PendingApprovalItem key={item.id} item={item} />
+      ))}
+    </div>
+  );
+}
+
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
@@ -650,6 +845,11 @@ export function ChatWidget() {
   const history = useChatHistory(conversationId);
   const sendMessage = useSendChatMessage();
   const turns = history.data ?? [];
+
+  // Polled regardless of route — this is the only surface for AI Inbox
+  // approvals now that there's no dedicated nav page for it.
+  const pendingInbox = useInbox({ status: 'pending', limit: 5 });
+  const pendingItems = pendingInbox.data?.items ?? [];
 
   const responsePlanId = (lastResponse?.action?.result as { planId?: string } | undefined)?.planId;
   const historyPlanId = extractLastPlanId(turns);
@@ -700,9 +900,13 @@ export function ChatWidget() {
             <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3">
               {turns.length === 0 && !lastResponse && (
                 <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-                  Ask about leads, templates, campaigns, pipelines, or reports. When Copilot needs permission, you can approve it here.
+                  Ask about leads, templates, campaigns, pipelines, reports, or A/B tests. Pending
+                  AI approvals show up right here for you to approve or reject.
                 </div>
               )}
+              <PendingApprovalsPanel
+                items={pendingItems.filter((item) => item.id !== lastResponse?.action?.inboxItemId)}
+              />
               {turns.map((turn, index) => (
                 <div
                   key={`${turn.createdAt}-${index}`}
@@ -761,15 +965,26 @@ export function ChatWidget() {
         </section>
       )}
 
-      <Button
-        type="button"
-        className="h-12 w-12 rounded-full bg-slate-950 shadow-lg hover:bg-slate-800"
-        size="icon"
-        onClick={() => setOpen((value) => !value)}
-        aria-label="Open copilot"
-      >
-        <MessageSquare className="h-5 w-5" />
-      </Button>
+      <div className="relative">
+        <Button
+          type="button"
+          className="h-12 w-12 rounded-full bg-slate-950 shadow-lg hover:bg-slate-800"
+          size="icon"
+          onClick={() => setOpen((value) => !value)}
+          aria-label={
+            pendingItems.length > 0
+              ? `Open copilot (${pendingItems.length} pending approval${pendingItems.length === 1 ? '' : 's'})`
+              : 'Open copilot'
+          }
+        >
+          <MessageSquare className="h-5 w-5" />
+        </Button>
+        {!open && pendingItems.length > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white shadow">
+            {pendingItems.length}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

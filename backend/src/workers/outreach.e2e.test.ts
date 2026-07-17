@@ -61,8 +61,7 @@ jest.mock('../modules/outreach/outreach.prompt', () => ({
 
 import { findSequenceById, findLogsByLead } from '../modules/outreach/outreach.repository';
 import { createLog, updateLogStatus, createTask } from '../modules/outreach/outreach.service';
-import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
-import { Queue } from 'bullmq';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
@@ -70,7 +69,6 @@ import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import {
   enqueueOutreachDispatch,
   enqueueOutreachFollowUp,
-  enqueueOutreachStopCheck,
 } from './queue';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────

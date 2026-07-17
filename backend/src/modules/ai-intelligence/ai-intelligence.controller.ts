@@ -3,8 +3,10 @@ import {
   leadIdParamSchema,
   leadDecisionsQuerySchema,
   decisionLogQuerySchema,
+  leadResearchTriggerBodySchema,
 } from './ai-intelligence.schema';
 import { getAiProfile, getLeadDecisions, getDecisions } from './ai-intelligence.service';
+import { enqueueAiResearch } from '../../workers/queue';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { successResponse } from '../../shared/utils/response';
 
@@ -22,6 +24,27 @@ export async function getLeadProfile(
     if (!profile) throw new AppError(`AI profile not found for lead: ${params.data.leadId}`, 404);
 
     res.json(successResponse(profile));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** POST /ai-intelligence/leads/:leadId/research — manually (re-)trigger AI research */
+export async function triggerLeadResearch(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = leadIdParamSchema.safeParse(req.params);
+    if (!params.success) throw new AppError(params.error.message, 400);
+
+    const body = leadResearchTriggerBodySchema.safeParse(req.body ?? {});
+    if (!body.success) throw new AppError(body.error.message, 400);
+
+    await enqueueAiResearch({ leadId: params.data.leadId, force: body.data.force });
+
+    res.status(202).json(successResponse({ enqueued: true, leadId: params.data.leadId }));
   } catch (err) {
     next(err);
   }

@@ -42,6 +42,7 @@ import aiCampaignBrainRoutes from './modules/ai-campaign-brain/ai-campaign-brain
 import aiReplyRoutes from './modules/ai-reply/ai-reply.routes';
 import agentRoutes from './modules/agent/agent.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import { mcpRoutes } from './modules/mcp/mcp.routes';
 import { planRoutes } from './modules/agent-planner';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
 import { trackingRoutes } from './modules/tracking/tracking.routes';
@@ -51,6 +52,7 @@ import { templateAbRoutes } from './modules/ab-testing/template-ab.routes';
 import { schedulingRoutes } from './modules/scheduling/scheduling.routes';
 
 const app: Application = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT ?? 3000;
 
 // ── Global Process Error Listeners (Sentry) ─────────────────────────────────
@@ -153,6 +155,7 @@ app.use('/api/v1/ai-reply', authenticate, aiReplyRoutes);
 app.use('/api/v1/agent', authenticatedLimiter, agentRoutes);
 app.use('/api/v1/chat', authenticatedLimiter, chatRoutes);
 app.use('/api/v1/chat/plans', authenticatedLimiter, planRoutes);
+app.use('/api/v1/mcp', mcpRoutes);
 app.use('/api/v1/forms', formsRoutes);
 app.use('/api/v1/ab-testing', abTestRoutes);
 app.use('/api/v1/template-ab', templateAbRoutes);

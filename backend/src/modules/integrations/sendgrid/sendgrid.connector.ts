@@ -51,6 +51,8 @@ export interface SendEmailInput {
   subject: string;
   htmlBody: string;
   textBody?: string;
+  fromEmail?: string;
+  fromName?: string;
   attachments?: SendEmailAttachment[];
 }
 
@@ -117,7 +119,7 @@ export async function sendEmail(input: SendEmailInput): Promise<ConnectorResult<
 
   const body = {
     personalizations: [{ to: [{ email: input.to }] }],
-    from: { email: creds.fromEmail, name: creds.fromName },
+    from: { email: input.fromEmail ?? creds.fromEmail, name: input.fromName ?? creds.fromName },
     subject: input.subject,
     content: [
       { type: 'text/plain', value: input.textBody ?? stripHtml(input.htmlBody) },

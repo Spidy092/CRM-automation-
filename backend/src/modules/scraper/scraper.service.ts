@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { fetchFormLeads } from '../integrations/facebook/facebook.connector';
+import { loadCredentials as loadApifyCredentials, runActorSync } from '../integrations/apify/apify.connector';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
@@ -10,21 +11,26 @@ import { getAiConfig } from '../ai-settings/ai-settings.service';
 import {
   ScraperConfigInput,
   ScraperConfigRow,
+  ScraperConfigWithHealth,
   ScraperConfigUpdate,
   ScraperActor,
   ScraperRunResult,
+  ScraperStatsSummary,
+  FailedScrapeItem,
 } from './scraper.types';
 import {
   findScraperConfigById,
-  findScraperConfigs,
+  findScraperConfigsWithHealth,
   insertScraperConfig,
   updateScraperConfig,
   deleteScraperConfig,
   insertScraperLog,
   updateScraperLog,
+  findScraperLogById,
   findScraperLogsByConfig,
   countScraperLogsByConfig,
   updateScraperConfigLastRun,
+  sumScraperLogsSince,
 } from './scraper.repository';
 
 interface ScrapedLead {
@@ -50,12 +56,23 @@ interface ScrapedLead {
  * phone + platform). Format: +0{10 digits} — passes E.164 validation but is
  * clearly synthetic. Should be updated when real contact info is collected.
  */
+/**
+ * Deterministic 32-bit hash (djb2-style) over the FULL seed string, so any
+ * difference anywhere in the seed changes the output. The previous approach
+ * concatenated char codes and took only the last 10 characters, which meant
+ * seeds sharing a common suffix (e.g. two emails at the same domain, like
+ * "sales@acme.com" / "support@acme.com") collided on an identical fake phone.
+ */
+function hashSeed(seed: string): number {
+  let hash = 5381;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash * 33) ^ seed.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
 function generatePlaceholderPhone(seed: string): string {
-  const digits = seed
-    .split('')
-    .reduce((acc, c) => acc + c.charCodeAt(0).toString(), '')
-    .slice(-10)
-    .padStart(10, '0');
+  const digits = String(hashSeed(seed)).padStart(10, '0');
   return `+0${digits}`;
 }
 
@@ -103,8 +120,8 @@ function assertEnvVarConfigured(ref: unknown, label: string): string {
 
 // ── CRUD ───────────────────────────────────────────────────────────────────
 
-export async function listConfigs(): Promise<ScraperConfigRow[]> {
-  return findScraperConfigs();
+export async function listConfigs(): Promise<ScraperConfigWithHealth[]> {
+  return findScraperConfigsWithHealth();
 }
 
 export async function getConfigById(id: string): Promise<ScraperConfigRow> {
@@ -241,6 +258,68 @@ export async function getLogsByConfig(
 
 // ── Scrape Execution ───────────────────────────────────────────────────────
 
+/** Structural shape shared by every executeScraper branch and importLeads. */
+interface ScrapeStats {
+  recordsFound: number;
+  recordsImported: number;
+  recordsDuplicate: number;
+  recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
+  rawResponse?: Record<string, unknown>;
+}
+
+/**
+ * Persists a successful (or partially-failed) run's stats to its log row,
+ * bumps the config's last_run_at, and builds the ScraperRunResult. Shared by
+ * runScrape and retryFailedItems so both write logs the same way.
+ */
+async function finalizeSuccessfulRun(
+  logId: string,
+  configId: string,
+  sourceType: string,
+  result: ScrapeStats,
+): Promise<ScraperRunResult> {
+  const status =
+    result.recordsFailed > 0 && result.recordsFound > 0
+      ? 'partially_completed'
+      : result.recordsFailed > 0
+        ? 'failed'
+        : 'completed';
+
+  await updateScraperLog(logId, {
+    status,
+    completed_at: new Date().toISOString(),
+    records_found: result.recordsFound,
+    records_imported: result.recordsImported,
+    records_duplicate: result.recordsDuplicate,
+    records_failed: result.recordsFailed,
+    raw_response: result.rawResponse,
+    failed_items: result.failedItems,
+    duplicate_lead_ids: result.duplicateLeadIds,
+  });
+
+  await updateScraperConfigLastRun(configId, new Date().toISOString());
+
+  logger.info('scraper run completed', {
+    configId,
+    source_type: sourceType,
+    recordsFound: result.recordsFound,
+    recordsImported: result.recordsImported,
+    status,
+  });
+
+  return {
+    logId,
+    recordsFound: result.recordsFound,
+    recordsImported: result.recordsImported,
+    recordsDuplicate: result.recordsDuplicate,
+    recordsFailed: result.recordsFailed,
+    status,
+    errorMessage: null,
+  };
+}
+
 export async function runScrape(configId: string, _actor: ScraperActor): Promise<ScraperRunResult> {
   const config = await getConfigById(configId);
   if (!config.is_active) {
@@ -251,40 +330,7 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
 
   try {
     const result = await executeScraper(config, log.id);
-    const status =
-      result.recordsFailed > 0 && result.recordsFound > 0
-        ? 'partially_completed'
-        : result.recordsFailed > 0
-          ? 'failed'
-          : 'completed';
-
-    await updateScraperLog(log.id, {
-      status,
-      completed_at: new Date().toISOString(),
-      records_found: result.recordsFound,
-      records_imported: result.recordsImported,
-      records_failed: result.recordsFailed,
-      raw_response: result.rawResponse,
-    });
-
-    await updateScraperConfigLastRun(configId, new Date().toISOString());
-
-    logger.info('scraper run completed', {
-      configId,
-      source_type: config.source_type,
-      recordsFound: result.recordsFound,
-      recordsImported: result.recordsImported,
-      status,
-    });
-
-    return {
-      logId: log.id,
-      recordsFound: result.recordsFound,
-      recordsImported: result.recordsImported,
-      recordsFailed: result.recordsFailed,
-      status,
-      errorMessage: null,
-    };
+    return await finalizeSuccessfulRun(log.id, configId, config.source_type, result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     await updateScraperLog(log.id, {
@@ -303,6 +349,7 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
       logId: log.id,
       recordsFound: 0,
       recordsImported: 0,
+      recordsDuplicate: 0,
       recordsFailed: 0,
       status: 'failed',
       // Surface the reason to the caller (HTTP layer) so the UI can show it,
@@ -312,13 +359,85 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
   }
 }
 
+/** Leads created by a specific scraper run — powers the "view leads" drilldown. */
+export async function getLeadsForRun(logId: string): Promise<{
+  newLeads: import('../leads/leads.types').LeadResponse[];
+  duplicateLeads: import('../leads/leads.types').LeadResponse[];
+}> {
+  const log = await findScraperLogById(logId);
+  if (!log) throw new AppError('Scraper log not found', 404);
+  const { getLeadsByScraperLogId, getLeadsByIds } = await import('../leads/leads.service');
+  const [newLeads, duplicateLeads] = await Promise.all([
+    getLeadsByScraperLogId(logId),
+    getLeadsByIds(log.duplicate_lead_ids),
+  ]);
+  return { newLeads, duplicateLeads };
+}
+
+/**
+ * Re-attempts just the records that failed on a prior run, without
+ * re-scraping the whole source. Creates a new log row (its own run history
+ * entry) rather than mutating the original, so the original run's record
+ * stays accurate.
+ */
+export async function retryFailedItems(
+  logId: string,
+  _actor: ScraperActor,
+): Promise<ScraperRunResult> {
+  const log = await findScraperLogById(logId);
+  if (!log) throw new AppError('Scraper log not found', 404);
+  if (!log.failed_items || log.failed_items.length === 0) {
+    throw new AppError('This run has no failed items to retry', 400);
+  }
+
+  const config = await getConfigById(log.config_id);
+  const retryLog = await insertScraperLog({ config_id: log.config_id, status: 'running' });
+
+  try {
+    const leadsToRetry = log.failed_items.map((item) => item.lead as unknown as ScrapedLead);
+    const result = await importLeads(leadsToRetry, retryLog.id);
+    return await finalizeSuccessfulRun(retryLog.id, log.config_id, config.source_type, result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    await updateScraperLog(retryLog.id, {
+      status: 'failed',
+      completed_at: new Date().toISOString(),
+      error_message: message,
+    });
+    logger.error('scraper retry-failed run failed', {
+      logId,
+      configId: log.config_id,
+      error: message,
+    });
+    return {
+      logId: retryLog.id,
+      recordsFound: 0,
+      recordsImported: 0,
+      recordsDuplicate: 0,
+      recordsFailed: 0,
+      status: 'failed',
+      errorMessage: message,
+    };
+  }
+}
+
+/** Aggregate found/new/duplicate/failed counts across all sources in the last N hours. */
+export async function getStatsSummary(hours = 24): Promise<ScraperStatsSummary> {
+  const sinceIso = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const agg = await sumScraperLogsSince(sinceIso);
+  return { windowHours: hours, ...agg };
+}
+
 async function executeScraper(
   config: ScraperConfigRow,
   logId: string,
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   switch (config.source_type) {
@@ -336,6 +455,10 @@ async function executeScraper(
       return scrapeGoogleAdsLeadForms(config.config, logId);
     case 'linkedin_lead_forms':
       return scrapeLinkedInLeadForms(config.config, logId);
+    case 'apify_actor':
+      return scrapeApifyActor(config.config, logId);
+    case 'browser_scrape':
+      return scrapeBrowser(config.config, logId);
     default:
       throw new AppError(`Unknown scraper source type: ${String(config.source_type)}`, 500);
   }
@@ -419,7 +542,10 @@ async function scrapeGooglePlaces(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   logger.info('scraper google_places: starting API call');
@@ -617,7 +743,10 @@ async function scrapeMetaLeadForms(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   logger.info('scraper meta_lead_forms: starting Graph API lead pull');
@@ -659,7 +788,10 @@ async function scrapeGoogleAdsLeadForms(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   const webhookSecretRef =
@@ -668,7 +800,10 @@ async function scrapeGoogleAdsLeadForms(
   return {
     recordsFound: 0,
     recordsImported: 0,
+    recordsDuplicate: 0,
     recordsFailed: 0,
+    failedItems: [],
+    duplicateLeadIds: [],
     rawResponse: {
       mode: 'webhook_only',
       provider: 'google_ads',
@@ -684,7 +819,10 @@ async function scrapeLinkedInLeadForms(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   const mode = _config.mode === 'manual_import' ? 'manual_import' : 'api';
@@ -692,7 +830,10 @@ async function scrapeLinkedInLeadForms(
     return {
       recordsFound: 0,
       recordsImported: 0,
+      recordsDuplicate: 0,
       recordsFailed: 0,
+      failedItems: [],
+      duplicateLeadIds: [],
       rawResponse: {
         mode,
         provider: 'linkedin',
@@ -708,6 +849,285 @@ async function scrapeLinkedInLeadForms(
   );
 }
 
+// ── Apify Actor Scraper ────────────────────────────────────────────────────
+
+/**
+ * Apify dataset items have no fixed schema — it depends entirely on which
+ * Actor produced them (Google Maps Scraper, Instagram Profile Scraper, etc.).
+ * This pulls out common lead-shaped fields by trying several likely key names
+ * per field, so the most popular Apify Store actors map cleanly without
+ * requiring per-actor configuration. Fields with no match are left undefined.
+ */
+function getApifyField(item: Record<string, unknown>, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = item[name];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number') return String(value);
+  }
+  return undefined;
+}
+
+function leadFromApifyItem(item: Record<string, unknown>, sourcePlatform: string): ScrapedLead {
+  const businessName =
+    getApifyField(item, ['title', 'name', 'businessName', 'companyName', 'fullName', 'username']) ||
+    'Unknown Business';
+  const website = getApifyField(item, ['website', 'url', 'websiteUrl', 'externalUrl']) ?? null;
+  const location =
+    getApifyField(item, ['address', 'location', 'formattedAddress', 'city']) ?? '';
+  const ratingRaw = item.totalScore ?? item.rating ?? item.averageRating;
+  const reviewsRaw = item.reviewsCount ?? item.userRatingsTotal ?? item.reviewCount;
+
+  return {
+    business_name: businessName,
+    contact_name: getApifyField(item, ['contactName', 'ownerName', 'fullName']),
+    phone: getApifyField(item, ['phone', 'phoneNumber', 'phoneUnformatted']),
+    email: getApifyField(item, ['email', 'emailAddress']),
+    website,
+    industry: getApifyField(item, ['category', 'categoryName', 'industry']),
+    location,
+    google_rating: typeof ratingRaw === 'number' ? ratingRaw : null,
+    review_count: typeof reviewsRaw === 'number' ? reviewsRaw : null,
+    source_platform: sourcePlatform,
+  };
+}
+
+/**
+ * Runs a configured Apify Actor synchronously and imports its dataset items
+ * as leads. Actor selection and input shape are entirely config-driven —
+ * this makes any Apify Store actor (Google Maps, Instagram, LinkedIn, TikTok…)
+ * usable as a scraper source without new code, since Apify runs the actual
+ * scrape on its own infrastructure under the account's ToS.
+ */
+async function scrapeApifyActor(
+  _config: Record<string, unknown>,
+  logId: string,
+): Promise<{
+  recordsFound: number;
+  recordsImported: number;
+  recordsDuplicate: number;
+  recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
+  rawResponse?: Record<string, unknown>;
+}> {
+  logger.info('scraper apify_actor: starting run');
+
+  const actorId = String(_config.actorId ?? '').trim();
+  if (!actorId) throw new AppError('actorId is required for an Apify Actor source', 400);
+
+  const input = (_config.input && typeof _config.input === 'object'
+    ? (_config.input as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  const maxResults = Number(_config.maxResults) || 100;
+
+  const creds = await loadApifyCredentials();
+  const result = await runActorSync(creds, actorId, input, maxResults);
+
+  if (!result.ok) {
+    throw new AppError(`Apify run failed: ${result.error}`, 502);
+  }
+
+  const leads = result.items
+    .slice(0, maxResults)
+    .map((item) => leadFromApifyItem(item, 'apify'));
+
+  const stats = await importLeads(leads, logId);
+  return {
+    ...stats,
+    rawResponse: { actor_id: actorId, items_returned: result.items.length, latency_ms: result.latencyMs },
+  };
+}
+
+// ── Browser (Puppeteer) Scraper ────────────────────────────────────────────
+
+const DEFAULT_BROWSER_TIMEOUT_MS = 30_000;
+
+/**
+ * Extracts leads using explicit CSS selectors evaluated against a repeating
+ * container. Mirrors scrapeWeb's inline selector logic but is written as a
+ * standalone helper so scrapeBrowser can reuse it without touching the
+ * existing, already-tested scrapeWeb implementation.
+ */
+function extractLeadsBySelectors(
+  html: string,
+  selectors: Record<string, string>,
+  containerSelector: string | undefined,
+  sourcePlatform: string,
+): ScrapedLead[] {
+  const $ = cheerio.load(html);
+  const fieldKeys = Object.keys(selectors);
+  const firstSelector = Object.values(selectors)[0];
+  if (!firstSelector) return [];
+
+  const elements = $(firstSelector);
+  if (elements.length === 0) return [];
+
+  const containers = containerSelector ? $(containerSelector) : elements.parent().parent();
+  const leads: ScrapedLead[] = [];
+
+  containers.each((_i, container) => {
+    const entry: Record<string, string> = {};
+    for (const key of fieldKeys) {
+      const sel = selectors[key];
+      entry[key] = $(container).find(sel).first().text().trim();
+    }
+    if (entry.business_name || entry.phone) {
+      leads.push({
+        business_name: entry.business_name || 'Unknown Business',
+        phone: entry.phone || undefined,
+        email: entry.email || undefined,
+        website: entry.website || undefined,
+        location: entry.location || '',
+        source_platform: sourcePlatform,
+      });
+    }
+  });
+
+  return leads;
+}
+
+/**
+ * Renders a page with a real (headless) Chrome via puppeteer-core, then runs
+ * the same smart/selector extraction as scrapeWeb against the RENDERED DOM.
+ * This is the JavaScript-capable counterpart to scrapeWeb — it exists for
+ * sites whose lead-relevant content is injected client-side after an XHR
+ * call, which the plain-HTTP Cheerio scraper cannot see.
+ *
+ * Requires PUPPETEER_EXECUTABLE_PATH to point at a locally installed Chrome
+ * binary (puppeteer-core does not bundle one). Still respects robots.txt and
+ * the CAPTCHA/blocked-response guards used by scrapeWeb.
+ */
+async function scrapeBrowser(
+  _config: Record<string, unknown>,
+  logId: string,
+): Promise<{
+  recordsFound: number;
+  recordsImported: number;
+  recordsDuplicate: number;
+  recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
+  rawResponse?: Record<string, unknown>;
+}> {
+  logger.info('scraper browser_scrape: starting');
+
+  const url = String(_config.url ?? '');
+  if (!url) throw new AppError('URL is required for browser scraping', 400);
+
+  const mode = _config.mode === 'selectors' ? 'selectors' : 'smart';
+  const selectors = _config.selectors as Record<string, string> | undefined;
+  if (mode === 'selectors' && (!selectors || Object.keys(selectors).length === 0)) {
+    throw new AppError('CSS selectors are required for browser scraping in selectors mode', 400);
+  }
+
+  const waitForSelector =
+    typeof _config.waitForSelector === 'string' ? _config.waitForSelector : undefined;
+  const waitMs = Number(_config.waitMs) || 0;
+  const maxPages = Number(_config.maxPages) || 1;
+  const userAgent =
+    typeof _config.userAgent === 'string' && _config.userAgent.trim()
+      ? _config.userAgent.trim()
+      : DEFAULT_CRAWLER_USER_AGENT;
+  const respectRobotsTxt = _config.respectRobotsTxt !== false;
+
+  if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
+
+  const executablePath = assertEnvVarConfigured(
+    'PUPPETEER_EXECUTABLE_PATH',
+    'PUPPETEER_EXECUTABLE_PATH',
+  );
+
+  const puppeteer = await import('puppeteer-core');
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      // Required in most containerized/CI environments where the kernel
+      // sandbox namespace isn't available to an unprivileged process.
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+  } catch (err) {
+    throw new AppError(
+      `Could not launch Chrome at PUPPETEER_EXECUTABLE_PATH="${executablePath}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      500,
+    );
+  }
+
+  const allLeads: ScrapedLead[] = [];
+  let pagesFetched = 0;
+
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent({ userAgent });
+
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const pageUrl = pageNum === 1 ? url : `${url}?page=${pageNum}`;
+      const response = await page.goto(pageUrl, {
+        waitUntil: 'networkidle2',
+        timeout: DEFAULT_BROWSER_TIMEOUT_MS,
+      });
+
+      const status = response?.status() ?? 0;
+      if ([401, 403, 429].includes(status)) {
+        throw new AppError(`Target blocked the crawler for ${pageUrl} (HTTP ${status})`, status);
+      }
+      if (status && status >= 400) {
+        logger.warn('scraper browser_scrape: page navigation failed', {
+          page: pageNum,
+          status,
+          url: pageUrl,
+        });
+        break;
+      }
+
+      if (waitForSelector) {
+        try {
+          await page.waitForSelector(waitForSelector, { timeout: DEFAULT_BROWSER_TIMEOUT_MS });
+        } catch {
+          logger.warn('scraper browser_scrape: waitForSelector timed out, reading DOM anyway', {
+            waitForSelector,
+            url: pageUrl,
+          });
+        }
+      }
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+
+      const html = await page.content();
+      assertNoCaptcha(html, pageUrl);
+      pagesFetched++;
+
+      if (mode === 'smart') {
+        allLeads.push(...smartExtract(html, pageUrl, 'browser_scrape'));
+      } else {
+        allLeads.push(
+          ...extractLeadsBySelectors(
+            html,
+            selectors!,
+            _config.containerSelector as string | undefined,
+            'browser_scrape',
+          ),
+        );
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+
+  const stats = await importLeads(allLeads, logId);
+  return {
+    ...stats,
+    rawResponse: {
+      url,
+      pages_scraped: pagesFetched,
+      robots_checked: respectRobotsTxt,
+      rendered: true,
+    },
+  };
+}
+
 // ── Facebook Scraper ───────────────────────────────────────────────────────
 
 async function scrapeFacebook(
@@ -716,7 +1136,10 @@ async function scrapeFacebook(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   logger.info('scraper facebook: starting API call');
@@ -793,7 +1216,10 @@ async function scrapeYouTube(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   logger.info('scraper youtube: starting API call');
@@ -860,7 +1286,7 @@ const ASSET_EMAIL_RE = /\.(png|jpe?g|gif|svg|webp|css|js|woff2?)$/i;
  * JS-rendered pages will yield little. That limitation is shared by the
  * selector path and is surfaced to the user in the UI.
  */
-function smartExtract(html: string, pageUrl: string): ScrapedLead[] {
+function smartExtract(html: string, pageUrl: string, sourcePlatform: string): ScrapedLead[] {
   const $ = cheerio.load(html);
 
   const title = (
@@ -926,7 +1352,7 @@ function smartExtract(html: string, pageUrl: string): ScrapedLead[] {
         phone: phoneList[0],
         website: origin || undefined,
         location: '',
-        source_platform: 'web_scrape',
+        source_platform: sourcePlatform,
       });
     }
   } else if (phoneList.length > 0) {
@@ -935,7 +1361,7 @@ function smartExtract(html: string, pageUrl: string): ScrapedLead[] {
       phone: phoneList[0],
       website: origin || undefined,
       location: '',
-      source_platform: 'web_scrape',
+      source_platform: sourcePlatform,
     });
   }
 
@@ -1122,7 +1548,10 @@ async function scrapeWeb(
 ): Promise<{
   recordsFound: number;
   recordsImported: number;
+  recordsDuplicate: number;
   recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
   logger.info('scraper web_scrape: starting');
@@ -1173,7 +1602,7 @@ async function scrapeWeb(
     if (mode === 'smart') {
       // Selector-free extraction: pull emails/phones from the page and use the
       // page title as the business name. Best for single contact/about pages.
-      allLeads.push(...smartExtract(html, pageUrl));
+      allLeads.push(...smartExtract(html, pageUrl, 'web_scrape'));
     } else {
       const firstSelector = Object.values(selectors!)[0];
       if (!firstSelector) continue;
@@ -1237,15 +1666,30 @@ async function scrapeWeb(
 async function importLeads(
   leads: ScrapedLead[],
   logId?: string,
-): Promise<{ recordsFound: number; recordsImported: number; recordsFailed: number }> {
+): Promise<{
+  recordsFound: number;
+  recordsImported: number;
+  recordsDuplicate: number;
+  recordsFailed: number;
+  failedItems: FailedScrapeItem[];
+  duplicateLeadIds: string[];
+}> {
   // Hoist dynamic import outside the loop — module is cached after the first call
   const { createLead } = await import('../leads/leads.service');
 
   let imported = 0;
+  let duplicate = 0;
   let failed = 0;
+  const failedItems: FailedScrapeItem[] = [];
+  const duplicateLeadIds: string[] = [];
 
   for (const lead of leads) {
-    const phoneSeed = `${lead.phone ?? ''}|${lead.business_name}|${lead.location ?? ''}`;
+    // Include the real email in the seed so multiple distinct leads found on
+    // the same page (e.g. several staff emails on one contact page) don't
+    // collide on an identical placeholder phone — business_name/location are
+    // often identical across them, which previously caused every lead after
+    // the first to look like a duplicate and get silently skipped.
+    const phoneSeed = `${lead.phone ?? ''}|${lead.business_name}|${lead.location ?? ''}|${lead.email ?? ''}`;
     const phone = lead.phone || generatePlaceholderPhone(phoneSeed);
     const email =
       lead.email ||
@@ -1277,12 +1721,15 @@ async function importLeads(
           google_rating: lead.google_rating ?? null,
           review_count: lead.review_count ?? null,
           tags: [lead.source_platform],
+          scraper_log_id: logId ?? null,
         },
         actor,
       );
       imported++;
     } catch (err) {
-      // 409 means the lead already exists — count as imported (idempotent re-run)
+      // 409 means the lead already exists — count as a duplicate (matched by
+      // email/phone), not a new import. Idempotent re-runs still succeed —
+      // this is not a failure — but it's also not a *new* lead.
       if (err instanceof AppError && err.statusCode === 409) {
         if (logId) {
           try {
@@ -1293,6 +1740,7 @@ async function importLeads(
               lead.source_platform,
             );
             if (existing) {
+              duplicateLeadIds.push(existing.id);
               // Only ensure the source_platform tag is present — do not add log IDs
               if (!existing.tags?.includes(lead.source_platform)) {
                 const updatedTags = Array.from(
@@ -1308,16 +1756,25 @@ async function importLeads(
             });
           }
         }
-        imported++;
+        duplicate++;
       } else {
         failed++;
+        const message = err instanceof Error ? err.message : String(err);
         logger.warn('scraper failed to import lead', {
           business_name: lead.business_name,
-          error: err instanceof Error ? err.message : String(err),
+          error: message,
         });
+        failedItems.push({ lead: lead as unknown as Record<string, unknown>, error: message });
       }
     }
   }
 
-  return { recordsFound: leads.length, recordsImported: imported, recordsFailed: failed };
+  return {
+    recordsFound: leads.length,
+    recordsImported: imported,
+    recordsDuplicate: duplicate,
+    recordsFailed: failed,
+    failedItems,
+    duplicateLeadIds,
+  };
 }

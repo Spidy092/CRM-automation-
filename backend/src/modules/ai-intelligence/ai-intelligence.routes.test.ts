@@ -2,10 +2,14 @@ import request from 'supertest';
 import express from 'express';
 import aiIntelligenceRoutes from './ai-intelligence.routes';
 import * as service from './ai-intelligence.service';
+import { enqueueAiResearch } from '../../workers/queue';
 import { errorHandler } from '../../shared/middleware/errorHandler';
 import type { LeadAiProfileRow, AiDecisionLogRow } from './ai-intelligence.types';
 
 jest.mock('./ai-intelligence.service');
+jest.mock('../../workers/queue', () => ({
+  enqueueAiResearch: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('../../shared/middleware/rateLimiter', () => ({
   authenticatedLimiter: (req: any, res: any, next: any) => next(),
 }));
@@ -104,6 +108,50 @@ describe('AI Intelligence Routes', () => {
     it('returns 400 for a non-uuid leadId', async () => {
       const res = await request(app).get('/ai-intelligence/leads/not-a-uuid/profile');
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /ai-intelligence/leads/:leadId/research', () => {
+    it('enqueues research and returns 202', async () => {
+      const res = await request(app).post(`/ai-intelligence/leads/${LEAD_ID}/research`);
+
+      expect(res.status).toBe(202);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual({ enqueued: true, leadId: LEAD_ID });
+      expect(enqueueAiResearch).toHaveBeenCalledWith({ leadId: LEAD_ID, force: true });
+    });
+
+    it('respects an explicit force:false in the body', async () => {
+      const res = await request(app)
+        .post(`/ai-intelligence/leads/${LEAD_ID}/research`)
+        .send({ force: false });
+
+      expect(res.status).toBe(202);
+      expect(enqueueAiResearch).toHaveBeenCalledWith({ leadId: LEAD_ID, force: false });
+    });
+
+    it('returns 400 for a non-uuid leadId', async () => {
+      const res = await request(app).post('/ai-intelligence/leads/not-a-uuid/research');
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 403 for a viewer role', async () => {
+      jest.resetModules();
+      jest.doMock('../../shared/middleware/auth', () => ({
+        authenticate: (req: any, _res: any, next: any) => {
+          req.user = { id: 'u-3', role: 'viewer' };
+          next();
+        },
+      }));
+      const { default: routesAsViewer } = await import('./ai-intelligence.routes');
+      const testApp = express();
+      testApp.use(express.json());
+      testApp.use('/ai-intelligence', routesAsViewer);
+      testApp.use(errorHandler);
+
+      const res = await request(testApp).post(`/ai-intelligence/leads/${LEAD_ID}/research`);
+
+      expect(res.status).toBe(403);
     });
   });
 

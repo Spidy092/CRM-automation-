@@ -45,8 +45,21 @@ export const listLeadsQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
   search: z.string().max(255).optional(),
   tags: z.string().max(255).optional(), // comma-separated
+  /** ISO-8601 datetime string — returns leads created on or after this point */
+  created_after: z.string().datetime({ offset: true }).optional(),
+  /** When "true", returns only leads where classification IS NULL (unscored) */
+  unclassified: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 export const pauseLeadSchema = z.object({
   paused: z.boolean().optional(), // default true; set false to resume
+});
+
+/** POST /leads/bulk-classify — set classification on a batch of lead IDs */
+export const bulkClassifySchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+  classification: classificationEnum,
 });

@@ -17,3 +17,8 @@ export const decisionLogQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
+
+/** Body for manually (re-)triggering AI research on a lead */
+export const leadResearchTriggerBodySchema = z.object({
+  force: z.boolean().optional().default(true),
+});

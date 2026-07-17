@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import {
   useLeadAiProfile,
   useLeadDecisions,
+  useTriggerLeadResearch,
   type NextBestAction,
   type BuyingIntent,
   type EnrichmentStatus,
@@ -13,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { ArrowLeft, Brain, Sparkles, Target, MessageSquare } from 'lucide-react';
+import { ArrowLeft, Brain, Sparkles, Target, MessageSquare, RefreshCw } from 'lucide-react';
 
 const intentTones: Record<BuyingIntent, StatusTone> = {
   high: 'green',
@@ -47,6 +48,7 @@ export function LeadAIProfilePage() {
   const leadId = id!;
   const { data: profile, isLoading, error } = useLeadAiProfile(leadId);
   const { data: decisions = [] } = useLeadDecisions(leadId);
+  const triggerResearch = useTriggerLeadResearch(leadId);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -55,11 +57,24 @@ export function LeadAIProfilePage() {
         title="Lead AI Profile"
         description="What the AI knows about this lead — research, memory, and the next best action."
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link to={`/leads/${leadId}`}>
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to lead
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {profile && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => triggerResearch.mutate()}
+                disabled={triggerResearch.isPending || profile.enrichment_status === 'running'}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${triggerResearch.isPending ? 'animate-spin' : ''}`} />
+                Re-run research
+              </Button>
+            )}
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/leads/${leadId}`}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to lead
+              </Link>
+            </Button>
+          </div>
         }
       />
 
@@ -74,6 +89,12 @@ export function LeadAIProfilePage() {
           icon={<Brain className="h-6 w-6" />}
           title="No AI profile yet"
           description="This lead has not been researched by the AI yet. A profile is generated automatically after the lead is scraped or imported."
+          action={
+            <Button size="sm" onClick={() => triggerResearch.mutate()} disabled={triggerResearch.isPending}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${triggerResearch.isPending ? 'animate-spin' : ''}`} />
+              {triggerResearch.isPending ? 'Starting research…' : 'Run AI research'}
+            </Button>
+          }
         />
       )}
 

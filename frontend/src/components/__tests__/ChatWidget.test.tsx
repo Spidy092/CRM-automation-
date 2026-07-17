@@ -35,11 +35,15 @@ vi.mock('@/api/aiInbox', () => ({
     isPending: false,
     isError: false,
   })),
+  useInbox: vi.fn(() => ({
+    data: { items: [], total: 0 },
+    isLoading: false,
+  })),
 }));
 
 import { useChatHistory, useSendChatMessage } from '@/api/chat';
 import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
-import { useActionInboxItem } from '@/api/aiInbox';
+import { useActionInboxItem, useInbox } from '@/api/aiInbox';
 
 const useChatHistoryMock = useChatHistory as unknown as ReturnType<typeof vi.fn>;
 const useSendChatMessageMock = useSendChatMessage as unknown as ReturnType<typeof vi.fn>;
@@ -47,6 +51,7 @@ const usePlanMock = usePlan as unknown as ReturnType<typeof vi.fn>;
 const useApprovePlanMock = useApprovePlan as unknown as ReturnType<typeof vi.fn>;
 const useCancelPlanMock = useCancelPlan as unknown as ReturnType<typeof vi.fn>;
 const useActionInboxItemMock = useActionInboxItem as unknown as ReturnType<typeof vi.fn>;
+const useInboxMock = useInbox as unknown as ReturnType<typeof vi.fn>;
 
 describe('ChatWidget', () => {
   beforeEach(() => {
@@ -74,6 +79,10 @@ describe('ChatWidget', () => {
       mutate: mockActionInboxItemMutate,
       isPending: false,
       isError: false,
+    });
+    useInboxMock.mockReturnValue({
+      data: { items: [], total: 0 },
+      isLoading: false,
     });
   });
 
@@ -257,7 +266,7 @@ describe('ChatWidget', () => {
     expect(await screen.findByText(/rejected\./i)).toBeInTheDocument();
   });
 
-  it('falls back to an AI Inbox pointer when no linked inbox item id is available', async () => {
+  it('shows a waiting message when no linked inbox item id is available yet', async () => {
     const user = userEvent.setup();
     mockMutateAsync.mockResolvedValueOnce({
       conversationId: 'conv-1',
@@ -276,7 +285,7 @@ describe('ChatWidget', () => {
     await user.type(input, 'pause this lead');
     await user.click(screen.getByRole('button', { name: '' }));
 
-    expect(await screen.findByText(/Open the AI Inbox to review it\./)).toBeInTheDocument();
+    expect(await screen.findByText(/appear below as soon as it.s ready to review/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
   });
 

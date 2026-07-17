@@ -8,6 +8,7 @@ import {
   listLeadsQuerySchema,
   pauseLeadSchema,
   updateLeadSchema,
+  bulkClassifySchema,
 } from './leads.schema';
 import * as leadsService from './leads.service';
 import { importLeads, isSupportedFile } from './leads.import';
@@ -59,6 +60,9 @@ export async function listLeadsHandler(
       assigned_to: parsed.assigned_to,
       search: parsed.search,
       tags,
+      created_after: parsed.created_after,
+      unclassified: parsed.unclassified || undefined,
+      pipeline_id: parsed.pipeline_id,
     };
 
     const result = await leadsService.listLeads(filters, actorFromReq(req));
@@ -191,6 +195,21 @@ export async function enrichLeadHandler(
   try {
     const lead = await enrichLead(req.params.id, actorFromReq(req));
     sendSuccess(res, lead, 200);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkClassifyHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { ids, classification } = bulkClassifySchema.parse(req.body);
+    const actor = actorFromReq(req);
+    const updated = await leadsService.bulkClassifyLeads(ids, classification, actor);
+    sendSuccess(res, { updated });
   } catch (err) {
     next(err);
   }

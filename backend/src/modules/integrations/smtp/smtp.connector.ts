@@ -44,6 +44,8 @@ export interface SendEmailInput {
   subject: string;
   htmlBody: string;
   textBody?: string;
+  fromEmail?: string;
+  fromName?: string;
   attachments?: SendEmailAttachment[];
 }
 
@@ -104,8 +106,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SmtpResult> {
       auth: { user: creds.user, pass: creds.pass },
     });
 
+    const effectiveFromEmail = input.fromEmail ?? creds.fromEmail;
+    const effectiveFromName = input.fromName ?? creds.fromName;
+
     const info = await transporter.sendMail({
-      from: creds.fromName ? `"${creds.fromName}" <${creds.fromEmail}>` : creds.fromEmail,
+      from: effectiveFromName ? `"${effectiveFromName}" <${effectiveFromEmail}>` : effectiveFromEmail,
       to: input.to,
       subject: input.subject,
       text: input.textBody ?? input.htmlBody.replace(/<[^>]*>/g, ''),

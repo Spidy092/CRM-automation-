@@ -3,7 +3,7 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { FormRow, FormSubmissionRow, FormFieldDef } from './forms.types';
 
 const FORM_COLS = `id, name, slug, description, fields, submit_action, submit_message,
-  redirect_url, is_active, theme, created_by, created_at, updated_at`;
+  redirect_url, is_active, theme, email_settings, created_by, created_at, updated_at`;
 
 function parseFields(raw: unknown): FormFieldDef[] {
   if (Array.isArray(raw)) return raw as FormFieldDef[];
@@ -17,8 +17,9 @@ function parseFields(raw: unknown): FormFieldDef[] {
   return [];
 }
 
-function mapFormRow(row: FormRow & { fields: unknown }): FormRow {
-  return { ...row, fields: parseFields(row.fields) };
+function mapFormRow(row: FormRow & { fields: unknown, email_settings: unknown }): FormRow {
+  const email_settings = typeof row.email_settings === 'string' ? JSON.parse(row.email_settings) : row.email_settings;
+  return { ...row, fields: parseFields(row.fields), email_settings: email_settings || {} };
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -62,12 +63,13 @@ export async function insertForm(data: {
   redirect_url: string | null;
   is_active: boolean;
   theme: Record<string, unknown>;
+  email_settings?: Record<string, unknown>;
   created_by: string;
 }): Promise<FormRow> {
-  const row = await queryOne<FormRow & { fields: unknown }>(
+  const row = await queryOne<FormRow & { fields: unknown, email_settings: unknown }>(
     `INSERT INTO forms (name, slug, description, fields, submit_action, submit_message,
-       redirect_url, is_active, theme, created_by)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb, $10)
+       redirect_url, is_active, theme, email_settings, created_by)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)
      RETURNING ${FORM_COLS}`,
     [
       data.name,
@@ -79,6 +81,7 @@ export async function insertForm(data: {
       data.redirect_url,
       data.is_active,
       JSON.stringify(data.theme),
+      JSON.stringify(data.email_settings || {}),
       data.created_by,
     ],
   );
@@ -98,6 +101,7 @@ export async function updateForm(
     redirect_url: string | null;
     is_active: boolean;
     theme: Record<string, unknown>;
+    email_settings: Record<string, unknown>;
   }>,
 ): Promise<FormRow> {
   const sets: string[] = [];
@@ -140,6 +144,10 @@ export async function updateForm(
     sets.push(`theme = $${i++}::jsonb`);
     params.push(JSON.stringify(fields.theme));
   }
+  if (fields.email_settings !== undefined) {
+    sets.push(`email_settings = $${i++}::jsonb`);
+    params.push(JSON.stringify(fields.email_settings));
+  }
 
   if (sets.length === 0) {
     const existing = await findFormById(id);
@@ -149,7 +157,7 @@ export async function updateForm(
 
   params.push(id);
   const sql = `UPDATE forms SET ${sets.join(', ')} WHERE id = $${i} RETURNING ${FORM_COLS}`;
-  const row = await queryOne<FormRow & { fields: unknown }>(sql, params);
+  const row = await queryOne<FormRow & { fields: unknown, email_settings: unknown }>(sql, params);
   if (!row) throw new AppError('Form not found', 404);
   return mapFormRow(row);
 }

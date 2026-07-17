@@ -1,7 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse } from './client';
-import type { ScraperConfig, ScraperLog, ScraperRunResult, ScraperSourceType } from '@/types';
+import type {
+  ScraperConfig,
+  ScraperLog,
+  ScraperRunLeadsResult,
+  ScraperRunResult,
+  ScraperSourceType,
+  ScraperStatsSummary,
+} from '@/types';
 
 /* ─── List Configs ─── */
 
@@ -136,5 +143,62 @@ export function useScraperLogs(configId: string, limit = 25) {
       return response.data.data;
     },
     enabled: !!configId,
+    // Poll while the most recent run is still in progress so the status
+    // updates without the user needing to reopen the logs panel.
+    refetchInterval: (query) => {
+      const latest = query.state.data?.[0];
+      return latest?.status === 'running' ? 3000 : false;
+    },
+  });
+}
+
+/* ─── 24h (or custom window) Dashboard Summary ─── */
+
+export function useScraperStatsSummary(hours = 24) {
+  return useQuery({
+    queryKey: ['scraper', 'stats-summary', hours],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<ScraperStatsSummary>>('/scraper/stats/summary', {
+        params: { hours },
+      });
+      return response.data.data;
+    },
+  });
+}
+
+/* ─── Leads created by a specific run ─── */
+
+export function useScraperRunLeads(logId: string) {
+  return useQuery({
+    queryKey: ['scraper', 'run-leads', logId],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<ScraperRunLeadsResult>>(
+        `/scraper/logs/${logId}/leads`,
+      );
+      return response.data.data;
+    },
+    enabled: !!logId,
+  });
+}
+
+/* ─── Retry Failed Records ─── */
+
+export function useRetryFailedScrape() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (logId: string) => {
+      const response = await apiClient.post<ApiResponse<ScraperRunResult>>(
+        `/scraper/logs/${logId}/retry-failed`,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_data, logId) => {
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'logs'] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'configs'] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'run-leads', logId] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'stats-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+    },
   });
 }

@@ -74,6 +74,8 @@ describe('teamMetrics.repository', () => {
 
     const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('FROM users u');
+    expect(sql).toContain('l.deleted_at IS NULL');
+    expect(sql).toContain('u.deleted_at IS NULL');
     expect(sql).toContain('l.pipeline_stage_id = $3');
     expect(params).toContain('stage-1');
   });
@@ -88,7 +90,7 @@ describe('teamMetrics.repository', () => {
     );
 
     const [sql, params] = mockPoolQuery.mock.calls[0];
-    expect(sql).toContain("u.role IN ('admin', 'manager', 'sales', 'marketing') AND u.id = $1");
+    expect(sql).toContain("u.role IN ('admin', 'manager', 'sales', 'marketing', 'viewer') AND u.id = $1");
     expect(params[0]).toBe('u1');
   });
 
@@ -103,5 +105,18 @@ describe('teamMetrics.repository', () => {
 
     const [sql] = mockPoolQuery.mock.calls[0];
     expect(sql).not.toContain('pipeline_stage_id');
+  });
+
+  it('includes viewer role in user filter', async () => {
+    mockPoolQuery.mockResolvedValue(mockResult([]));
+
+    await findTeamMetrics(
+      { from: new Date('2026-01-01'), to: new Date('2026-01-31') },
+      'viewer-1',
+      'viewer',
+    );
+
+    const [sql] = mockPoolQuery.mock.calls[0];
+    expect(sql).toContain("'viewer'");
   });
 });

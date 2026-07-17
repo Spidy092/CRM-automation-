@@ -2,12 +2,13 @@ import { pool, query, queryOne } from '../../shared/utils/db';
 import {
   ScraperConfigInput,
   ScraperConfigRow,
+  ScraperConfigWithHealth,
   ScraperLogRow,
   ScraperConfigUpdate,
 } from './scraper.types';
 
 const CONFIG_COLS = `id, name, source_type, is_active, config, schedule_cron, last_run_at, created_by, created_at, updated_at`;
-const LOG_COLS = `id, config_id, status, started_at, completed_at, records_found, records_imported, records_failed, error_message, raw_response, created_at`;
+const LOG_COLS = `id, config_id, status, started_at, completed_at, records_found, records_imported, records_duplicate, records_failed, error_message, raw_response, failed_items, duplicate_lead_ids, created_at`;
 
 // ── Scraper Configs ────────────────────────────────────────────────────────
 
@@ -120,9 +121,12 @@ export async function updateScraperLog(
     completed_at: string;
     records_found: number;
     records_imported: number;
+    records_duplicate: number;
     records_failed: number;
     error_message: string | null;
     raw_response: Record<string, unknown> | null;
+    failed_items: Array<{ lead: Record<string, unknown>; error: string }>;
+    duplicate_lead_ids: string[];
   }>,
 ): Promise<ScraperLogRow | null> {
   const sets: string[] = [];
@@ -145,6 +149,10 @@ export async function updateScraperLog(
     sets.push(`records_imported = $${i++}`);
     params.push(fields.records_imported);
   }
+  if (fields.records_duplicate !== undefined) {
+    sets.push(`records_duplicate = $${i++}`);
+    params.push(fields.records_duplicate);
+  }
   if (fields.records_failed !== undefined) {
     sets.push(`records_failed = $${i++}`);
     params.push(fields.records_failed);
@@ -157,6 +165,14 @@ export async function updateScraperLog(
     sets.push(`raw_response = $${i++}::jsonb`);
     params.push(JSON.stringify(fields.raw_response));
   }
+  if (fields.failed_items !== undefined) {
+    sets.push(`failed_items = $${i++}::jsonb`);
+    params.push(JSON.stringify(fields.failed_items));
+  }
+  if (fields.duplicate_lead_ids !== undefined) {
+    sets.push(`duplicate_lead_ids = $${i++}`);
+    params.push(fields.duplicate_lead_ids);
+  }
 
   if (sets.length === 0) return null;
 
@@ -165,6 +181,10 @@ export async function updateScraperLog(
     `UPDATE scraper_logs SET ${sets.join(', ')} WHERE id = $${i} RETURNING ${LOG_COLS}`,
     params,
   );
+}
+
+export async function findScraperLogById(id: string): Promise<ScraperLogRow | null> {
+  return queryOne<ScraperLogRow>(`SELECT ${LOG_COLS} FROM scraper_logs WHERE id = $1`, [id]);
 }
 
 export async function findScraperLogsByConfig(
@@ -187,4 +207,74 @@ export async function countScraperLogsByConfig(configId: string): Promise<number
     [configId],
   );
   return row ? parseInt(row.count, 10) : 0;
+}
+
+/**
+ * All scraper configs with a computed `health` field, derived from each
+ * config's most recent (up to) 3 runs: 'failing' only when ALL of them
+ * failed, 'unknown' when there are no runs yet, 'healthy' otherwise.
+ */
+export async function findScraperConfigsWithHealth(): Promise<ScraperConfigWithHealth[]> {
+  const prefixedCols = CONFIG_COLS.split(', ')
+    .map((col) => `c.${col}`)
+    .join(', ');
+  return query<ScraperConfigWithHealth>(
+    `SELECT ${prefixedCols},
+       COALESCE(
+         (
+           SELECT CASE
+             WHEN COUNT(*) = 0 THEN 'unknown'
+             WHEN COUNT(*) FILTER (WHERE recent.status = 'failed') = COUNT(*) THEN 'failing'
+             ELSE 'healthy'
+           END
+           FROM (
+             SELECT status FROM scraper_logs
+             WHERE config_id = c.id
+             ORDER BY created_at DESC
+             LIMIT 3
+           ) recent
+         ),
+         'unknown'
+       ) AS health
+     FROM scraper_configs c
+     ORDER BY c.created_at DESC`,
+  );
+}
+
+/** Aggregate run stats across all scraper sources since the given ISO timestamp. */
+export async function sumScraperLogsSince(sinceIso: string): Promise<{
+  totalRuns: number;
+  activeSources: number;
+  recordsFound: number;
+  recordsImported: number;
+  recordsDuplicate: number;
+  recordsFailed: number;
+}> {
+  const row = await queryOne<{
+    total_runs: string;
+    active_sources: string;
+    records_found: string;
+    records_imported: string;
+    records_duplicate: string;
+    records_failed: string;
+  }>(
+    `SELECT
+       COUNT(*)                                AS total_runs,
+       COUNT(DISTINCT config_id)                AS active_sources,
+       COALESCE(SUM(records_found), 0)          AS records_found,
+       COALESCE(SUM(records_imported), 0)       AS records_imported,
+       COALESCE(SUM(records_duplicate), 0)      AS records_duplicate,
+       COALESCE(SUM(records_failed), 0)         AS records_failed
+     FROM scraper_logs
+     WHERE created_at >= $1`,
+    [sinceIso],
+  );
+  return {
+    totalRuns: row ? parseInt(row.total_runs, 10) : 0,
+    activeSources: row ? parseInt(row.active_sources, 10) : 0,
+    recordsFound: row ? parseInt(row.records_found, 10) : 0,
+    recordsImported: row ? parseInt(row.records_imported, 10) : 0,
+    recordsDuplicate: row ? parseInt(row.records_duplicate, 10) : 0,
+    recordsFailed: row ? parseInt(row.records_failed, 10) : 0,
+  };
 }

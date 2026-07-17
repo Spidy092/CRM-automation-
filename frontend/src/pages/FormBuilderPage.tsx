@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useCreateForm, useUpdateForm, useForm, type FormField } from '@/api/forms';
+import { useCreateForm, useUpdateForm, useForm, type FormField, type EmailSettings } from '@/api/forms';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
@@ -60,6 +60,7 @@ export function FormBuilderPage() {
   const [submitAction, setSubmitAction] = useState('create_lead');
   const [submitMessage, setSubmitMessage] = useState('Thank you for your submission!');
   const [isActive, setIsActive] = useState(true);
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>({});
 
   useEffect(() => {
     if (existingForm?.data) {
@@ -71,6 +72,7 @@ export function FormBuilderPage() {
       setSubmitAction(f.submit_action);
       setSubmitMessage(f.submit_message);
       setIsActive(f.is_active);
+      setEmailSettings(f.email_settings || {});
     }
   }, [existingForm]);
 
@@ -115,6 +117,7 @@ export function FormBuilderPage() {
       submit_action: submitAction,
       submit_message: submitMessage,
       is_active: isActive,
+      email_settings: emailSettings,
     };
 
     try {
@@ -220,6 +223,103 @@ export function FormBuilderPage() {
                   className="h-4 w-4 rounded border-slate-300"
                 />
                 <Label htmlFor="is_active" className="text-sm">Active (accepting submissions)</Label>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Email Settings */}
+          <Card>
+            <CardContent className="p-5 space-y-6">
+              <CardTitle className="text-base">Email Notifications</CardTitle>
+
+              {/* Auto Reply */}
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold">Auto-Reply to Lead</h4>
+                  <input
+                    type="checkbox"
+                    checked={emailSettings.autoReply?.enabled || false}
+                    onChange={(e) => setEmailSettings(s => ({ ...s, autoReply: { ...s.autoReply!, enabled: e.target.checked } }))}
+                  />
+                </div>
+                {emailSettings.autoReply?.enabled && (
+                  <div className="space-y-3 pt-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">From Name</Label>
+                        <Input value={emailSettings.autoReply.fromName || ''} onChange={e => setEmailSettings(s => ({...s, autoReply: {...s.autoReply!, fromName: e.target.value}}))} placeholder="Brand Name" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">From Email</Label>
+                        <Input value={emailSettings.autoReply.fromEmail || ''} onChange={e => setEmailSettings(s => ({...s, autoReply: {...s.autoReply!, fromEmail: e.target.value}}))} placeholder="hello@brand.com" />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Subject</Label>
+                      <Input value={emailSettings.autoReply.subject || ''} onChange={e => setEmailSettings(s => ({...s, autoReply: {...s.autoReply!, subject: e.target.value}}))} placeholder="Thank you!" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Message (HTML/Text)</Label>
+                      <textarea className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" rows={4} value={emailSettings.autoReply.body || ''} onChange={e => setEmailSettings(s => ({...s, autoReply: {...s.autoReply!, body: e.target.value}}))} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Team Notification */}
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold">Team Alert</h4>
+                  <input
+                    type="checkbox"
+                    checked={emailSettings.teamNotification?.enabled || false}
+                    onChange={(e) => setEmailSettings(s => ({ ...s, teamNotification: { ...s.teamNotification!, enabled: e.target.checked } }))}
+                  />
+                </div>
+                {emailSettings.teamNotification?.enabled && (
+                  <div className="space-y-3 pt-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">To Emails</Label>
+                      <Input value={emailSettings.teamNotification.emails || ''} onChange={e => setEmailSettings(s => ({...s, teamNotification: {...s.teamNotification!, emails: e.target.value}}))} placeholder="team@example.com" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Subject</Label>
+                      <Input value={emailSettings.teamNotification.subject || ''} onChange={e => setEmailSettings(s => ({...s, teamNotification: {...s.teamNotification!, subject: e.target.value}}))} placeholder="New Lead: {contact_name}" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Message</Label>
+                      <textarea className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" rows={4} value={emailSettings.teamNotification.body || ''} onChange={e => setEmailSettings(s => ({...s, teamNotification: {...s.teamNotification!, body: e.target.value}}))} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Partner Notification */}
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold">Partner Notification</h4>
+                  <input
+                    type="checkbox"
+                    checked={emailSettings.partnerNotification?.enabled || false}
+                    onChange={(e) => setEmailSettings(s => ({ ...s, partnerNotification: { ...s.partnerNotification!, enabled: e.target.checked } }))}
+                  />
+                </div>
+                {emailSettings.partnerNotification?.enabled && (
+                  <div className="space-y-3 pt-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">To Emails</Label>
+                      <Input value={emailSettings.partnerNotification.emails || ''} onChange={e => setEmailSettings(s => ({...s, partnerNotification: {...s.partnerNotification!, emails: e.target.value}}))} placeholder="{partner_email} or list" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Subject</Label>
+                      <Input value={emailSettings.partnerNotification.subject || ''} onChange={e => setEmailSettings(s => ({...s, partnerNotification: {...s.partnerNotification!, subject: e.target.value}}))} placeholder="Lead submitted" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Message</Label>
+                      <textarea className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" rows={4} value={emailSettings.partnerNotification.body || ''} onChange={e => setEmailSettings(s => ({...s, partnerNotification: {...s.partnerNotification!, body: e.target.value}}))} />
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

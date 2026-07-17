@@ -4,7 +4,7 @@ import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
-  deal_value, created_at, updated_at, deleted_at`;
+  deal_value, created_at, updated_at, deleted_at, scraper_log_id`;
 
 function jsonArray(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -59,6 +59,13 @@ export async function findLeads(
     conditions.push(`tags && $${i++}`); // array overlap
     params.push(filters.tags);
   }
+  if (filters.created_after) {
+    conditions.push(`created_at >= $${i++}`);
+    params.push(filters.created_after);
+  }
+  if (filters.unclassified) {
+    conditions.push(`classification IS NULL`);
+  }
   if (filters.cursorTs && filters.cursorId) {
     conditions.push(`(created_at, id) < ($${i}, $${i + 1})`);
     params.push(filters.cursorTs, filters.cursorId);
@@ -98,16 +105,39 @@ export async function findExistingForDedup(
   );
 }
 
+/** All non-deleted leads created by a given scraper run, newest first. */
+export async function findLeadsByScraperLogId(scraperLogId: string): Promise<LeadRow[]> {
+  return query<LeadRow>(
+    `SELECT ${COLS} FROM leads
+     WHERE scraper_log_id = $1
+       AND deleted_at IS NULL
+     ORDER BY created_at DESC`,
+    [scraperLogId],
+  );
+}
+
+/** Non-deleted leads matching the given IDs — used to look up duplicate matches. */
+export async function findLeadsByIds(ids: string[]): Promise<LeadRow[]> {
+  if (ids.length === 0) return [];
+  return query<LeadRow>(
+    `SELECT ${COLS} FROM leads
+     WHERE id = ANY($1::uuid[])
+       AND deleted_at IS NULL
+     ORDER BY created_at DESC`,
+    [ids],
+  );
+}
+
 export async function insertLead(input: LeadInput): Promise<LeadRow> {
   const row = await queryOne<LeadRow>(
     `INSERT INTO leads (
        business_name, contact_name, phone, email, website, industry, location, country,
        google_rating, review_count, social_links, source_platform, lead_score, classification,
-       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value
+       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id
      ) VALUES (
        $1, $2, $3, lower($4), $5, $6, $7, $8,
        $9, $10, $11::jsonb, $12, 0, NULL,
-       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18
+       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19
      )
      RETURNING ${COLS}`,
     [
@@ -129,6 +159,7 @@ export async function insertLead(input: LeadInput): Promise<LeadRow> {
       input.tags ?? null,
       input.notes ?? null,
       input.deal_value ?? null,
+      input.scraper_log_id ?? null,
     ],
   );
   if (!row) throw new Error('Failed to insert lead');
@@ -200,6 +231,28 @@ export async function softDeleteLead(id: string): Promise<void> {
   await pool.query(`UPDATE leads SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, [
     id,
   ]);
+}
+
+/**
+ * Set the classification on up to 500 leads in a single UPDATE.
+ * Returns the count of rows actually changed.
+ */
+export async function bulkClassifyLeads(
+  ids: string[],
+  classification: import('../../shared/types').LeadClassification,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  // Build $1, $2, ... $N for the id list; classification is the last param.
+  const placeholders = ids.map((_, idx) => `$${idx + 1}`).join(', ');
+  const classParam = `$${ids.length + 1}`;
+  const result = await pool.query(
+    `UPDATE leads
+        SET classification = ${classParam}, updated_at = NOW()
+      WHERE id IN (${placeholders})
+        AND deleted_at IS NULL`,
+    [...ids, classification],
+  );
+  return result.rowCount ?? 0;
 }
 
 export async function updateLeadStatus(id: string, status: 'active' | 'paused'): Promise<LeadRow> {

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTeamMetrics } from '@/api/teamMetrics';
+import { usePipelines } from '@/api/pipelines';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -7,19 +8,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Users, UserCheck, Clock, Activity, BarChart3, Search } from 'lucide-react';
+import { Users, UserCheck, Clock, Activity, BarChart3, Search, RefreshCw } from 'lucide-react';
 import type { MemberMetrics } from '@/types';
 
-function toStartOfDayIso(date: string): string {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
+function toUtcStartOfDay(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString();
 }
 
-function toEndOfDayIso(date: string): string {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
+function toUtcEndOfDay(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999)).toISOString();
 }
 
 function calculateSummary(metrics: MemberMetrics[]) {
@@ -27,7 +26,10 @@ function calculateSummary(metrics: MemberMetrics[]) {
   const contactedLeads = metrics.reduce((sum, m) => sum + m.contacted_count, 0);
   const totalActivities = metrics.reduce((sum, m) => sum + m.total_activities, 0);
 
-  const totalResponseTime = metrics.reduce((sum, m) => sum + m.avg_response_time * m.contacted_count, 0);
+  const totalResponseTime = metrics.reduce(
+    (sum, m) => sum + (m.avg_response_time ?? 0) * m.contacted_count,
+    0,
+  );
   const avgResponseTime = contactedLeads > 0 ? totalResponseTime / contactedLeads : 0;
 
   return {
@@ -47,7 +49,15 @@ export function TeamDashboardPage() {
   const [to, setTo] = useState<string | undefined>(undefined);
   const [stage, setStage] = useState<string | undefined>(undefined);
 
-  const { data: metrics, isLoading, isError } = useTeamMetrics(from, to, stage);
+  const { data: pipelines } = usePipelines();
+  const { data: metrics, isLoading, isError, refetch, isFetching } = useTeamMetrics(from, to, stage);
+
+  const allStages = useMemo(() => {
+    if (!pipelines) return [];
+    return pipelines.flatMap((p) =>
+      p.stages.map((s) => ({ id: s.id, name: s.name, pipelineName: p.name })),
+    );
+  }, [pipelines]);
 
   const summary = useMemo(() => {
     if (!metrics || metrics.length === 0) return null;
@@ -55,9 +65,9 @@ export function TeamDashboardPage() {
   }, [metrics]);
 
   const handleApply = () => {
-    setFrom(inputFrom ? toStartOfDayIso(inputFrom) : undefined);
-    setTo(inputTo ? toEndOfDayIso(inputTo) : undefined);
-    setStage(inputStage ? inputStage : undefined);
+    setFrom(inputFrom ? toUtcStartOfDay(inputFrom) : undefined);
+    setTo(inputTo ? toUtcEndOfDay(inputTo) : undefined);
+    setStage(inputStage || undefined);
   };
 
   const handleClear = () => {
@@ -108,14 +118,19 @@ export function TeamDashboardPage() {
             <label htmlFor="team-stage" className="block text-xs font-medium text-slate-500">
               Stage
             </label>
-            <Input
+            <select
               id="team-stage"
-              type="text"
-              placeholder="Stage UUID"
               value={inputStage}
               onChange={(e) => setInputStage(e.target.value)}
-              className="mt-1"
-            />
+              className="mt-1 flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+            >
+              <option value="">All Stages</option>
+              {allStages.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.pipelineName} / {s.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex gap-2">
             <Button onClick={handleApply}>Apply</Button>
@@ -172,8 +187,18 @@ export function TeamDashboardPage() {
 
       {/* Table */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Per-member performance</CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="gap-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -187,32 +212,46 @@ export function TeamDashboardPage() {
               icon={<Search className="h-6 w-6" />}
               title="Failed to load team metrics"
               description="There was an error fetching the team dashboard. Try adjusting the filters or retry later."
+              action={
+                <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Retry
+                </Button>
+              }
             />
           ) : metrics && metrics.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Total Leads</TableHead>
-                  <TableHead>Contacted</TableHead>
-                  <TableHead>Contacted %</TableHead>
-                  <TableHead>Avg Response Time</TableHead>
-                  <TableHead>Total Activities</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {metrics.map((member) => (
-                  <TableRow key={member.user_id}>
-                    <TableCell className="font-medium text-slate-900">{member.name}</TableCell>
-                    <TableCell>{member.assigned_count}</TableCell>
-                    <TableCell>{member.contacted_count}</TableCell>
-                    <TableCell>{member.contacted_pct != null ? `${member.contacted_pct.toFixed(1)}%` : '—'}</TableCell>
-                    <TableCell>{member.avg_response_time > 0 ? `${member.avg_response_time}s` : '—'}</TableCell>
-                    <TableCell>{member.total_activities}</TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Total Leads</TableHead>
+                    <TableHead>Contacted</TableHead>
+                    <TableHead>Contacted %</TableHead>
+                    <TableHead>Avg Response Time</TableHead>
+                    <TableHead>Total Activities</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {metrics.map((member) => (
+                    <TableRow key={member.user_id}>
+                      <TableCell className="font-medium text-slate-900">{member.name}</TableCell>
+                      <TableCell>{member.assigned_count}</TableCell>
+                      <TableCell>{member.contacted_count}</TableCell>
+                      <TableCell>
+                        {member.contacted_pct != null ? `${member.contacted_pct.toFixed(1)}%` : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {member.avg_response_time != null && member.avg_response_time > 0
+                          ? `${Math.round(member.avg_response_time)}s`
+                          : '—'}
+                      </TableCell>
+                      <TableCell>{member.total_activities}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           ) : (
             <EmptyState
               icon={<BarChart3 className="h-6 w-6" />}

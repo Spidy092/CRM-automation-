@@ -111,26 +111,51 @@ const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
   hunter: [
     { key: 'api_key', label: 'Hunter.io API Key', type: 'password', required: true, helpText: 'Get your free API key at hunter.io' },
   ],
+  mailchimp: [
+    { key: 'apiKey',       label: 'API Key',       type: 'password', required: true, placeholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-us1', helpText: 'Found in Mailchimp → Account → Extras → API keys.' },
+    { key: 'serverPrefix', label: 'Server Prefix', required: true, placeholder: 'us1', helpText: 'The part after the dash in your API key (e.g. us1, us6).' },
+    { key: 'listId',       label: 'Audience / List ID', helpText: 'The default audience to sync leads into. Found in Audience → Settings → Audience name and defaults.' },
+  ],
+  stripe: [
+    { key: 'secretKey',     label: 'Secret Key',     type: 'password', required: true, placeholder: 'sk_live_...', helpText: 'From Stripe Dashboard → Developers → API keys. Use sk_test_... for testing.' },
+    { key: 'webhookSecret', label: 'Webhook Secret', type: 'password', helpText: 'Optional — from Stripe Dashboard → Webhooks → your endpoint → Signing secret.' },
+  ],
+  zapier: [
+    { key: 'webhookUrl', label: 'Zapier Catch Hook URL', required: true, placeholder: 'https://hooks.zapier.com/hooks/catch/...', helpText: 'Create a Zap with "Webhooks by Zapier" trigger → Catch Hook, then paste the webhook URL here.' },
+  ],
+  linkedin: [
+    { key: 'accessToken',    label: 'Access Token',    type: 'password', required: true, helpText: 'OAuth 2.0 access token from LinkedIn Developer portal → Auth tab.' },
+    { key: 'organizationId', label: 'Organization ID', helpText: 'Your LinkedIn Company Page numeric ID (found in the page URL).' },
+  ],
+  telegram: [
+    { key: 'botToken',      label: 'Bot Token',         type: 'password', required: true, placeholder: '123456789:ABCdef...', helpText: 'Create a bot via @BotFather on Telegram. The token is shown after /newbot.' },
+    { key: 'defaultChatId', label: 'Default Chat ID',   helpText: 'Optional — the default chat/group ID to send messages to when no chatId is specified on a lead.' },
+  ],
 };
 
 // ── Category mapping ───────────────────────────────────────────────────────
 
 const CATEGORY_MAP: Record<string, string> = {
-  whatsapp: 'Messaging',
-  twilio: 'Messaging',
-  sendgrid: 'Messaging',
-  smtp: 'Messaging',
-  openwa: 'Messaging',
-  google_sheets: 'Productivity',
+  whatsapp:        'Messaging',
+  twilio:          'Messaging',
+  sendgrid:        'Messaging',
+  smtp:            'Messaging',
+  openwa:          'Messaging',
+  telegram:        'Messaging',
+  google_sheets:   'Productivity',
   google_calendar: 'Productivity',
-  outlook: 'Productivity',
-  google_ads: 'Advertising',
-  facebook: 'Advertising',
-  google_drive: 'Storage',
-  hunter: 'Data Enrichment',
+  outlook:         'Productivity',
+  zapier:          'Automation',
+  google_ads:      'Advertising',
+  facebook:        'Advertising',
+  linkedin:        'Lead Generation',
+  hunter:          'Data Enrichment',
+  mailchimp:       'Email Marketing',
+  stripe:          'Payments',
+  google_drive:    'Storage',
 };
 
-const CATEGORY_ORDER = ['Messaging', 'Productivity', 'Advertising', 'Data Enrichment', 'Storage', 'Other'];
+const CATEGORY_ORDER = ['Messaging', 'Email Marketing', 'Lead Generation', 'Advertising', 'Automation', 'Productivity', 'Payments', 'Data Enrichment', 'Storage', 'Other'];
 
 function getCategory(name: string): string {
   return CATEGORY_MAP[name] ?? 'Other';

@@ -113,8 +113,10 @@ describe('chat.actions — toolNameToActionName', () => {
     }
   });
 
-  it('replaces only the first "__" occurrence', () => {
-    // toolNameToActionName uses String.replace (no /g flag), so only first "__" -> "."
-    expect(toolNameToActionName('a__b__c')).toBe('a.b__c');
+  it('replaces every "__" occurrence (multi-dot action names)', () => {
+    // Actions like ai.inbox.action / campaign.brief.get need a global mapping.
+    expect(toolNameToActionName('a__b__c')).toBe('a.b.c');
+    expect(toolNameToActionName('ai__inbox__action')).toBe('ai.inbox.action');
+    expect(toolNameToActionName('custom_field__list')).toBe('custom_field.list');
   });
 });

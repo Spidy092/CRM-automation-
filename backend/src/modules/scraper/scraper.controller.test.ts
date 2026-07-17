@@ -1,5 +1,11 @@
 import { Request, Response } from 'express';
-import { listConfigsHandler, createConfigHandler } from './scraper.controller';
+import {
+  listConfigsHandler,
+  createConfigHandler,
+  getRunLeadsHandler,
+  retryFailedHandler,
+  getStatsSummaryHandler,
+} from './scraper.controller';
 import * as service from './scraper.service';
 
 jest.mock('./scraper.service');
@@ -36,12 +42,85 @@ describe('Scraper Controller', () => {
       (service.createConfig as jest.Mock).mockResolvedValue({ id: '1', name: 'Test' });
 
       await createConfigHandler(req as Request, res as Response, (() => {}) as any);
-      
+
       expect(res.status).toHaveBeenCalledWith(201);
       expect(res.json).toHaveBeenCalledWith({
         success: true,
         data: { id: '1', name: 'Test' },
       });
+    });
+  });
+
+  describe('getRunLeadsHandler', () => {
+    it('returns leads for the run', async () => {
+      req.params = { logId: 'log-1' } as any;
+      (service.getLeadsForRun as jest.Mock).mockResolvedValue([{ id: 'lead-1' }]);
+
+      await getRunLeadsHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.getLeadsForRun).toHaveBeenCalledWith('log-1');
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: [{ id: 'lead-1' }],
+      });
+    });
+
+    it('forwards errors to next', async () => {
+      req.params = { logId: 'missing' } as any;
+      const err = new Error('not found');
+      (service.getLeadsForRun as jest.Mock).mockRejectedValue(err);
+      const next = jest.fn();
+
+      await getRunLeadsHandler(req as Request, res as Response, next as any);
+
+      expect(next).toHaveBeenCalledWith(err);
+    });
+  });
+
+  describe('retryFailedHandler', () => {
+    it('retries failed items for the run', async () => {
+      req.params = { logId: 'log-1' } as any;
+      (service.retryFailedItems as jest.Mock).mockResolvedValue({
+        logId: 'retry-log-1',
+        status: 'completed',
+      });
+
+      await retryFailedHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.retryFailedItems).toHaveBeenCalledWith(
+        'log-1',
+        expect.objectContaining({ id: '1', role: 'admin' }),
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: { logId: 'retry-log-1', status: 'completed' },
+      });
+    });
+  });
+
+  describe('getStatsSummaryHandler', () => {
+    it('returns the aggregated summary using the query hours param', async () => {
+      req.query = { hours: '48' } as any;
+      (service.getStatsSummary as jest.Mock).mockResolvedValue({ windowHours: 48, totalRuns: 3 });
+
+      await getStatsSummaryHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.getStatsSummary).toHaveBeenCalledWith(48);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: { windowHours: 48, totalRuns: 3 },
+      });
+    });
+
+    it('defaults to 24 hours when no query param is given', async () => {
+      req.query = {} as any;
+      (service.getStatsSummary as jest.Mock).mockResolvedValue({ windowHours: 24, totalRuns: 0 });
+
+      await getStatsSummaryHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.getStatsSummary).toHaveBeenCalledWith(24);
     });
   });
 });

@@ -12,5 +12,6 @@ export function useTeamMetrics(from?: string, to?: string, stage?: string) {
       });
       return response.data.data;
     },
+    staleTime: 60_000,
   });
 }

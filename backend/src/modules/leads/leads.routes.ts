@@ -14,6 +14,7 @@ import {
   pauseLeadHandler,
   updateLeadHandler,
   enrichLeadHandler,
+  bulkClassifyHandler,
 } from './leads.controller';
 
 const router = Router();
@@ -54,5 +55,8 @@ router.post('/:id/pause', authorize('admin', 'manager', 'sales'), wrap(pauseLead
 
 // Enrich data using Hunter.io — Admin, Manager, Sales
 router.post('/:id/enrich', authorize('admin', 'manager', 'sales'), wrap(enrichLeadHandler));
+
+// Bulk classify — Admin, Manager only.
+router.post('/bulk-classify', authorize('admin', 'manager'), wrap(bulkClassifyHandler));
 
 export { router as leadsRoutes };

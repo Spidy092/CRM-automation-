@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient as api } from './client';
 
 export type BuyingIntent = 'high' | 'medium' | 'low' | 'unknown';
@@ -92,6 +92,19 @@ export const useLeadDecisions = (leadId: string, limit = 20) => {
       return data.data;
     },
     enabled: !!leadId,
+  });
+};
+
+/** Manually (re-)triggers AI research for a lead. */
+export const useTriggerLeadResearch = (leadId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      await api.post(`/ai-intelligence/leads/${leadId}/research`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-profile', leadId] });
+    },
   });
 };
 

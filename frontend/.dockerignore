@@ -13,9 +13,5 @@
 **/.dockerignore
 **/eslint.config.js
 **/.eslintrc*
-**/tsconfig.json
-**/tsconfig.*.json
-**/vite.config.ts
 **/coverage
 **/.vitest*
-**/public

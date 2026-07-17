@@ -178,7 +178,7 @@ If the resolver sees multiple possible matches, it should ask a name-based clari
 
 The in-app Copilot currently works through the CRM agent action catalog, not arbitrary tools.
 
-Current action catalog:
+Current action catalog (57 actions as of 2026-07-15 — see `backend/src/modules/agent/agent.actions.ts`):
 
 | Action | Purpose | Risk |
 |---|---|---|
@@ -199,6 +199,52 @@ Current action catalog:
 | `outreach.send_manual` | Enqueue manual outreach. | Customer-facing write |
 | `ai.decision.recompute` | Recompute next best action for a lead. | Low-risk write |
 | `ai.inbox.action` | Approve, reject, or snooze a visible AI Inbox item. | Compliance-critical |
+| `template.list` / `template.create` | List / create message templates. | Read / Sensitive write |
+| `sequence.create` / `sequence.list` | Create / list outreach sequences. | Sensitive write / Read |
+| `campaign.create` / `campaign.add_leads` | Create a draft campaign / add leads to a campaign. | Sensitive write |
+| `pipeline.list` | List pipelines and stages. | Read |
+| `scraper.list` | List scraper source configs. | Read |
+
+### Gap-closing actions added 2026-07-15
+
+The action catalog originally covered 8 of 28 backend modules end-to-end. The actions below close that gap — every module now has at least a read action, and modules with meaningful write workflows (activities, templates approval, custom fields, scoring, campaign briefs) also get scoped write actions. All follow the same pattern: Zod-validated args, RBAC via `allowedRoles`, a `riskTier` evaluated by `agent.policy.ts`, and (for writes) audit logging / AI Inbox approval where the risk tier requires it.
+
+| Action | Module | Purpose | Risk |
+|---|---|---|---|
+| `activity.list` | activities | List a lead's activity timeline. | Read |
+| `activity.log` | activities | Log a manual call/whatsapp/email/note activity. | Low-risk write |
+| `team.metrics` | team-metrics | Per-rep performance and response-time metrics for a date range. | Read |
+| `ai.reply.classify` | ai-reply | Enqueue AI classification of an inbound reply. | Low-risk write |
+| `ai.reply.history` | ai-reply | List past reply classification decisions. | Read |
+| `campaign.brief.get` | ai-campaign-brain | Read a campaign's AI pre-launch brief. | Read |
+| `campaign.brief.generate` | ai-campaign-brain | Enqueue generation of a campaign AI brief. | Low-risk write |
+| `campaign.brief.approve` | ai-campaign-brain | Approve or reject a generated campaign brief. | Compliance-critical |
+| `lead.ai_profile.get` | ai-intelligence | Read a lead's AI memory profile. | Read |
+| `lead.research.trigger` | ai-intelligence | Enqueue AI research for a lead. | Low-risk write |
+| `ai.decision_log.list` | ai-intelligence | Global AI decision-log audit trail (admin only). | Read |
+| `ai.settings.get` | ai-settings | Read AI provider settings (never exposes the API key). | Read |
+| `scoring.rules.list` | scoring | List lead scoring rules. | Read |
+| `lead.rescore` | scoring | Recalculate score/classification for one lead. | Low-risk write |
+| `scoring.recalculate_all` | scoring | Recalculate scores for every lead (admin only). | Sensitive write |
+| `template.get` | templates | Get a single template. | Read |
+| `template.approve` | templates | Approve or reject a pending template. | Sensitive write |
+| `report.get` | reports | Get any of the 6 report types (lead_generation, outreach, pipeline, sales_rep, campaign_analytics, integration_health). | Read |
+| `report.export` | reports | Enqueue a CSV/XLSX/PDF export job. | Low-risk write |
+| `integration.list` | integrations | List connector status. | Read |
+| `integration.test` | integrations | Test a connector's credentials (admin only, never returns decrypted secrets). | Low-risk write |
+| `custom_field.list` | custom-fields | List custom field definitions. | Read |
+| `custom_field.create` | custom-fields | Create a new custom field definition (admin only). | Sensitive write |
+| `user.list` | users | List active users for assignment targets (admin/manager only). | Read |
+| `ab_test.list` | ab-testing | List A/B variants for a template. | Read |
+| `ab_test.results` | ab-testing | Get the statistical significance report for a template's variants. | Read |
+| `form.list` | forms | List lead-capture forms. | Read |
+| `form.analytics` | forms | Get conversion analytics for a form. | Read |
+| `scheduling.bookings.list` | scheduling | List the requesting user's own bookings. | Read |
+| `scheduling.slots` | scheduling | Get available booking slots for a user/date. | Read |
+| `outreach.tasks.list` | outreach | List follow-up tasks (admin/manager/sales). | Read |
+| `assignment.eligible_users` | assignments | List users eligible for round-robin assignment (admin/manager). | Read |
+
+Not exposed as Copilot actions (by design, per `CLAUDE.md` Absolute Rules and the AI Architecture Rules): auth/session/RBAC management, migrations, `.env`/API-key reads, hard deletes, and `researchLead`/`generateCampaignBrief`/reply-classification synchronous execution — these route through the existing event-driven BullMQ workers (`enqueueAiResearch`, `enqueueAiCampaignBrief`, `enqueueAiClassifyReply`) rather than being called directly from the action executor, preserving the "AI workers must be purely event-reactive" rule.
 
 Important files:
 

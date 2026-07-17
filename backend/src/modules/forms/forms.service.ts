@@ -22,6 +22,8 @@ import {
 } from './forms.repository';
 import { insertLead } from '../leads/leads.repository';
 import { clampLimit } from '../../shared/utils/pagination';
+import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
+import * as smtp from '../integrations/smtp/smtp.connector';
 
 function slugify(name: string): string {
   return name
@@ -29,6 +31,95 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 100);
+}
+
+function renderTemplate(template: string, data: Record<string, unknown>): string {
+  if (!template) return '';
+  return template.replace(/\{([^}]+)\}/g, (match, key) => {
+    return data[key] !== undefined ? String(data[key]) : match;
+  });
+}
+
+async function sendSystemEmail(
+  to: string,
+  subject: string,
+  htmlBody: string,
+  leadId?: string,
+  fromEmail?: string,
+  fromName?: string,
+) {
+  const emailInput = {
+    to,
+    subject,
+    htmlBody,
+    leadId: leadId ?? 'system',
+    fromEmail,
+    fromName,
+  };
+
+  try {
+    const sgRes = await sendgrid.sendEmail(emailInput);
+    if (sgRes.ok) return;
+  } catch (err) {
+    logger.warn('SendGrid failed for system email, falling back to SMTP', { error: (err as Error).message });
+  }
+
+  try {
+    await smtp.sendEmail(emailInput);
+  } catch (err) {
+    logger.error('SMTP failed for system email', { error: (err as Error).message });
+  }
+}
+
+async function dispatchFormEmails(form: FormRow, data: Record<string, unknown>, leadId?: string) {
+  const settings = form.email_settings;
+  if (!settings) return;
+
+  const getEmailAddress = (field: string) => {
+    const rendered = renderTemplate(field, data);
+    return rendered.split(',').map(e => e.trim()).filter(Boolean);
+  };
+
+  // 1. Auto Reply
+  if (settings.autoReply?.enabled) {
+    const toEmail = String(data.email || data.contact_email || '');
+    if (toEmail && toEmail.includes('@')) {
+      await sendSystemEmail(
+        toEmail,
+        renderTemplate(settings.autoReply.subject, data),
+        renderTemplate(settings.autoReply.body, data),
+        leadId,
+        settings.autoReply.fromEmail,
+        settings.autoReply.fromName
+      );
+    }
+  }
+
+  // 2. Team Notification
+  if (settings.teamNotification?.enabled && settings.teamNotification.emails) {
+    const emails = getEmailAddress(settings.teamNotification.emails);
+    for (const to of emails) {
+      await sendSystemEmail(
+        to,
+        renderTemplate(settings.teamNotification.subject, data),
+        renderTemplate(settings.teamNotification.body, data),
+        leadId
+      );
+    }
+  }
+
+  // 3. Partner Notification
+  if (settings.partnerNotification?.enabled && settings.partnerNotification.emails) {
+    const emails = getEmailAddress(settings.partnerNotification.emails);
+    for (const to of emails) {
+      await sendSystemEmail(
+        to,
+        renderTemplate(settings.partnerNotification.subject, data),
+        renderTemplate(settings.partnerNotification.body, data),
+        leadId
+      );
+    }
+  }
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -75,6 +166,7 @@ export async function createForm(input: CreateFormInput, actor: FormActor): Prom
     redirect_url: input.redirect_url ?? null,
     is_active: input.is_active ?? true,
     theme: input.theme ?? {},
+    email_settings: input.email_settings as any ?? {},
     created_by: actor.id,
   });
 
@@ -114,6 +206,7 @@ export async function updateFormById(
     redirect_url: input.redirect_url,
     is_active: input.is_active,
     theme: input.theme,
+    email_settings: input.email_settings as any,
   });
 
   await writeAuditLog({
@@ -226,6 +319,11 @@ export async function submitForm(
     ip_address: meta.ipAddress ?? null,
     user_agent: meta.userAgent ?? null,
     referrer: meta.referrer ?? null,
+  });
+
+  // Dispatch Emails based on form.email_settings
+  dispatchFormEmails(form, data, leadId).catch(err => {
+    logger.error('Failed to dispatch form emails', { formId: form.id, error: err.message });
   });
 
   return {

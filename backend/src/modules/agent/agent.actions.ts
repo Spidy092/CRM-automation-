@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { enqueueAiDecision } from '../../workers/queue';
+import { enqueueAiDecision, enqueueAiCampaignBrief, enqueueAiResearch } from '../../workers/queue';
 import {
   listLeads,
   getLeadById,
@@ -18,12 +18,48 @@ import {
   launchCampaignById,
   getStats,
 } from '../campaigns/campaigns.service';
-import { overrideAssignment } from '../assignments/assignments.service';
-import { getDashboardMetrics } from '../reports/reports.service';
+import { overrideAssignment, getEligibleUsers } from '../assignments/assignments.service';
+import {
+  getDashboardMetrics,
+  getLeadGenerationReport,
+  getOutreachReport,
+  getPipelineReport,
+  getSalesRepReport,
+  getCampaignAnalyticsReport,
+  getIntegrationHealthReport,
+  enqueueExportJob,
+} from '../reports/reports.service';
 import { listConfigs, runScrape } from '../scraper/scraper.service';
-import { listSequences, createSequence, sendManualOutreach } from '../outreach/outreach.service';
-import { listTemplates, createTemplate } from '../templates/templates.service';
+import {
+  listSequences,
+  createSequence,
+  sendManualOutreach,
+  listTasks,
+} from '../outreach/outreach.service';
+import {
+  listTemplates,
+  createTemplate,
+  getTemplate,
+  approveTemplate,
+} from '../templates/templates.service';
 import { getAllPipelines, getPipelineById } from '../pipeline/pipeline.service';
+import { listActivities, createManualActivity } from '../activities/activities.service';
+import { getTeamMetrics } from '../team-metrics/teamMetrics.service';
+import { triggerClassification, getReplyHistory } from '../ai-reply/ai-reply.service';
+import {
+  getCampaignBrief,
+  approveCampaignBrief,
+  rejectCampaignBrief,
+} from '../ai-campaign-brain/ai-campaign-brain.service';
+import { getAiProfile, getDecisions } from '../ai-intelligence/ai-intelligence.service';
+import { getAiSettingsPublic } from '../ai-settings/ai-settings.service';
+import { getAllRules, calculateLeadScore, recalculateAllScores } from '../scoring/scoring.service';
+import { listIntegrations, testIntegration } from '../integrations/integrations.service';
+import { listDefinitions, createDefinition } from '../custom-fields/customFields.service';
+import { listUsers } from '../users/users.service';
+import { listTemplateVariants, getTemplateABTestReport } from '../ab-testing/template-ab.service';
+import { listForms, getFormAnalyticsById } from '../forms/forms.service';
+import { listBookings, getAvailableSlots } from '../scheduling/scheduling.service';
 import type { AgentActionDefinition, AgentActionName, AgentActor } from './agent.types';
 import {
   aiDecisionRecomputeArgsSchema,
@@ -45,6 +81,30 @@ import {
   sequenceListArgsSchema,
   templateCreateArgsSchema,
   templateListArgsSchema,
+  activityListArgsSchema,
+  activityLogArgsSchema,
+  teamMetricsArgsSchema,
+  aiReplyClassifyArgsSchema,
+  aiReplyHistoryArgsSchema,
+  campaignBriefGetArgsSchema,
+  campaignBriefGenerateArgsSchema,
+  campaignBriefApproveArgsSchema,
+  leadAiProfileGetArgsSchema,
+  leadResearchTriggerArgsSchema,
+  aiDecisionLogListArgsSchema,
+  leadRescoreArgsSchema,
+  templateGetArgsSchema,
+  templateApproveArgsSchema,
+  reportGetArgsSchema,
+  reportExportArgsSchema,
+  integrationIdArgsSchema,
+  customFieldListArgsSchema,
+  customFieldCreateArgsSchema,
+  abTestTemplateArgsSchema,
+  formListArgsSchema,
+  formAnalyticsArgsSchema,
+  schedulingSlotsArgsSchema,
+  outreachTasksListArgsSchema,
 } from './agent.schema';
 
 function requireActor(actor: AgentActor | null): AgentActor {
@@ -332,6 +392,390 @@ export const AGENT_ACTIONS: Record<AgentActionName, AgentActionDefinition> = {
         parsed.idempotency_key,
       );
     },
+  },
+  'activity.list': {
+    name: 'activity.list',
+    description: 'List the activity timeline entries for a lead.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'viewer'],
+    schema: activityListArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ leadId: args.leadId as string }),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof activityListArgsSchema>;
+      return listActivities(parsed.leadId, requireActor(actor), {
+        limit: parsed.limit,
+        offset: parsed.offset,
+        type: parsed.type,
+      });
+    },
+  },
+  'activity.log': {
+    name: 'activity.log',
+    description: 'Log a manual activity (call, whatsapp, email, or note) on a lead.',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin', 'manager', 'sales'],
+    schema: activityLogArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ leadId: args.leadId as string }),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof activityLogArgsSchema>;
+      const act = requireActor(actor);
+      return createManualActivity(parsed.leadId, act.id, parsed.type, parsed.metadata);
+    },
+  },
+  'team.metrics': {
+    name: 'team.metrics',
+    description:
+      'Get per-rep team performance metrics (response times, conversions) for a date range.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: teamMetricsArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof teamMetricsArgsSchema>;
+      const result = await getTeamMetrics(parsed, requireActor(actor));
+      if (!result.ok) throw result.error;
+      return { items: result.value };
+    },
+  },
+  'ai.reply.classify': {
+    name: 'ai.reply.classify',
+    description: 'Enqueue AI classification of an inbound reply message for a lead.',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing'],
+    schema: aiReplyClassifyArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ leadId: args.leadId as string }),
+    execute: async (args) => {
+      const parsed = args as z.infer<typeof aiReplyClassifyArgsSchema>;
+      await triggerClassification(parsed);
+      return { enqueued: true, leadId: parsed.leadId };
+    },
+  },
+  'ai.reply.history': {
+    name: 'ai.reply.history',
+    description:
+      'List past AI reply classification decisions, optionally filtered by lead or campaign.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'viewer'],
+    schema: aiReplyHistoryArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({
+      leadId: (args.leadId as string) ?? null,
+      campaignId: (args.campaignId as string) ?? null,
+    }),
+    execute: async (args) => getReplyHistory(args as z.infer<typeof aiReplyHistoryArgsSchema>),
+  },
+  'campaign.brief.get': {
+    name: 'campaign.brief.get',
+    description:
+      'Read the AI-generated pre-launch strategy brief for a campaign (null if none generated yet).',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'marketing', 'sales', 'viewer'],
+    schema: campaignBriefGetArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ campaignId: args.campaignId as string }),
+    execute: async (args) => getCampaignBrief((args as { campaignId: string }).campaignId),
+  },
+  'campaign.brief.generate': {
+    name: 'campaign.brief.generate',
+    description: 'Enqueue generation of an AI pre-launch strategy brief for a campaign.',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin', 'manager'],
+    schema: campaignBriefGenerateArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ campaignId: args.campaignId as string }),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof campaignBriefGenerateArgsSchema>;
+      await enqueueAiCampaignBrief({
+        campaignId: parsed.campaignId,
+        triggeredBy: requireActor(actor).id,
+      });
+      return { enqueued: true, campaignId: parsed.campaignId };
+    },
+  },
+  'campaign.brief.approve': {
+    name: 'campaign.brief.approve',
+    description: 'Approve or reject a generated campaign AI brief.',
+    riskTier: 'compliance_critical',
+    allowedRoles: ['admin', 'manager'],
+    schema: campaignBriefApproveArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ campaignId: args.campaignId as string }),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof campaignBriefApproveArgsSchema>;
+      const act = requireActor(actor);
+      return parsed.decision === 'approve'
+        ? approveCampaignBrief(parsed.campaignId, act.id)
+        : rejectCampaignBrief(parsed.campaignId);
+    },
+  },
+  'lead.ai_profile.get': {
+    name: 'lead.ai_profile.get',
+    description: "Read a lead's AI memory profile (buying signals, objections, next best action).",
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: leadAiProfileGetArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ leadId: args.leadId as string }),
+    execute: async (args) => getAiProfile((args as { leadId: string }).leadId),
+  },
+  'lead.research.trigger': {
+    name: 'lead.research.trigger',
+    description:
+      'Enqueue AI research for a lead (re-researches even if a profile already exists when force is set).',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing'],
+    schema: leadResearchTriggerArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ leadId: args.leadId as string }),
+    execute: async (args) => {
+      const parsed = args as z.infer<typeof leadResearchTriggerArgsSchema>;
+      await enqueueAiResearch({ leadId: parsed.leadId, force: parsed.force });
+      return { enqueued: true, leadId: parsed.leadId };
+    },
+  },
+  'ai.decision_log.list': {
+    name: 'ai.decision_log.list',
+    description: 'Global AI decision-log audit trail across all leads.',
+    riskTier: 'read',
+    allowedRoles: ['admin'],
+    schema: aiDecisionLogListArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => getDecisions(args as z.infer<typeof aiDecisionLogListArgsSchema>),
+  },
+  'ai.settings.get': {
+    name: 'ai.settings.get',
+    description: 'Read the current AI provider settings (never exposes the raw API key).',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async () => getAiSettingsPublic(),
+  },
+  'scoring.rules.list': {
+    name: 'scoring.rules.list',
+    description: 'List lead scoring rules.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async () => ({ items: await getAllRules() }),
+  },
+  'lead.rescore': {
+    name: 'lead.rescore',
+    description: 'Recalculate the score and classification (hot/warm/cold) for a single lead.',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin', 'manager'],
+    schema: leadRescoreArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({ leadId: args.leadId as string }),
+    execute: async (args) => calculateLeadScore((args as { leadId: string }).leadId),
+  },
+  'scoring.recalculate_all': {
+    name: 'scoring.recalculate_all',
+    description: 'Recalculate scores for every lead. Heavy batch operation — admin only.',
+    riskTier: 'sensitive_write',
+    allowedRoles: ['admin'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async () => recalculateAllScores(),
+  },
+  'template.get': {
+    name: 'template.get',
+    description: 'Get a single message template by id.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: templateGetArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => getTemplate((args as { id: string }).id),
+  },
+  'template.approve': {
+    name: 'template.approve',
+    description: 'Approve or reject a pending message template.',
+    riskTier: 'sensitive_write',
+    allowedRoles: ['admin', 'marketing'],
+    schema: templateApproveArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof templateApproveArgsSchema>;
+      return approveTemplate(
+        parsed.id,
+        { approved: parsed.approved, rejection_reason: parsed.rejection_reason },
+        requireActor(actor),
+      );
+    },
+  },
+  'report.get': {
+    name: 'report.get',
+    description:
+      'Get an analytics report (lead_generation, outreach, pipeline, sales_rep, campaign_analytics, or integration_health).',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: reportGetArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof reportGetArgsSchema>;
+      const act = requireActor(actor);
+      const filters = {
+        limit: parsed.limit,
+        offset: parsed.offset,
+        startDate: parsed.startDate,
+        endDate: parsed.endDate,
+      };
+      switch (parsed.reportType) {
+        case 'lead_generation':
+          return getLeadGenerationReport(filters, act);
+        case 'outreach':
+          return getOutreachReport(filters, act);
+        case 'pipeline':
+          return getPipelineReport(filters, act);
+        case 'sales_rep':
+          return getSalesRepReport(filters, act);
+        case 'campaign_analytics':
+          return getCampaignAnalyticsReport(filters, act);
+        case 'integration_health':
+          return { items: await getIntegrationHealthReport(act) };
+        default:
+          throw new AppError(`Unsupported report type: ${String(parsed.reportType)}`, 400);
+      }
+    },
+  },
+  'report.export': {
+    name: 'report.export',
+    description: 'Enqueue an async CSV/XLSX/PDF export job for a report.',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: reportExportArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) =>
+      enqueueExportJob(args as z.infer<typeof reportExportArgsSchema>, requireActor(actor)),
+  },
+  'integration.list': {
+    name: 'integration.list',
+    description: 'List third-party integration connectors and their enabled/health status.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async () => ({ items: await listIntegrations() }),
+  },
+  'integration.test': {
+    name: 'integration.test',
+    description: 'Test a single integration connection (never returns decrypted credentials).',
+    riskTier: 'low_risk_write',
+    allowedRoles: ['admin'],
+    schema: integrationIdArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) =>
+      testIntegration((args as { id: string }).id, requireActor(actor)),
+  },
+  'custom_field.list': {
+    name: 'custom_field.list',
+    description: 'List custom field definitions.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: customFieldListArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => ({
+      items: await listDefinitions(
+        Boolean((args as { includeInactive?: boolean }).includeInactive),
+      ),
+    }),
+  },
+  'custom_field.create': {
+    name: 'custom_field.create',
+    description: 'Create a new custom field definition.',
+    riskTier: 'sensitive_write',
+    allowedRoles: ['admin'],
+    schema: customFieldCreateArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) =>
+      createDefinition(args as z.infer<typeof customFieldCreateArgsSchema>, requireActor(actor)),
+  },
+  'user.list': {
+    name: 'user.list',
+    description: 'List all active users (for assignment targets).',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async () => ({ items: await listUsers() }),
+  },
+  'ab_test.list': {
+    name: 'ab_test.list',
+    description: 'List A/B test variants for a template.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: abTestTemplateArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => ({
+      items: await listTemplateVariants((args as { templateId: string }).templateId),
+    }),
+  },
+  'ab_test.results': {
+    name: 'ab_test.results',
+    description: 'Get the A/B test statistical significance report for a template.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: abTestTemplateArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => getTemplateABTestReport((args as { templateId: string }).templateId),
+  },
+  'form.list': {
+    name: 'form.list',
+    description: 'List lead-capture forms.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: formListArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => {
+      const parsed = args as z.infer<typeof formListArgsSchema>;
+      return listForms(parsed.limit, parsed.offset);
+    },
+  },
+  'form.analytics': {
+    name: 'form.analytics',
+    description: 'Get submission analytics (conversion rate, unique leads) for a form.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: formAnalyticsArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) =>
+      getFormAnalyticsById((args as { formId: string }).formId, requireActor(actor)),
+  },
+  'scheduling.bookings.list': {
+    name: 'scheduling.bookings.list',
+    description: "List the requesting user's own scheduled bookings.",
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (_args, actor) => ({ items: await listBookings(requireActor(actor).id) }),
+  },
+  'scheduling.slots': {
+    name: 'scheduling.slots',
+    description: 'Get available booking slots for a user on a given date.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing', 'viewer'],
+    schema: schedulingSlotsArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args) => {
+      const parsed = args as z.infer<typeof schedulingSlotsArgsSchema>;
+      return getAvailableSlots(parsed.userId, parsed.date);
+    },
+  },
+  'outreach.tasks.list': {
+    name: 'outreach.tasks.list',
+    description: 'List outreach follow-up tasks, optionally scoped to the current user.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager', 'sales'],
+    schema: outreachTasksListArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async (args, actor) => {
+      const parsed = args as z.infer<typeof outreachTasksListArgsSchema>;
+      return { items: await listTasks(parsed, requireActor(actor)) };
+    },
+  },
+  'assignment.eligible_users': {
+    name: 'assignment.eligible_users',
+    description: 'List users currently eligible for round-robin lead assignment.',
+    riskTier: 'read',
+    allowedRoles: ['admin', 'manager'],
+    schema: emptyArgsSchema as AgentActionDefinition['schema'],
+    entity: () => ({}),
+    execute: async () => ({ items: await getEligibleUsers() }),
   },
 };
 

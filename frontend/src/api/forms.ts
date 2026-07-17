@@ -23,6 +23,28 @@ export interface PublicForm {
   theme: Record<string, unknown>;
 }
 
+export interface EmailSettings {
+  autoReply?: {
+    enabled: boolean;
+    fromName: string;
+    fromEmail: string;
+    subject: string;
+    body: string;
+  };
+  teamNotification?: {
+    enabled: boolean;
+    emails: string;
+    subject: string;
+    body: string;
+  };
+  partnerNotification?: {
+    enabled: boolean;
+    emails: string;
+    subject: string;
+    body: string;
+  };
+}
+
 export interface Form {
   id: string;
   name: string;
@@ -34,6 +56,7 @@ export interface Form {
   redirect_url: string | null;
   is_active: boolean;
   theme: Record<string, unknown>;
+  email_settings: EmailSettings;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -71,6 +94,7 @@ export interface CreateFormInput {
   redirect_url?: string | null;
   is_active?: boolean;
   theme?: Record<string, unknown>;
+  email_settings?: EmailSettings;
 }
 
 export type UpdateFormInput = Partial<CreateFormInput>;

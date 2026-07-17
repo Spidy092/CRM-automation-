@@ -6,6 +6,7 @@ import {
   updateScraperConfigSchema,
   listLogsQuerySchema,
   detectSelectorsSchema,
+  statsSummaryQuerySchema,
 } from './scraper.schema';
 import * as scraperService from './scraper.service';
 
@@ -130,6 +131,46 @@ export async function listLogsHandler(
       page: Math.floor((offset ?? 0) / (limit ?? 25)) + 1,
       limit: limit ?? 25,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getRunLeadsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const leads = await scraperService.getLeadsForRun(req.params.logId);
+    sendSuccess(res, leads);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function retryFailedHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const result = await scraperService.retryFailedItems(req.params.logId, actorFromReq(req));
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getStatsSummaryHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { hours } = statsSummaryQuerySchema.parse(req.query);
+    const summary = await scraperService.getStatsSummary(hours);
+    sendSuccess(res, summary);
   } catch (err) {
     next(err);
   }

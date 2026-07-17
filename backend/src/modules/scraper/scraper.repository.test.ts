@@ -1,4 +1,4 @@
-import { findScraperConfigs, findScraperConfigById, insertScraperConfig, updateScraperConfig, deleteScraperConfig, insertScraperLog, updateScraperLog, findScraperLogsByConfig, countScraperLogsByConfig } from './scraper.repository';
+import { findScraperConfigs, findScraperConfigById, insertScraperConfig, updateScraperConfig, deleteScraperConfig, insertScraperLog, updateScraperLog, findScraperLogsByConfig, countScraperLogsByConfig, findScraperLogById, findScraperConfigsWithHealth, sumScraperLogsSince } from './scraper.repository';
 import { query, queryOne, pool } from '../../shared/utils/db';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -88,6 +88,17 @@ describe('Scraper Repository', () => {
       const result = await updateScraperLog('log-1', { status: 'completed' });
       expect(result).toEqual(mockRow);
     });
+
+    it('includes duplicate_lead_ids in the SET clause when provided', async () => {
+      (queryOne as jest.Mock).mockResolvedValue({ id: 'log-1' });
+
+      await updateScraperLog('log-1', { duplicate_lead_ids: ['lead-a', 'lead-b'] });
+
+      expect(queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('duplicate_lead_ids = $1'),
+        [['lead-a', 'lead-b'], 'log-1'],
+      );
+    });
   });
 
   describe('findScraperLogsByConfig', () => {
@@ -103,6 +114,63 @@ describe('Scraper Repository', () => {
       (queryOne as jest.Mock).mockResolvedValue({ count: '5' });
       const result = await countScraperLogsByConfig('1');
       expect(result).toBe(5);
+    });
+  });
+
+  describe('findScraperLogById', () => {
+    it('returns the log row', async () => {
+      (queryOne as jest.Mock).mockResolvedValue({ id: 'log-1' });
+      const result = await findScraperLogById('log-1');
+      expect(result).toEqual({ id: 'log-1' });
+      expect(queryOne).toHaveBeenCalledWith(expect.stringContaining('WHERE id = $1'), ['log-1']);
+    });
+
+    it('returns null when not found', async () => {
+      (queryOne as jest.Mock).mockResolvedValue(null);
+      const result = await findScraperLogById('missing');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('findScraperConfigsWithHealth', () => {
+    it('returns configs with a computed health field', async () => {
+      (query as jest.Mock).mockResolvedValue([
+        { id: '1', name: 'Test', health: 'healthy' },
+        { id: '2', name: 'Broken', health: 'failing' },
+      ]);
+      const result = await findScraperConfigsWithHealth();
+      expect(result).toHaveLength(2);
+      expect(result[1].health).toBe('failing');
+      expect(query).toHaveBeenCalledWith(expect.stringContaining('scraper_configs c'));
+    });
+  });
+
+  describe('sumScraperLogsSince', () => {
+    it('parses aggregate counts from the query result', async () => {
+      (queryOne as jest.Mock).mockResolvedValue({
+        total_runs: '3',
+        active_sources: '2',
+        records_found: '10',
+        records_imported: '6',
+        records_duplicate: '2',
+        records_failed: '2',
+      });
+      const result = await sumScraperLogsSince('2026-01-01T00:00:00.000Z');
+      expect(result).toEqual({
+        totalRuns: 3,
+        activeSources: 2,
+        recordsFound: 10,
+        recordsImported: 6,
+        recordsDuplicate: 2,
+        recordsFailed: 2,
+      });
+    });
+
+    it('returns zeros when there are no matching runs', async () => {
+      (queryOne as jest.Mock).mockResolvedValue(null);
+      const result = await sumScraperLogsSince('2026-01-01T00:00:00.000Z');
+      expect(result.totalRuns).toBe(0);
+      expect(result.activeSources).toBe(0);
     });
   });
 });

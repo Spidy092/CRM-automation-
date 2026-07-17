@@ -12,11 +12,21 @@ import {
   triggerScrapeHandler,
   listLogsHandler,
   detectSelectorsHandler,
+  getRunLeadsHandler,
+  retryFailedHandler,
+  getStatsSummaryHandler,
 } from './scraper.controller';
 
 const router = Router();
 
 router.use(authenticate, authenticatedLimiter);
+
+// Aggregate dashboard stats — same viewer roles as the config list.
+router.get(
+  '/stats/summary',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getStatsSummaryHandler),
+);
 
 // All authenticated roles can view scraper configs
 router.get(
@@ -43,5 +53,11 @@ router.post('/:configId/scrape', authorize('admin'), wrap(triggerScrapeHandler))
 
 // View logs — admin and manager
 router.get('/:configId/logs', authorize('admin', 'manager'), wrap(listLogsHandler));
+
+// Leads created by a specific run — admin and manager (same as viewing logs)
+router.get('/logs/:logId/leads', authorize('admin', 'manager'), wrap(getRunLeadsHandler));
+
+// Retry just the records that failed on a run — admin only (triggers a new run)
+router.post('/logs/:logId/retry-failed', authorize('admin'), wrap(retryFailedHandler));
 
 export { router as scraperRoutes };

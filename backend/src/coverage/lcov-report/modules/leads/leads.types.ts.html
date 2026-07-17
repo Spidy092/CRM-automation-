@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">50% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>1/2</span>
-            </div>
-        
-            
-            <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
-                <span class="quiet">Branches</span>
-                <span class='fraction'>0/8</span>
-            </div>
-        
-            
-            <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
-                <span class="quiet">Functions</span>
-                <span class='fraction'>0/1</span>
+                <span class='fraction'>2/2</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">50% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>4/8</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>1/1</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>1/2</span>
+                <span class='fraction'>2/2</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line medium'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -204,7 +204,14 @@
 <a name='L139'></a><a href='#L139'>139</a>
 <a name='L140'></a><a href='#L140'>140</a>
 <a name='L141'></a><a href='#L141'>141</a>
-<a name='L142'></a><a href='#L142'>142</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -317,8 +324,15 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">20x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -375,6 +389,8 @@ export interface LeadRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  /** The scraper run that created this lead, if any. Null for manual/other sources. */
+  scraper_log_id: string | null;
 }
 &nbsp;
 /** Lead as returned in API responses (google_rating coerced to number). */
@@ -424,6 +440,7 @@ export interface LeadInput {
   tags?: string[];
   notes?: string | null;
   deal_value?: number | null;
+  scraper_log_id?: string | null;
 }
 &nbsp;
 export interface LeadListFilters {
@@ -439,6 +456,10 @@ export interface LeadListFilters {
   pipeline_id?: string;
   search?: string;
   tags?: string[];
+  /** ISO-8601 string — only return leads with created_at &gt;= this value */
+  created_after?: string;
+  /** When true, only return leads where classification IS NULL */
+  unclassified?: boolean;
 }
 &nbsp;
 export interface LeadListResult {
@@ -458,8 +479,8 @@ export interface ImportSummary {
   errors: { row: number; message: string }[];
 }
 &nbsp;
-export function <span class="fstat-no" title="function not covered" >toLeadResponse(</span>row: LeadRow): LeadResponse {
-<span class="cstat-no" title="statement not covered" >  return {</span>
+export function toLeadResponse(row: LeadRow): LeadResponse {
+  return {
     id: row.id,
     business_name: row.business_name,
     contact_name: row.contact_name,
@@ -469,7 +490,7 @@ export function <span class="fstat-no" title="function not covered" >toLeadRespo
     industry: row.industry,
     location: row.location,
     country: row.country,
-    google_rating: row.google_rating === null ? null : Number(row.google_rating),
+    google_rating: row.google_rating === null ? <span class="branch-0 cbranch-no" title="branch not covered" >null </span>: Number(row.google_rating),
     review_count: row.review_count,
     social_links: row.social_links,
     source_platform: row.source_platform,
@@ -478,10 +499,10 @@ export function <span class="fstat-no" title="function not covered" >toLeadRespo
     status: row.status,
     assigned_to: row.assigned_to,
     pipeline_stage_id: row.pipeline_stage_id,
-    custom_fields: row.custom_fields ?? {},
-    tags: row.tags ?? [],
+    custom_fields: row.custom_fields ?? <span class="branch-1 cbranch-no" title="branch not covered" >{},</span>
+    tags: row.tags ?? <span class="branch-1 cbranch-no" title="branch not covered" >[],</span>
     notes: row.notes,
-    deal_value: row.deal_value === null ? null : Number(row.deal_value),
+    deal_value: row.deal_value === null ? null : <span class="branch-1 cbranch-no" title="branch not covered" >Number(row.deal_value),</span>
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -493,7 +514,7 @@ export function <span class="fstat-no" title="function not covered" >toLeadRespo
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-07-09T04:39:21.145Z
+                at 2026-07-17T07:28:34.422Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

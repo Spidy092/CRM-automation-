@@ -13,7 +13,7 @@ interface TeamMetricsDbRow {
 }
 
 function getUserWhere(role: UserRole, actorId: string): { clause: string; params: unknown[] } {
-  const baseRoleFilter = "u.role IN ('admin', 'manager', 'sales', 'marketing')";
+  const baseRoleFilter = "u.role IN ('admin', 'manager', 'sales', 'marketing', 'viewer')";
   if (role === 'sales') {
     return { clause: `${baseRoleFilter} AND u.id = $1`, params: [actorId] };
   }
@@ -39,7 +39,12 @@ export async function findTeamMetrics(
 
   const leadFilter = `l.created_at BETWEEN $${fromIdx} AND $${toIdx}${stageClause}`;
   const contactedFilter = `l.first_contacted_at IS NOT NULL AND ${leadFilter}`;
-  const activityFilter = `a.created_at BETWEEN $${fromIdx} AND $${toIdx}`;
+
+  let activityJoin = `a.user_id = u.id AND a.created_at BETWEEN $${fromIdx} AND $${toIdx}`;
+  if (filters.stage) {
+    params.push(filters.stage);
+    activityJoin += ` AND a.lead_id IN (SELECT la.id FROM leads la WHERE la.assigned_to = u.id AND la.pipeline_stage_id = $${params.length} AND la.deleted_at IS NULL)`;
+  }
 
   const sql = `
     SELECT
@@ -54,11 +59,11 @@ export async function findTeamMetrics(
       ) as contacted_pct,
       AVG(EXTRACT(EPOCH FROM (l.first_contacted_at - l.created_at)))
         FILTER (WHERE ${contactedFilter}) as avg_response_time,
-      COUNT(DISTINCT a.id) FILTER (WHERE ${activityFilter}) as total_activities
+      COUNT(DISTINCT a.id) FILTER (WHERE ${activityJoin}) as total_activities
     FROM users u
-    LEFT JOIN leads l ON l.assigned_to = u.id
-    LEFT JOIN activities a ON a.user_id = u.id
-    WHERE ${userWhere}
+    LEFT JOIN leads l ON l.assigned_to = u.id AND l.deleted_at IS NULL
+    LEFT JOIN activities a ON a.lead_id = l.id
+    WHERE u.deleted_at IS NULL AND ${userWhere}
     GROUP BY u.id, u.name
     ORDER BY u.name
   `;

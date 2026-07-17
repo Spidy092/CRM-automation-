@@ -3,7 +3,7 @@ export interface MemberMetrics {
   name: string;
   assigned_count: number;
   contacted_count: number;
-  contacted_pct: number;
-  avg_response_time: number;
+  contacted_pct: number | null;
+  avg_response_time: number | null;
   total_activities: number;
 }

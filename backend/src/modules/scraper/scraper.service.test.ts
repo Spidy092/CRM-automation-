@@ -7,6 +7,9 @@ import {
   listConfigs,
   getLogsByConfig,
   detectSelectors,
+  getLeadsForRun,
+  retryFailedItems,
+  getStatsSummary,
 } from './scraper.service';
 import * as repo from './scraper.repository';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
@@ -25,8 +28,36 @@ jest.mock('../../shared/utils/logger', () => ({
 
 // Mock the dynamically-imported leads service so importLeads never touches the DB.
 const createLeadMock = jest.fn();
+const getLeadsByScraperLogIdMock = jest.fn();
+const getLeadsByIdsMock = jest.fn();
 jest.mock('../leads/leads.service', () => ({
   createLead: (...args: unknown[]) => createLeadMock(...args),
+  getLeadsByScraperLogId: (...args: unknown[]) => getLeadsByScraperLogIdMock(...args),
+  getLeadsByIds: (...args: unknown[]) => getLeadsByIdsMock(...args),
+}));
+
+const loadApifyCredentialsMock = jest.fn();
+const runActorSyncMock = jest.fn();
+jest.mock('../integrations/apify/apify.connector', () => ({
+  loadCredentials: (...args: unknown[]) => loadApifyCredentialsMock(...args),
+  runActorSync: (...args: unknown[]) => runActorSyncMock(...args),
+}));
+
+// puppeteer-core is mocked wholesale — scrapeBrowser is exercised against a
+// fake browser/page pair so tests never launch a real Chrome process.
+const puppeteerPageMock = {
+  setUserAgent: jest.fn(),
+  goto: jest.fn(),
+  waitForSelector: jest.fn(),
+  content: jest.fn(),
+};
+const puppeteerBrowserMock = {
+  newPage: jest.fn(() => Promise.resolve(puppeteerPageMock)),
+  close: jest.fn(() => Promise.resolve()),
+};
+const puppeteerLaunchMock = jest.fn((_opts?: unknown) => Promise.resolve(puppeteerBrowserMock));
+jest.mock('puppeteer-core', () => ({
+  launch: (opts: unknown) => puppeteerLaunchMock(opts),
 }));
 
 const mockActor = { id: 'admin-id', role: 'admin' as const, ipAddress: '127.0.0.1' };
@@ -78,10 +109,13 @@ describe('Scraper Service', () => {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   describe('listConfigs', () => {
-    it('lists configs', async () => {
-      (repo.findScraperConfigs as jest.Mock).mockResolvedValue([{ id: '1' }]);
+    it('lists configs with health', async () => {
+      (repo.findScraperConfigsWithHealth as jest.Mock).mockResolvedValue([
+        { id: '1', health: 'healthy' },
+      ]);
       const result = await listConfigs();
       expect(result).toHaveLength(1);
+      expect(result[0].health).toBe('healthy');
     });
   });
 
@@ -728,7 +762,7 @@ describe('Scraper Service', () => {
   // ── importLeads stats / dedup / failure ──────────────────────────────────────
 
   describe('runScrape import outcomes', () => {
-    it('counts a 409 conflict as imported (idempotent re-run)', async () => {
+    it('counts a 409 conflict as a duplicate, not a new import (idempotent re-run)', async () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'x' }),
       );
@@ -738,7 +772,8 @@ describe('Scraper Service', () => {
       createLeadMock.mockRejectedValueOnce(new AppError('exists', 409));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('completed');
-      expect(result.recordsImported).toBe(1);
+      expect(result.recordsImported).toBe(0);
+      expect(result.recordsDuplicate).toBe(1);
       expect(result.recordsFailed).toBe(0);
     });
 
@@ -775,6 +810,299 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('partially_completed');
       expect(result.recordsImported).toBe(1);
       expect(result.recordsFailed).toBe(1);
+    });
+  });
+
+  describe('runScrape apify_actor', () => {
+    it('runs the actor and imports mapped leads', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', { actorId: 'compass~crawler-google-places', maxResults: 10 }),
+      );
+      loadApifyCredentialsMock.mockResolvedValue({ apiToken: 'token' });
+      runActorSyncMock.mockResolvedValue({
+        ok: true,
+        items: [{ title: 'Acme Cafe', phone: '+15550001111', address: 'Bangalore' }],
+        latencyMs: 120,
+      });
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(runActorSyncMock).toHaveBeenCalledWith(
+        { apiToken: 'token' },
+        'compass~crawler-google-places',
+        {},
+        10,
+      );
+    });
+
+    it('fails when actorId is missing', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', {}),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('actorId is required');
+    });
+
+    it('fails when the Apify run errors', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', { actorId: 'a~b' }),
+      );
+      loadApifyCredentialsMock.mockResolvedValue({ apiToken: 'token' });
+      runActorSyncMock.mockResolvedValue({ ok: false, items: [], error: 'HTTP 404', latencyMs: 10 });
+
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('Apify run failed');
+    });
+  });
+
+  describe('runScrape browser_scrape', () => {
+    function browserConfig(extra: Record<string, unknown> = {}) {
+      return activeConfig('browser_scrape', {
+        url: 'http://example.com/list',
+        mode: 'smart',
+        ...extra,
+      });
+    }
+
+    beforeEach(() => {
+      process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/google-chrome';
+      // Robots.txt is fetched via global.fetch — an empty body has no
+      // Disallow rules, so the crawl is allowed.
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(''));
+      puppeteerPageMock.goto.mockResolvedValue({ status: () => 200 });
+      puppeteerPageMock.waitForSelector.mockResolvedValue(undefined);
+      puppeteerPageMock.content.mockResolvedValue(
+        '<html><body><a href="mailto:hi@acme.com">Email</a></body></html>',
+      );
+    });
+
+    it('renders the page and imports leads found in the rendered DOM', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig());
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(puppeteerLaunchMock).toHaveBeenCalled();
+      expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('tags imported leads with source_platform "browser_scrape", not "web_scrape"', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig());
+      await runScrape('1', mockActor);
+      expect(createLeadMock).toHaveBeenCalledWith(
+        expect.objectContaining({ source_platform: 'browser_scrape' }),
+        expect.anything(),
+      );
+    });
+
+    it('gives distinct placeholder phones to multiple emails found on one page', async () => {
+      // Same business_name/location for both (single page) and no tel: link,
+      // so only the email differs — this used to collide on the same
+      // generated placeholder phone and silently drop the second lead.
+      puppeteerPageMock.content.mockResolvedValue(
+        '<html><body><a href="mailto:sales@acme.com">Sales</a><a href="mailto:support@acme.com">Support</a></body></html>',
+      );
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig());
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.recordsFound).toBe(2);
+      expect(createLeadMock).toHaveBeenCalledTimes(2);
+      const phones = createLeadMock.mock.calls.map(([input]) => (input as { phone: string }).phone);
+      expect(new Set(phones).size).toBe(2);
+    });
+
+    it('extracts leads via selectors mode', async () => {
+      puppeteerPageMock.content.mockResolvedValue(
+        '<div class="card"><span class="name">Acme</span><span class="phone">+15550001111</span></div>',
+      );
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({
+          mode: 'selectors',
+          selectors: { business_name: '.name', phone: '.phone' },
+          containerSelector: '.card',
+        }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+    });
+
+    it('fails when url is missing', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('browser_scrape', {}),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('URL is required');
+    });
+
+    it('fails when selectors mode has no selectors', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({ mode: 'selectors' }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('selectors are required');
+    });
+
+    it('fails with a blocked-response error on 403', async () => {
+      puppeteerPageMock.goto.mockResolvedValue({ status: () => 403 });
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig());
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('blocked');
+      expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('closes the browser even when extraction throws', async () => {
+      puppeteerPageMock.content.mockResolvedValue('<html>CAPTCHA challenge</html>');
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig());
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('fails with a clear message when PUPPETEER_EXECUTABLE_PATH is unset', async () => {
+      delete process.env.PUPPETEER_EXECUTABLE_PATH;
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(browserConfig());
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('PUPPETEER_EXECUTABLE_PATH');
+    });
+  });
+
+  describe('getLeadsForRun', () => {
+    it('returns new leads and resolved duplicate leads for the run', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue({
+        id: 'log-1',
+        duplicate_lead_ids: ['dup-1'],
+      });
+      getLeadsByScraperLogIdMock.mockResolvedValue([{ id: 'lead-1' }]);
+      getLeadsByIdsMock.mockResolvedValue([{ id: 'dup-1' }]);
+
+      const result = await getLeadsForRun('log-1');
+
+      expect(result).toEqual({ newLeads: [{ id: 'lead-1' }], duplicateLeads: [{ id: 'dup-1' }] });
+      expect(getLeadsByScraperLogIdMock).toHaveBeenCalledWith('log-1');
+      expect(getLeadsByIdsMock).toHaveBeenCalledWith(['dup-1']);
+    });
+
+    it('throws 404 when the log does not exist', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(null);
+      await expect(getLeadsForRun('missing')).rejects.toMatchObject({ statusCode: 404 });
+    });
+  });
+
+  describe('retryFailedItems', () => {
+    it('throws 404 when the log does not exist', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(null);
+      await expect(retryFailedItems('missing', mockActor)).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    });
+
+    it('throws 400 when there are no failed items to retry', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue({
+        id: 'log-1',
+        config_id: 'cfg-1',
+        failed_items: [],
+      });
+      await expect(retryFailedItems('log-1', mockActor)).rejects.toMatchObject({
+        statusCode: 400,
+      });
+    });
+
+    it('re-imports only the failed leads into a new log row', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue({
+        id: 'log-1',
+        config_id: 'cfg-1',
+        failed_items: [
+          { lead: { business_name: 'Retry Co', source_platform: 'web_scrape' }, error: 'db error' },
+        ],
+      });
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        id: 'cfg-1',
+        source_type: 'web_scrape',
+      });
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'retry-log-1' });
+      (repo.updateScraperLog as jest.Mock).mockResolvedValue({ id: 'retry-log-1' });
+      (repo.updateScraperConfigLastRun as jest.Mock).mockResolvedValue(undefined);
+      createLeadMock.mockResolvedValue({ id: 'lead-2' });
+
+      const result = await retryFailedItems('log-1', mockActor);
+
+      expect(result.logId).toBe('retry-log-1');
+      expect(result.status).toBe('completed');
+      expect(result.recordsImported).toBe(1);
+      expect(repo.insertScraperLog).toHaveBeenCalledWith({ config_id: 'cfg-1', status: 'running' });
+    });
+
+    it('marks the retry log failed when persisting the result throws', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue({
+        id: 'log-1',
+        config_id: 'cfg-1',
+        failed_items: [
+          { lead: { business_name: 'Retry Co', source_platform: 'web_scrape' }, error: 'db error' },
+        ],
+      });
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        id: 'cfg-1',
+        source_type: 'web_scrape',
+      });
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'retry-log-1' });
+      createLeadMock.mockResolvedValue({ id: 'lead-2' });
+      (repo.updateScraperLog as jest.Mock)
+        .mockRejectedValueOnce(new Error('db down'))
+        .mockResolvedValueOnce({ id: 'retry-log-1' });
+
+      const result = await retryFailedItems('log-1', mockActor);
+
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('db down');
+    });
+  });
+
+  describe('getStatsSummary', () => {
+    it('returns aggregated stats with the requested window', async () => {
+      (repo.sumScraperLogsSince as jest.Mock).mockResolvedValue({
+        totalRuns: 5,
+        activeSources: 2,
+        recordsFound: 20,
+        recordsImported: 10,
+        recordsDuplicate: 5,
+        recordsFailed: 5,
+      });
+
+      const result = await getStatsSummary(48);
+
+      expect(result).toEqual({
+        windowHours: 48,
+        totalRuns: 5,
+        activeSources: 2,
+        recordsFound: 20,
+        recordsImported: 10,
+        recordsDuplicate: 5,
+        recordsFailed: 5,
+      });
+    });
+
+    it('defaults to a 24 hour window', async () => {
+      (repo.sumScraperLogsSince as jest.Mock).mockResolvedValue({
+        totalRuns: 0,
+        activeSources: 0,
+        recordsFound: 0,
+        recordsImported: 0,
+        recordsDuplicate: 0,
+        recordsFailed: 0,
+      });
+
+      const result = await getStatsSummary();
+
+      expect(result.windowHours).toBe(24);
     });
   });
 });

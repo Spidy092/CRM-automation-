@@ -19,10 +19,8 @@ import {
   MessageSquare,
   SlidersHorizontal,
   Zap,
-  Inbox,
   Brain,
   FormInput,
-  FlaskConical,
   CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -31,15 +29,12 @@ import { ChatWidget } from '@/components/ChatWidget';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard, group: 'Workspace' },
-  { name: 'AI Inbox', href: '/ai-inbox', icon: Inbox, group: 'AI Operator' },
-  { name: 'AI Decisions', href: '/admin/ai-decisions', icon: Brain, group: 'AI Operator' },
   { name: 'Leads', href: '/leads', icon: Users, group: 'Workspace' },
   { name: 'Pipelines', href: '/pipelines', icon: GitBranch, group: 'Workspace' },
   { name: 'Automation', href: '/automation/rules', icon: Zap, group: 'Automation' },
   { name: 'Campaigns', href: '/campaigns', icon: FileText, group: 'Automation' },
   { name: 'Sequences', href: '/outreach/sequences', icon: ListOrdered, group: 'Automation' },
   { name: 'Templates', href: '/templates', icon: MessageSquare, group: 'Automation' },
-  { name: 'A/B Testing', href: '/ab-testing', icon: FlaskConical, group: 'Automation' },
   { name: 'Web Forms', href: '/forms', icon: FormInput, group: 'Automation' },
   { name: 'Scheduling', href: '/scheduling', icon: CalendarDays, group: 'Automation' },
   { name: 'Reports', href: '/reports', icon: BarChart3, group: 'Intelligence' },
@@ -47,6 +42,7 @@ const navigation = [
   { name: 'Scrapers', href: '/scraper', icon: Search, group: 'Intelligence' },
   { name: 'Settings', href: '/settings', icon: Settings, group: 'Admin' },
   { name: 'Custom Fields', href: '/settings/custom-fields', icon: SlidersHorizontal, group: 'Admin' },
+  { name: 'AI & Testing', href: '/admin/ai-decisions', icon: Brain, group: 'Admin' },
 ];
 
 function isRouteActive(pathname: string, href: string): boolean {

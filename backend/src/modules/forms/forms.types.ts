@@ -12,6 +12,30 @@ export interface FormFieldDef {
   leadField?: string;
 }
 
+// ── Form Email Settings ───────────────────────────────────────────────────
+
+export interface EmailSettings {
+  autoReply?: {
+    enabled: boolean;
+    fromName: string;
+    fromEmail: string;
+    subject: string;
+    body: string;
+  };
+  teamNotification?: {
+    enabled: boolean;
+    emails: string;
+    subject: string;
+    body: string;
+  };
+  partnerNotification?: {
+    enabled: boolean;
+    emails: string;
+    subject: string;
+    body: string;
+  };
+}
+
 // ── Form Row ──────────────────────────────────────────────────────────────
 
 export interface FormRow {
@@ -25,6 +49,7 @@ export interface FormRow {
   redirect_url: string | null;
   is_active: boolean;
   theme: Record<string, unknown>;
+  email_settings: EmailSettings;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -56,6 +81,7 @@ export interface CreateFormInput {
   redirect_url?: string | null;
   is_active?: boolean;
   theme?: Record<string, unknown>;
+  email_settings?: EmailSettings;
 }
 
 export interface UpdateFormInput {
@@ -68,6 +94,7 @@ export interface UpdateFormInput {
   redirect_url?: string | null;
   is_active?: boolean;
   theme?: Record<string, unknown>;
+  email_settings?: EmailSettings;
 }
 
 export interface FormAnalytics {
