@@ -173,3 +173,81 @@ export async function resetPassword(token: string, newPassword: string): Promise
   await redis.del(key);
   await revokeAllRefreshTokensForUser(userId);
 }
+
+// -----------------------------------------------------------------------------
+// API Keys
+// -----------------------------------------------------------------------------
+
+import { createApiKey, listApiKeys, revokeApiKey, findApiKeyByHash, touchApiKey } from './auth.repository';
+import { CreateApiKeyResult } from './auth.types';
+
+export async function generateApiKey(
+  userId: string,
+  name: string,
+  expiresInDays?: number,
+): Promise<CreateApiKeyResult> {
+  const randomBytes = crypto.randomBytes(32).toString('hex');
+  const rawKey = `crm_${randomBytes}`;
+  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  const prefix = rawKey.substring(0, 10);
+  
+  let expiresAt: Date | null = null;
+  if (expiresInDays) {
+    expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+  }
+
+  const { id } = await createApiKey(userId, name, keyHash, prefix, expiresAt);
+
+  return {
+    rawKey,
+    apiKey: {
+      id,
+      user_id: userId,
+      name,
+      key_hash: keyHash,
+      prefix,
+      last_used_at: null,
+      expires_at: expiresAt,
+      created_at: new Date(),
+    },
+  };
+}
+
+export async function getApiKeysForUser(userId: string): Promise<any[]> {
+  return listApiKeys(userId);
+}
+
+export async function removeApiKey(userId: string, id: string): Promise<void> {
+  const count = await revokeApiKey(userId, id);
+  if (count === 0) {
+    throw new AppError('API key not found', 404);
+  }
+}
+
+export async function validateApiKey(rawKey: string): Promise<any> {
+  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  const record = await findApiKeyByHash(keyHash);
+
+  if (!record || record.deleted_at) {
+    throw new AppError('Invalid API key', 401);
+  }
+
+  if (record.expires_at && new Date(record.expires_at) < new Date()) {
+    throw new AppError('API key expired', 401);
+  }
+
+  if (!record.is_active) {
+    throw new AppError('User account is not active', 401);
+  }
+
+  // Fire and forget updating the last_used_at timestamp
+  touchApiKey(record.id).catch((err) => console.error('Failed to touch API key', err));
+
+  return {
+    id: record.u_id,
+    email: record.email,
+    role: record.role,
+    name: record.name,
+  };
+}

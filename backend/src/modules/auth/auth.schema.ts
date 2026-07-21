@@ -21,3 +21,8 @@ export const resetPasswordSchema = z.object({
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),
 });
+
+export const createApiKeySchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name is too long'),
+  expiresInDays: z.number().int().positive().optional(),
+});

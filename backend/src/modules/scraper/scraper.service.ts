@@ -45,6 +45,7 @@ interface ScrapedLead {
   google_rating?: number | null;
   review_count?: number | null;
   source_platform: string;
+  fallback_id?: string;
 }
 
 // ── Placeholder helpers ────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ function generatePlaceholderEmail(
   businessName: string,
   location: string | undefined,
   sourcePlatform: string,
+  fallbackId?: string,
 ): string {
   const slug =
     businessName
@@ -95,6 +97,14 @@ function generatePlaceholderEmail(
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '')
       .slice(0, 8) || 'noloc';
+      
+  if (fallbackId && fallbackId !== 'undefined') {
+    const idSlug = fallbackId.toLowerCase().replace(/[^a-z0-9]/g, '').slice(-15);
+    if (idSlug) {
+      return `${slug}-${locSlug}-${idSlug}@${sourcePlatform}-scraped.local`;
+    }
+  }
+  
   return `${slug}-${locSlug}@${sourcePlatform}-scraped.local`;
 }
 
@@ -612,6 +622,52 @@ async function scrapeGooglePlaces(
         );
       }
       if (apiStatus === 'INVALID_REQUEST') {
+        // When paginating, INVALID_REQUEST usually means the next_page_token is
+        // not yet active (Google requires a short propagation delay). Retry up
+        // to 3 times with a 3 s back-off before giving up. On the first page
+        // (no token), INVALID_REQUEST means the query/location params are bad —
+        // surface that immediately so the operator gets actionable feedback.
+        if (nextPageToken) {
+          let tokenReady = false;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const retryResp = await fetch(url);
+            if (!retryResp.ok) break;
+            const retryData = (await retryResp.json()) as Record<string, unknown>;
+            const retryStatus = String(retryData.status ?? '');
+            if (retryStatus !== 'INVALID_REQUEST') {
+              // Token is now usable — process this page
+              if (retryStatus === 'OK' || retryStatus === 'ZERO_RESULTS') {
+                const retryPlaces = (retryData.results as unknown[]) ?? [];
+                for (const place of retryPlaces) {
+                  const placeId =
+                    place && typeof place === 'object'
+                      ? String((place as Record<string, unknown>).place_id ?? '')
+                      : '';
+                  if (placeId && seenPlaceIds.has(placeId)) continue;
+                  if (placeId) seenPlaceIds.add(placeId);
+                  rawResults.push(place);
+                  if (rawResults.length >= maxResults) break;
+                }
+                nextPageToken =
+                  typeof retryData.next_page_token === 'string' ? retryData.next_page_token : null;
+              } else {
+                nextPageToken = null;
+              }
+              tokenReady = true;
+              break;
+            }
+          }
+          if (!tokenReady) {
+            // Token never activated — stop pagination but keep results so far
+            logger.warn('scraper google_places: next_page_token never activated, stopping pagination', {
+              rawResultsSoFar: rawResults.length,
+            });
+            nextPageToken = null;
+          }
+          // Skip the normal bottom-of-loop processing since we handled it above
+          continue;
+        }
         throw new AppError(
           'Google Places rejected the request (INVALID_REQUEST). Check the query and location params.',
           400,
@@ -876,6 +932,11 @@ function leadFromApifyItem(item: Record<string, unknown>, sourcePlatform: string
     getApifyField(item, ['address', 'location', 'formattedAddress', 'city']) ?? '';
   const ratingRaw = item.totalScore ?? item.rating ?? item.averageRating;
   const reviewsRaw = item.reviewsCount ?? item.userRatingsTotal ?? item.reviewCount;
+  
+  let fallbackId = String(getApifyField(item, ['id', 'url', 'shortCode', 'ownerId']) ?? '');
+  if (!fallbackId || fallbackId === 'undefined') {
+    fallbackId = require('crypto').createHash('md5').update(JSON.stringify(item)).digest('hex').substring(0, 15);
+  }
 
   return {
     business_name: businessName,
@@ -888,6 +949,7 @@ function leadFromApifyItem(item: Record<string, unknown>, sourcePlatform: string
     google_rating: typeof ratingRaw === 'number' ? ratingRaw : null,
     review_count: typeof reviewsRaw === 'number' ? reviewsRaw : null,
     source_platform: sourcePlatform,
+    fallback_id: fallbackId,
   };
 }
 
@@ -2135,7 +2197,7 @@ async function importLeads(
     const phone = lead.phone || generatePlaceholderPhone(phoneSeed);
     const email =
       lead.email ||
-      generatePlaceholderEmail(lead.business_name, lead.location, lead.source_platform);
+      generatePlaceholderEmail(lead.business_name, lead.location, lead.source_platform, lead.fallback_id);
 
     const { normalizePhone } = await import('../../shared/utils/phone');
     const normalizedPhone = normalizePhone(phone);
@@ -2220,3 +2282,7 @@ async function importLeads(
     duplicateLeadIds,
   };
 }
+
+
+
+

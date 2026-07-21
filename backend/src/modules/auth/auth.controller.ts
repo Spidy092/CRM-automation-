@@ -96,3 +96,41 @@ export async function getMeHandler(req: Request, res: Response, next: NextFuncti
     next(err);
   }
 }
+
+// -----------------------------------------------------------------------------
+// API Keys
+// -----------------------------------------------------------------------------
+import { createApiKeySchema } from './auth.schema';
+
+export async function createApiKeyHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) throw new AppError('Unauthorized', 401);
+    const input = createApiKeySchema.parse(req.body);
+    const result = await authService.generateApiKey(req.user.id, input.name, input.expiresInDays);
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getApiKeysHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) throw new AppError('Unauthorized', 401);
+    const result = await authService.getApiKeysForUser(req.user.id);
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteApiKeyHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) throw new AppError('Unauthorized', 401);
+    const id = req.params.id;
+    if (!id) throw new AppError('API key ID is required', 400);
+    await authService.removeApiKey(req.user.id, id);
+    sendSuccess(res, { message: 'API key revoked successfully' });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">35.29% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>6/17</span>
+                <span class='fraction'>0/17</span>
             </div>
         
             
@@ -37,16 +37,16 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">33.33% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>1/3</span>
+                <span class='fraction'>0/3</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">37.5% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>6/16</span>
+                <span class='fraction'>0/16</span>
             </div>
         
             
@@ -128,23 +128,23 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -158,7 +158,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -178,16 +178,16 @@ export interface CursorPayload {
   id: string; // UUID
 }
 &nbsp;
-export const DEFAULT_PAGE_LIMIT = 25;
-export const MAX_PAGE_LIMIT = 100;
+export const <span class="cstat-no" title="statement not covered" >DEFAULT_PAGE_LIMIT = 25;</span>
+export const <span class="cstat-no" title="statement not covered" >MAX_PAGE_LIMIT = 100;</span>
 &nbsp;
 /** Encode a cursor payload into a base64url string. */
-export function encodeCursor(payload: CursorPayload): string {
-  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >e</span>ncodeCursor(</span>payload: CursorPayload): string {
+<span class="cstat-no" title="statement not covered" >  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');</span>
 }
 &nbsp;
 /** Decode and validate a cursor string. Returns null if malformed. */
-export function <span class="fstat-no" title="function not covered" >decodeCursor(</span>cursor: string): CursorPayload | null {
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >d</span>ecodeCursor(</span>cursor: string): CursorPayload | null {
 <span class="cstat-no" title="statement not covered" >  try {</span>
     const json = <span class="cstat-no" title="statement not covered" >Buffer.from(cursor, 'base64url').toString('utf8');</span>
     const parsed = <span class="cstat-no" title="statement not covered" >JSON.parse(json) as unknown;</span>
@@ -208,7 +208,7 @@ export function <span class="fstat-no" title="function not covered" >decodeCurso
 }
 &nbsp;
 /** Clamp a user-supplied limit to the allowed range. */
-export function <span class="fstat-no" title="function not covered" >clampLimit(</span>raw: string | number | undefined): number {
+<span class="cstat-no" title="statement not covered" >export function <span class="fstat-no" title="function not covered" >c</span>lampLimit(</span>raw: string | number | undefined): number {
   const n = <span class="cstat-no" title="statement not covered" >typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);</span>
 <span class="cstat-no" title="statement not covered" >  <span class="missing-if-branch" title="if path not taken" >I</span>if (!Number.isFinite(n) || n &lt;= 0) <span class="cstat-no" title="statement not covered" >return DEFAULT_PAGE_LIMIT;</span></span>
 <span class="cstat-no" title="statement not covered" >  return Math.min(Math.floor(n), MAX_PAGE_LIMIT);</span>
@@ -220,7 +220,7 @@ export function <span class="fstat-no" title="function not covered" >clampLimit(
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-07-17T07:28:34.422Z
+                at 2026-07-20T09:52:40.331Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

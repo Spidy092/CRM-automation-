@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { sendSuccess } from '../../shared/utils/response';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { updateProfileSchema, createUserSchema } from './users.schema';
+import { updateProfileSchema, createUserSchema, updatePermissionsSchema } from './users.schema';
 import * as usersService from './users.service';
 
 export async function createUserHandler(
@@ -60,6 +60,24 @@ export async function updateProfileHandler(
     const { id } = req.params;
     const input = updateProfileSchema.parse(req.body);
     const updated = await usersService.updateProfile(id, input, req.user);
+    sendSuccess(res, updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updatePermissionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw new AppError('Unauthorized', 401);
+    }
+    const { id } = req.params;
+    const input = updatePermissionsSchema.parse(req.body);
+    const updated = await usersService.updatePermissions(id, input, req.user);
     sendSuccess(res, updated);
   } catch (err) {
     next(err);

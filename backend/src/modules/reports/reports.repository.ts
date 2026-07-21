@@ -145,6 +145,14 @@ export async function findDashboardMetrics(
     leadParams,
   );
 
+  // wonRevenue / wonDeals
+  const revenueResult = await pool.query<{ revenue: string; deals: string }>(
+    `SELECT COALESCE(SUM(deal_value) FILTER (WHERE status = 'won'), 0) as revenue,
+            COUNT(*) FILTER (WHERE status = 'won') as deals
+     FROM leads WHERE ${leadWhere}`,
+    leadParams,
+  );
+
   // recentActivity
   const activityResult = await pool.query<{ date: string; leads: string; outreach: string }>(
     activitySql,
@@ -163,6 +171,8 @@ export async function findDashboardMetrics(
     totalCampaigns,
     activeOutreach: parseInt(outreachResult.rows[0]?.total ?? '0', 10),
     pipelineConversion: parseFloat(conversionResult.rows[0]?.rate ?? '0'),
+    wonRevenue: parseFloat(revenueResult.rows[0]?.revenue ?? '0'),
+    wonDeals: parseInt(revenueResult.rows[0]?.deals ?? '0', 10),
     recentActivity,
   };
 }
@@ -402,9 +412,7 @@ export async function findSalesRepReport(
       COALESCE(AVG(EXTRACT(EPOCH FROM (l.first_contacted_at - l.created_at)) / 3600)
         FILTER (WHERE l.first_contacted_at IS NOT NULL AND l.deleted_at IS NULL), 0)::numeric as avgResponseTime,
       COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'won') as dealsClosed,
-      COALESCE(SUM(
-        COALESCE((l.custom_fields->>'estimated_value')::numeric, l.lead_score::numeric, 0)
-      ) FILTER (WHERE l.status = 'won'), 0)::numeric as revenueEstimate
+      COALESCE(SUM(l.deal_value) FILTER (WHERE l.status = 'won'), 0)::numeric as revenueEstimate
     FROM users u
     LEFT JOIN leads l ON l.assigned_to = u.id
     WHERE ${whereClause}${dateClause}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
@@ -244,6 +244,58 @@ function UrlListField({
         </div>
       )}
     </div>
+  );
+}
+
+function JsonField({
+  value,
+  onChange,
+  placeholder,
+  rows = 4,
+}: {
+  value: any;
+  onChange: (val: any) => void;
+  placeholder?: string;
+  rows?: number;
+}) {
+  const [localValue, setLocalValue] = useState(
+    value && Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : ''
+  );
+
+  useEffect(() => {
+    try {
+      const parsed = localValue ? JSON.parse(localValue) : undefined;
+      if (JSON.stringify(parsed) !== JSON.stringify(value)) {
+        setLocalValue(value && Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : '');
+      }
+    } catch {
+      // Do nothing, let user keep typing invalid JSON
+    }
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newVal = e.target.value;
+    setLocalValue(newVal);
+    try {
+      if (!newVal.trim()) {
+        onChange(undefined);
+      } else {
+        const parsed = JSON.parse(newVal);
+        onChange(parsed);
+      }
+    } catch {
+      // invalid JSON, do not call onChange
+    }
+  };
+
+  return (
+    <textarea
+      value={localValue}
+      onChange={handleChange}
+      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+      rows={rows}
+      placeholder={placeholder}
+    />
   );
 }
 
@@ -582,16 +634,9 @@ function getConfigFields(
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-slate-500 mb-1">CSS Selectors (JSON)</label>
-                <textarea
-                  value={config.selectors ? JSON.stringify(config.selectors, null, 2) : ''}
-                  onChange={(e) => {
-                    try {
-                      onChange('selectors', JSON.parse(e.target.value));
-                    } catch {
-                      // Allow typing
-                    }
-                  }}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                <JsonField
+                  value={config.selectors}
+                  onChange={(val) => onChange('selectors', val)}
                   rows={4}
                   placeholder='{"business_name": ".business-name", "phone": ".phone", "email": ".email"}'
                 />
@@ -662,16 +707,9 @@ function getConfigFields(
             <label className="block text-xs font-medium text-slate-500 mb-1">
               Actor Input (JSON) <span className="text-slate-300">— passed as-is to the Actor</span>
             </label>
-            <textarea
-              value={config.input ? JSON.stringify(config.input, null, 2) : '{}'}
-              onChange={(e) => {
-                try {
-                  onChange('input', JSON.parse(e.target.value));
-                } catch {
-                  // Allow typing invalid JSON mid-edit
-                }
-              }}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            <JsonField
+              value={config.input}
+              onChange={(val) => onChange('input', val)}
               rows={5}
               placeholder='{"searchStringsArray": ["restaurants"], "locationQuery": "Bangalore"}'
             />
@@ -752,16 +790,9 @@ function getConfigFields(
             <>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-slate-500 mb-1">CSS Selectors (JSON)</label>
-                <textarea
-                  value={config.selectors ? JSON.stringify(config.selectors, null, 2) : ''}
-                  onChange={(e) => {
-                    try {
-                      onChange('selectors', JSON.parse(e.target.value));
-                    } catch {
-                      // Allow typing
-                    }
-                  }}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                <JsonField
+                  value={config.selectors}
+                  onChange={(val) => onChange('selectors', val)}
                   rows={4}
                   placeholder='{"business_name": ".business-name", "phone": ".phone", "email": ".email"}'
                 />

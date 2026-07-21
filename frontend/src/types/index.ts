@@ -50,6 +50,8 @@ export interface Lead {
   tags: string[];
   notes: string | null;
   deal_value: number | null;
+  won_at: string | null;
+  lost_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -204,6 +206,10 @@ export interface DashboardMetrics {
   activeOutreach: number;
   pipelineConversion: number;
   healthyIntegrations?: number;
+  /** Total deal_value across leads with status = 'won'. */
+  wonRevenue: number;
+  /** Count of leads with status = 'won'. */
+  wonDeals: number;
   recentActivity: Array<{
     date: string;
     leads: number;

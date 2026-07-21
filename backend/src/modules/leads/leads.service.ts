@@ -2,8 +2,10 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { normalizePhone } from '../../shared/utils/phone';
 import { clampLimit, decodeCursor, encodeCursor } from '../../shared/utils/pagination';
+import { resolveStageOutcome } from '../../shared/utils/leadOutcome';
 import { findActiveDefinitions } from '../custom-fields/customFields.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
+import { findStageById } from '../pipeline/pipeline.repository';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
 import { enqueueLeadEvent } from '../../workers/queue';
 import {
@@ -16,6 +18,7 @@ import {
   softDeleteLead,
   updateLead,
   updateLeadStatus,
+  updateLeadOutcome,
   findActivityForLead,
   bulkClassifyLeads as repoBulkClassify,
   type LeadActivityEntry,
@@ -199,7 +202,7 @@ export async function updateLeadFields(
     }
   }
 
-  const updated = await updateLead(id, input);
+  let updated = await updateLead(id, input);
 
   if (
     input.pipeline_stage_id !== undefined &&
@@ -215,6 +218,25 @@ export async function updateLeadFields(
         to: updated.pipeline_stage_id,
       },
     });
+
+    // Deals moved into (or out of) a Closed Won/Lost stage carry their
+    // outcome automatically — see resolveStageOutcome() for the exact rules.
+    const stage = input.pipeline_stage_id ? await findStageById(input.pipeline_stage_id) : null;
+    const outcome = resolveStageOutcome(before.status, stage);
+    if (outcome) {
+      updated = await updateLeadOutcome(id, outcome);
+      await insertActivity({
+        lead_id: id,
+        user_id: actor.id,
+        type: 'status_change',
+        metadata: {
+          field: 'status',
+          from: before.status,
+          to: outcome,
+          reason: 'pipeline_stage_move',
+        },
+      });
+    }
   }
 
   if (input.assigned_to !== undefined && input.assigned_to !== before.assigned_to) {

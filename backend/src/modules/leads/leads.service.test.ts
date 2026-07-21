@@ -9,11 +9,15 @@ jest.mock('./leads.repository', () => ({
   findLeadsByIds: jest.fn(),
   insertLead: jest.fn(),
   updateLead: jest.fn(),
+  updateLeadOutcome: jest.fn(),
   softDeleteLead: jest.fn(),
   updateLeadStatus: jest.fn(),
   runInTransaction: jest.fn(),
   findActivityForLead: jest.fn(),
   bulkClassifyLeads: jest.fn(),
+}));
+jest.mock('../pipeline/pipeline.repository', () => ({
+  findStageById: jest.fn(),
 }));
 jest.mock('../activities/activities.repository', () => ({
   createOutboundActivityAndUpdateLead: jest.fn(),
@@ -51,8 +55,10 @@ import {
   insertLead,
   softDeleteLead,
   updateLead,
+  updateLeadOutcome,
   updateLeadStatus,
 } from './leads.repository';
+import { findStageById } from '../pipeline/pipeline.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { writeAuditLog } from '../../shared/utils/audit';
 
@@ -79,6 +85,8 @@ const baseRow: LeadRow = {
   tags: [],
   notes: null,
   deal_value: null,
+  won_at: null,
+  lost_at: null,
   created_at: '2026-06-19T00:00:00.000Z',
   updated_at: '2026-06-19T00:00:00.000Z',
   deleted_at: null,
@@ -334,6 +342,76 @@ describe('updateLeadFields', () => {
       { id: 'admin-1', role: 'admin' },
     );
     expect(insertActivity).not.toHaveBeenCalled();
+  });
+
+  it('auto-marks the lead won when moved into a terminal-won stage', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      pipeline_stage_id: 'stage-1',
+      status: 'active',
+    });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-2' });
+    (findStageById as jest.Mock).mockResolvedValue({ is_terminal_won: true, is_terminal_lost: false });
+    (updateLeadOutcome as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      pipeline_stage_id: 'stage-2',
+      status: 'won',
+      won_at: '2026-07-20T00:00:00.000Z',
+    });
+
+    const res = await updateLeadFields(
+      'lead-1',
+      { pipeline_stage_id: 'stage-2' },
+      { id: 'admin-1', role: 'admin' },
+    );
+
+    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'won');
+    expect(res.status).toBe('won');
+    expect(res.won_at).toBe('2026-07-20T00:00:00.000Z');
+    expect(insertActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'status_change',
+        metadata: expect.objectContaining({ field: 'status', from: 'active', to: 'won' }),
+      }),
+    );
+  });
+
+  it('reopens a won lead moved to a non-terminal stage', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      pipeline_stage_id: 'stage-2',
+      status: 'won',
+    });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-1' });
+    (findStageById as jest.Mock).mockResolvedValue({ is_terminal_won: false, is_terminal_lost: false });
+    (updateLeadOutcome as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      pipeline_stage_id: 'stage-1',
+      status: 'active',
+    });
+
+    const res = await updateLeadFields(
+      'lead-1',
+      { pipeline_stage_id: 'stage-1' },
+      { id: 'admin-1', role: 'admin' },
+    );
+
+    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'active');
+    expect(res.status).toBe('active');
+  });
+
+  it('does not call findStageById or updateLeadOutcome when stage is unset (null)', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      pipeline_stage_id: 'stage-1',
+      status: 'active',
+    });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: null });
+
+    await updateLeadFields('lead-1', { pipeline_stage_id: null }, { id: 'admin-1', role: 'admin' });
+
+    expect(findStageById).not.toHaveBeenCalled();
+    expect(updateLeadOutcome).not.toHaveBeenCalled();
   });
 });
 

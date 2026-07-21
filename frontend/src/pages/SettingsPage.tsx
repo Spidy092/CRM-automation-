@@ -46,6 +46,13 @@ const settingsGroups = [
     action: 'AI Settings',
     path: '/settings/ai',
   },
+  {
+    title: 'API Keys',
+    description: 'Manage Personal Access Tokens for MCP and AI agents.',
+    icon: Link2, // Using Link2 for connection, or a key icon if one exists. Let's stick with Link2 as it's already imported.
+    action: 'Manage Keys',
+    path: '/settings/api-keys',
+  },
 ];
 
 export function SettingsPage() {

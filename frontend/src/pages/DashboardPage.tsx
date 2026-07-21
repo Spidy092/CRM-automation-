@@ -66,7 +66,7 @@ interface StatConfig {
   value: number;
   description: string;
   icon: React.ReactNode;
-  format?: 'number' | 'percent';
+  format?: 'number' | 'percent' | 'currency';
   accent: string;
   bg: string;
   trend?: number;
@@ -92,8 +92,15 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function formatValue(value: number, format?: 'number' | 'percent'): string {
+function formatValue(value: number, format?: 'number' | 'percent' | 'currency'): string {
   if (format === 'percent') return `${value.toFixed(1)}%`;
+  if (format === 'currency') {
+    return value.toLocaleString(undefined, {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+    });
+  }
   return value.toLocaleString();
 }
 
@@ -253,7 +260,7 @@ function getStatsForRole(
   const newLeadsThisPeriod = leadActivity.reduce((sum, d) => sum + d, 0);
   const leadTrend = computeTrend(leadActivity);
 
-  const myWonLeads = Math.round((metrics.pipelineConversion / 100) * metrics.totalLeads);
+  const myWonLeads = metrics.wonDeals;
 
   const accentMap: Record<string, { accent: string; bg: string }> = {
     leads: { accent: 'border-l-4 border-blue-500', bg: 'bg-blue-50/40' },
@@ -262,6 +269,7 @@ function getStatsForRole(
     qualified: { accent: 'border-l-4 border-amber-500', bg: 'bg-amber-50/40' },
     outreach: { accent: 'border-l-4 border-cyan-500', bg: 'bg-cyan-50/40' },
     won: { accent: 'border-l-4 border-rose-500', bg: 'bg-rose-50/40' },
+    revenue: { accent: 'border-l-4 border-green-500', bg: 'bg-green-50/40' },
     tasks: { accent: 'border-l-4 border-slate-500', bg: 'bg-slate-50/40' },
   };
 
@@ -310,6 +318,18 @@ function getStatsForRole(
           accent: accentMap.conversion.accent,
           bg: accentMap.conversion.bg,
         },
+        {
+          title: 'Revenue Won',
+          value: metrics.wonRevenue,
+          description:
+            metrics.wonDeals === 0
+              ? 'No deals closed yet'
+              : `${metrics.wonDeals} deal${metrics.wonDeals === 1 ? '' : 's'} closed`,
+          icon: <CheckCircle2 className="h-5 w-5 text-green-600" />,
+          format: 'currency',
+          accent: accentMap.revenue.accent,
+          bg: accentMap.revenue.bg,
+        },
       ];
 
     case 'manager':
@@ -354,6 +374,18 @@ function getStatsForRole(
           accent: accentMap.conversion.accent,
           bg: accentMap.conversion.bg,
         },
+        {
+          title: 'Revenue Won',
+          value: metrics.wonRevenue,
+          description:
+            metrics.wonDeals === 0
+              ? 'No deals closed yet'
+              : `${metrics.wonDeals} deal${metrics.wonDeals === 1 ? '' : 's'} closed`,
+          icon: <CheckCircle2 className="h-5 w-5 text-green-600" />,
+          format: 'currency',
+          accent: accentMap.revenue.accent,
+          bg: accentMap.revenue.bg,
+        },
       ];
 
     case 'sales':
@@ -375,6 +407,15 @@ function getStatsForRole(
           icon: <CheckCircle2 className="h-5 w-5 text-rose-600" />,
           accent: accentMap.won.accent,
           bg: accentMap.won.bg,
+        },
+        {
+          title: 'My Revenue Won',
+          value: metrics.wonRevenue,
+          description: metrics.wonDeals === 0 ? 'No deals closed yet' : 'Total value of your won deals',
+          icon: <CheckCircle2 className="h-5 w-5 text-green-600" />,
+          format: 'currency',
+          accent: accentMap.revenue.accent,
+          bg: accentMap.revenue.bg,
         },
         {
           title: 'My Pending Tasks',

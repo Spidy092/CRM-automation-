@@ -32,6 +32,7 @@ export const ASSIGNMENT_QUEUE = 'assignment';
 export const OUTREACH_DISPATCH = 'outreach:dispatch-step';
 export const OUTREACH_FOLLOW_UP = 'outreach:schedule-follow-up';
 export const OUTREACH_STOP_CHECK = 'outreach:check-stop-condition';
+export const OUTREACH_SEND_AI_REPLY = 'outreach:send-ai-reply';
 
 export const OUTREACH_QUEUE = 'outreach';
 
@@ -335,6 +336,16 @@ export interface LeadEventJob {
   payload: Record<string, unknown>;
 }
 
+export interface OutreachSendAiReplyJob {
+  leadId: string;
+  /** Null when the lead isn't tied to an active campaign at reply time. */
+  campaignId: string | null;
+  channel: 'whatsapp' | 'email' | 'sms';
+  /** AI-drafted free-text reply body — not template-driven. */
+  body: string;
+  agentActionId?: string;
+}
+
 export interface OutreachStopCheckJob {
   leadId: string;
   campaignId: string;
@@ -352,6 +363,7 @@ export type JobData =
   | { name: typeof OUTREACH_DISPATCH; data: OutreachDispatchJob }
   | { name: typeof OUTREACH_FOLLOW_UP; data: OutreachFollowUpJob }
   | { name: typeof OUTREACH_STOP_CHECK; data: OutreachStopCheckJob }
+  | { name: typeof OUTREACH_SEND_AI_REPLY; data: OutreachSendAiReplyJob }
   | { name: typeof REPORT_EXPORT; data: ReportExportJob }
   | { name: typeof SCRAPER_RUN; data: ScraperRunJob };
 
@@ -381,7 +393,7 @@ function outreachJobId(
 
 export async function enqueueOutreachDispatch(
   payload: OutreachDispatchJob,
-  opts?: { jobIdSuffix?: string },
+  opts?: { jobIdSuffix?: string; delayMs?: number },
 ): Promise<void> {
   // Default jobId is deterministic per (campaign, lead, step) so a campaign
   // launch can be safely re-run without double-enqueueing a step that's
@@ -391,7 +403,10 @@ export async function enqueueOutreachDispatch(
   // pass a unique `jobIdSuffix`.
   const baseId = outreachJobId('dispatch', payload);
   const jobId = opts?.jobIdSuffix ? `${baseId}-${opts.jobIdSuffix}` : baseId;
-  await outreachQueue.add(OUTREACH_DISPATCH, payload, { jobId });
+  await outreachQueue.add(OUTREACH_DISPATCH, payload, {
+    jobId,
+    ...(opts?.delayMs && opts.delayMs > 0 ? { delay: opts.delayMs } : {}),
+  });
 }
 
 export async function enqueueOutreachFollowUp(payload: OutreachFollowUpJob): Promise<void> {
@@ -434,6 +449,10 @@ export async function enqueueAiDecision(payload: AiDecisionLeadJob): Promise<voi
   await aiDecisionQueue.add(AI_DECISION_LEAD, payload, {
     jobId: `ai-decision-${payload.leadId}${payload.force ? '-force' : ''}`,
   });
+}
+
+export async function enqueueOutreachSendAiReply(payload: OutreachSendAiReplyJob): Promise<void> {
+  await outreachQueue.add(OUTREACH_SEND_AI_REPLY, payload);
 }
 
 export async function enqueueOutreachStopCheck(payload: OutreachStopCheckJob): Promise<void> {

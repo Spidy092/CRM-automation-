@@ -2,7 +2,8 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { AuthenticatedUser } from '../../shared/types';
-import { UpdateProfileInput, CreateUserInput, User } from './users.types';
+import { writeAuditLog } from '../../shared/utils/audit';
+import { UpdateProfileInput, CreateUserInput, UpdatePermissionsInput, User } from './users.types';
 import * as usersRepository from './users.repository';
 
 const BCRYPT_COST_FACTOR = 12;
@@ -64,6 +65,48 @@ export async function updateProfile(
   if (!updated) {
     throw new AppError('User not found', 404);
   }
+
+  return updated;
+}
+
+/**
+ * Updates a user's role and/or active status.
+ * RBAC: admin only (enforced at the route level).
+ * An admin may not demote or deactivate their own account — that would risk
+ * locking every admin out of user management.
+ */
+export async function updatePermissions(
+  id: string,
+  input: UpdatePermissionsInput,
+  actor: AuthenticatedUser,
+): Promise<User> {
+  if (actor.id === id) {
+    if (input.role !== undefined && input.role !== 'admin') {
+      throw new AppError('You cannot change your own role', 400);
+    }
+    if (input.is_active === false) {
+      throw new AppError('You cannot deactivate your own account', 400);
+    }
+  }
+
+  const existing = await usersRepository.findUserById(id);
+  if (!existing) {
+    throw new AppError('User not found', 404);
+  }
+
+  const updated = await usersRepository.updateUserPermissions(id, input);
+  if (!updated) {
+    throw new AppError('User not found', 404);
+  }
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'user.permissions_updated',
+    entityType: 'user',
+    entityId: id,
+    oldValue: { role: existing.role, is_active: existing.is_active },
+    newValue: { role: updated.role, is_active: updated.is_active },
+  });
 
   return updated;
 }

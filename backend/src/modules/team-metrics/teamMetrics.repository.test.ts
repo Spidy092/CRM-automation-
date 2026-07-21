@@ -119,4 +119,17 @@ describe('teamMetrics.repository', () => {
     const [sql] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain("'viewer'");
   });
+
+  it('falls back to lead created_at when no assignments row exists', async () => {
+    mockPoolQuery.mockResolvedValue(mockResult([]));
+
+    await findTeamMetrics(
+      { from: new Date('2026-01-01'), to: new Date('2026-01-31') },
+      'admin-1',
+      'admin',
+    );
+
+    const [sql] = mockPoolQuery.mock.calls[0];
+    expect(sql).toContain('COALESCE(latest_assignment.created_at, l.created_at) BETWEEN');
+  });
 });

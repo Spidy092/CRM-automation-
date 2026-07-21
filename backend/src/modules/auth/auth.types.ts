@@ -47,3 +47,19 @@ export interface JwtPayload {
   role: UserRole;
   name: string;
 }
+
+export interface ApiKeyRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  key_hash: string;
+  prefix: string;
+  last_used_at: Date | null;
+  expires_at: Date | null;
+  created_at: Date;
+}
+
+export interface CreateApiKeyResult {
+  rawKey: string;
+  apiKey: ApiKeyRecord;
+}

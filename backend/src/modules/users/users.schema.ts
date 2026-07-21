@@ -19,3 +19,14 @@ export const createUserSchema = z.object({
 });
 
 export type CreateUserSchemaInput = z.infer<typeof createUserSchema>;
+
+export const updatePermissionsSchema = z
+  .object({
+    role: z.enum(['admin', 'manager', 'sales', 'marketing', 'viewer']).optional(),
+    is_active: z.boolean().optional(),
+  })
+  .refine((data) => data.role !== undefined || data.is_active !== undefined, {
+    message: 'At least one of role or is_active must be provided',
+  });
+
+export type UpdatePermissionsSchemaInput = z.infer<typeof updatePermissionsSchema>;

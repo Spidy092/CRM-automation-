@@ -2,6 +2,7 @@ import { useParams, Link } from 'react-router-dom';
 import {
   useCampaign,
   useCampaignStats,
+  useCampaignStepStats,
   useLaunchCampaign,
   usePauseCampaign,
   useResumeCampaign,
@@ -23,6 +24,7 @@ import { CHANNEL_ICONS, CHANNEL_COLORS } from '@/components/SequenceStepEditor';
 import {
   ArrowLeft,
   BarChart3,
+  Clock,
   Users,
   Send,
   CheckCircle,
@@ -52,6 +54,7 @@ export function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: campaign, isLoading: isCampaignLoading, isError: isCampaignError } = useCampaign(id!);
   const { data: stats, isLoading: isStatsLoading } = useCampaignStats(id!);
+  const { data: stepStats = [], isLoading: isStepStatsLoading } = useCampaignStepStats(id!);
   const { data: campaignLeads = [], isLoading: isLeadsLoading } = useCampaignLeads(id!);
   const { data: sequence } = useSequence(campaign?.sequence_id ?? '');
   const { data: pipeline } = usePipeline(campaign?.pipeline_id ?? '');
@@ -258,6 +261,21 @@ export function CampaignDetailPage() {
             </div>
 
             <div>
+              <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                <Clock className="h-3.5 w-3.5" />
+                Delivery controls
+              </div>
+              <div className="mt-1 text-sm font-medium text-slate-900">
+                {campaign.send_window_enabled
+                  ? `${String(campaign.send_window_start_hour).padStart(2, '0')}:00–${String(campaign.send_window_end_hour).padStart(2, '0')}:00 (${campaign.send_window_timezone})`
+                  : 'Any time'}
+                {campaign.daily_send_limit != null && (
+                  <span className="text-slate-500"> · max {campaign.daily_send_limit}/day</span>
+                )}
+              </div>
+            </div>
+
+            <div>
               <div className="text-sm text-slate-500">Launched At</div>
               <div className="font-medium text-slate-900">
                 {campaign.launched_at ? new Date(campaign.launched_at).toLocaleString() : 'Not launched'}
@@ -341,6 +359,85 @@ export function CampaignDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Sequence Step Funnel */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Sequence Funnel</CardTitle>
+          <CardDescription>
+            Where leads drop off, step by step. Rates are relative to messages sent at that step.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isStepStatsLoading ? (
+            <LoadingTable rows={3} cols={6} />
+          ) : stepStats.length > 0 ? (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Step</th>
+                    <th className="px-4 py-3 font-medium">Channel</th>
+                    <th className="px-4 py-3 font-medium">Sent</th>
+                    <th className="px-4 py-3 font-medium">Delivered</th>
+                    <th className="px-4 py-3 font-medium">Opened</th>
+                    <th className="px-4 py-3 font-medium">Replied</th>
+                    <th className="px-4 py-3 font-medium">Failed</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {stepStats.map((row) => {
+                    const step = sequence?.steps.find((s) => s.stepNumber === row.step_number);
+                    const pct = (n: number) =>
+                      row.sent > 0 ? ` (${Math.round((n / row.sent) * 100)}%)` : '';
+                    return (
+                      <tr key={row.step_number} className="hover:bg-slate-50/50">
+                        <td className="px-4 py-3 font-medium text-slate-900">
+                          Step {row.step_number}
+                        </td>
+                        <td className="px-4 py-3">
+                          {step ? (
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${CHANNEL_COLORS[step.channel] ?? 'bg-slate-50 border-slate-200'}`}
+                            >
+                              {CHANNEL_ICONS[step.channel]}
+                              {step.channel}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-900">{row.sent}</td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {row.delivered}
+                          <span className="text-xs text-slate-400">{pct(row.delivered)}</span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {row.opened}
+                          <span className="text-xs text-slate-400">{pct(row.opened)}</span>
+                        </td>
+                        <td className="px-4 py-3 text-green-700">
+                          {row.replied}
+                          <span className="text-xs text-slate-400">{pct(row.replied)}</span>
+                        </td>
+                        <td className={`px-4 py-3 ${row.failed > 0 ? 'text-red-600' : 'text-slate-600'}`}>
+                          {row.failed}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState
+              icon={<BarChart3 className="h-6 w-6" />}
+              title="No step data yet"
+              description="The funnel appears once the sequence starts sending messages."
+            />
+          )}
+        </CardContent>
+      </Card>
 
       {/* Enrolled Leads Table */}
       <Card>

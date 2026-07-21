@@ -384,10 +384,10 @@ export function ReportsPage() {
                 rows={pipeItems.map((r) => [
                   <span key="s" className="font-medium text-slate-800">{r.stageName}</span>,
                   r.leadCount,
-                  `${r.conversionRate.toFixed(1)}%`,
+                  `${r.conversionRate != null ? r.conversionRate.toFixed(1) : 0}%`,
                   r.dropOffRate != null ? `${r.dropOffRate.toFixed(1)}%` : '—',
                   r.avgDaysInStage != null ? `${r.avgDaysInStage.toFixed(1)}d` : '—',
-                  `${r.avgDays.toFixed(1)}d`,
+                  `${r.avgDays != null ? r.avgDays.toFixed(1) : 0}d`,
                 ])}
               />
             </Section>
@@ -413,10 +413,10 @@ export function ReportsPage() {
                   <span key="n" className="font-medium text-slate-800">{r.repName}</span>,
                   r.leadsAssigned,
                   r.leadsConverted,
-                  `${r.conversionRate.toFixed(1)}%`,
+                  `${r.conversionRate != null ? r.conversionRate.toFixed(1) : 0}%`,
                   r.dealsClosed ?? '—',
                   r.revenueEstimate ? `₹${Number(r.revenueEstimate).toLocaleString()}` : '—',
-                  `${r.avgResponseTime.toFixed(1)}h`,
+                  `${r.avgResponseTime != null ? r.avgResponseTime.toFixed(1) : 0}h`,
                 ])}
               />
             </Section>
@@ -485,7 +485,7 @@ export function ReportsPage() {
                       <span key="n" className="font-medium text-slate-800">{r.displayName ?? r.name}</span>,
                       <Badge key="s" color={intStatusColor(r.status)}>{r.status}</Badge>,
                       r.enabled ? <Badge key="e" color="green">Yes</Badge> : <Badge key="e" color="slate">No</Badge>,
-                      `${r.successRate.toFixed(1)}%`,
+                      `${r.successRate != null ? r.successRate.toFixed(1) : 0}%`,
                       r.lastTestedAt ? new Date(r.lastTestedAt).toLocaleString() : '—',
                     ])}
                   />

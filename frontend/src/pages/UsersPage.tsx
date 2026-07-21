@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useUsers, useCreateUser } from '@/api/users';
+import { useUsers, useCreateUser, useUpdateUserPermissions } from '@/api/users';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,11 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { useToast } from '@/components/ui/Toast';
 import { useAuthStore } from '@/store/authStore';
-import type { UserRole } from '@/types';
+import type { User, UserRole } from '@/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Plus, X, AlertCircle, InboxIcon, Loader2, Shield, CheckCircle2 } from 'lucide-react';
+import { Plus, X, AlertCircle, InboxIcon, Loader2, Shield, CheckCircle2, Pencil, Check } from 'lucide-react';
 
 const roleColors: Record<UserRole, string> = {
   admin: 'bg-purple-100 text-purple-800',
@@ -24,6 +24,7 @@ const roleColors: Record<UserRole, string> = {
 export function UsersPage() {
   const { data: users, isLoading, error } = useUsers();
   const createUser = useCreateUser();
+  const updatePermissions = useUpdateUserPermissions();
   const { showToast } = useToast();
   const currentUser = useAuthStore((s) => s.user);
 
@@ -35,7 +36,45 @@ export function UsersPage() {
   const [formError, setFormError] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editRole, setEditRole] = useState<UserRole>('sales');
+
   const isAdmin = currentUser?.role === 'admin';
+
+  const startEditing = (targetUser: User) => {
+    setEditingUserId(targetUser.id);
+    setEditRole(targetUser.role);
+  };
+
+  const cancelEditing = () => setEditingUserId(null);
+
+  const saveRole = async (targetUser: User) => {
+    if (editRole === targetUser.role) {
+      setEditingUserId(null);
+      return;
+    }
+    try {
+      await updatePermissions.mutateAsync({ id: targetUser.id, role: editRole });
+      showToast(`Updated ${targetUser.name}'s role to ${editRole}.`, 'success');
+      setEditingUserId(null);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update role.';
+      showToast(message, 'error');
+    }
+  };
+
+  const toggleActive = async (targetUser: User) => {
+    try {
+      await updatePermissions.mutateAsync({ id: targetUser.id, is_active: !targetUser.is_active });
+      showToast(
+        `${targetUser.name} is now ${!targetUser.is_active ? 'active' : 'inactive'}.`,
+        'success',
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update status.';
+      showToast(message, 'error');
+    }
+  };
 
   const resetForm = () => {
     setName('');
@@ -263,35 +302,107 @@ export function UsersPage() {
                     <th className="px-4 py-3 text-left font-medium text-slate-600">Role</th>
                     <th className="px-4 py-3 text-left font-medium text-slate-600">Status</th>
                     <th className="px-4 py-3 text-left font-medium text-slate-600">Created</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Permissions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {users.map((user) => (
-                    <tr key={user.id} className="transition-colors hover:bg-slate-50/50">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
-                            {user.name.charAt(0).toUpperCase()}
+                  {users.map((user) => {
+                    const isEditingThisRow = editingUserId === user.id;
+                    const isSelf = currentUser?.id === user.id;
+                    const rowSaving =
+                      updatePermissions.isPending && updatePermissions.variables?.id === user.id;
+
+                    return (
+                      <tr key={user.id} className="transition-colors hover:bg-slate-50/50">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+                              {user.name.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="font-medium text-slate-900">{user.name}</span>
                           </div>
-                          <span className="font-medium text-slate-900">{user.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{user.email}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${roleColors[user.role]}`}>
-                          {user.role}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${user.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                          {user.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">
-                        {new Date(user.created_at).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{user.email}</td>
+                        <td className="px-4 py-3">
+                          {isEditingThisRow ? (
+                            <select
+                              value={editRole}
+                              onChange={(e) => setEditRole(e.target.value as UserRole)}
+                              className="flex h-8 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            >
+                              <option value="sales">Sales</option>
+                              <option value="marketing">Marketing</option>
+                              <option value="manager">Manager</option>
+                              <option value="viewer">Viewer</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          ) : (
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${roleColors[user.role]}`}>
+                              {user.role}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleActive(user)}
+                            disabled={isSelf || rowSaving}
+                            title={isSelf ? 'You cannot deactivate your own account' : 'Toggle status'}
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-opacity ${
+                              user.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                            } ${isSelf ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:opacity-80'}`}
+                          >
+                            {user.is_active ? 'Active' : 'Inactive'}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">
+                          {new Date(user.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isEditingThisRow ? (
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                disabled={rowSaving}
+                                onClick={() => saveRole(user)}
+                                aria-label="Save role"
+                              >
+                                {rowSaving ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                disabled={rowSaving}
+                                onClick={cancelEditing}
+                                aria-label="Cancel"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              disabled={isSelf}
+                              title={isSelf ? 'You cannot change your own role' : 'Edit role'}
+                              onClick={() => startEditing(user)}
+                              aria-label="Edit role"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

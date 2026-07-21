@@ -297,6 +297,24 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
 
   if (requiresHumanReview && context?.assignedTo) {
     await routeToInbox(leadId, context, raw);
+  } else if (
+    raw.draft_response &&
+    raw.intent_class !== 'opt_out' &&
+    !raw.should_stop_sequence &&
+    (channel === 'whatsapp' || channel === 'email' || channel === 'sms')
+  ) {
+    // Not routed to a triage inbox item (non-urgent, confident classification).
+    // Previously the draft_response was silently discarded here. Route the
+    // send itself through the agent policy engine: autopilot + confidence
+    // above threshold auto-sends; anything else (e.g. guarded mode) falls
+    // back to an approve_response inbox item carrying the draft, instead of
+    // dropping it.
+    await proposeAiReplySend(leadId, channel, context, raw).catch((err: unknown) => {
+      logger.warn('ai reply: draft send proposal failed', {
+        leadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   logger.info('ai reply: classified', {
@@ -356,6 +374,36 @@ async function proposeStageMoveAction(
     autonomyLevel: normalizeAutonomyLevel(context?.autonomyLevel),
     aiMinConfidence: context?.aiMinConfidence ?? 70,
     sourceMessage: raw.chain_of_thought.slice(0, 500),
+  });
+}
+
+async function proposeAiReplySend(
+  leadId: string,
+  channel: 'whatsapp' | 'email' | 'sms',
+  context: {
+    assignedTo: string | null;
+    campaignId: string | null;
+    autonomyLevel: string;
+    aiMinConfidence: number;
+  } | null,
+  raw: AiReplyOutput,
+): Promise<void> {
+  const actor = await resolveAssignedActor(context?.assignedTo ?? null);
+  if (!actor) {
+    logger.warn('ai reply: no assigned actor for draft send proposal', { leadId });
+    return;
+  }
+
+  await proposeAgentAction({
+    source: 'ai_reply',
+    actionName: 'outreach.send_ai_reply',
+    args: { leadId, campaignId: context?.campaignId ?? null, channel, body: raw.draft_response },
+    actor,
+    assignTo: actor.id,
+    confidence: raw.confidence,
+    autonomyLevel: normalizeAutonomyLevel(context?.autonomyLevel),
+    aiMinConfidence: context?.aiMinConfidence ?? 70,
+    sourceMessage: raw.draft_response,
   });
 }
 

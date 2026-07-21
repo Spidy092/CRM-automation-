@@ -25,4 +25,11 @@ router.post('/reset-password', publicLimiter, wrap(resetPasswordHandler));
 // Protected: requires a valid Bearer token.
 router.get('/me', authenticate, wrap(getMeHandler));
 
+import { createApiKeyHandler, getApiKeysHandler, deleteApiKeyHandler } from './auth.controller';
+
+// API Keys (Protected)
+router.post('/api-keys', authenticate, wrap(createApiKeyHandler));
+router.get('/api-keys', authenticate, wrap(getApiKeysHandler));
+router.delete('/api-keys/:id', authenticate, wrap(deleteApiKeyHandler));
+
 export { router as authRoutes };

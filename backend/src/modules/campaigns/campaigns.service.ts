@@ -24,14 +24,17 @@ import {
   removeLeadFromCampaign,
   findCampaignLeadsWithProgress,
   findCampaignLeadRows,
+  findEligibleTriggerLeadsForCampaign,
   findLatestOutreachLogForLead,
   getCampaignStats,
+  getCampaignStepStatsRows,
 } from './campaigns.repository';
 import {
   CreateCampaignInput,
   UpdateCampaignInput,
   Campaign,
   CampaignStats,
+  CampaignStepStats,
   AutomationPreview,
   LaunchCampaignResult,
 } from './campaigns.types';
@@ -77,6 +80,12 @@ export async function createCampaign(input: CreateCampaignInput, actor: Actor): 
       ab_test_min_samples: input.ab_test_min_samples ?? 100,
       ab_test_confidence: input.ab_test_confidence ?? 95,
       ab_test_auto_promote: input.ab_test_auto_promote ?? true,
+      send_window_enabled: input.send_window_enabled ?? false,
+      send_window_start_hour: input.send_window_start_hour ?? 9,
+      send_window_end_hour: input.send_window_end_hour ?? 18,
+      send_window_days: input.send_window_days ?? [1, 2, 3, 4, 5],
+      send_window_timezone: input.send_window_timezone ?? 'UTC',
+      daily_send_limit: input.daily_send_limit ?? null,
     },
     actor.id,
   );
@@ -125,6 +134,12 @@ export async function updateCampaignById(
     ab_test_min_samples: input.ab_test_min_samples,
     ab_test_confidence: input.ab_test_confidence,
     ab_test_auto_promote: input.ab_test_auto_promote,
+    send_window_enabled: input.send_window_enabled,
+    send_window_start_hour: input.send_window_start_hour,
+    send_window_end_hour: input.send_window_end_hour,
+    send_window_days: input.send_window_days,
+    send_window_timezone: input.send_window_timezone,
+    ...('daily_send_limit' in input ? { daily_send_limit: input.daily_send_limit } : {}),
   });
 
   await writeAuditLog({
@@ -245,7 +260,16 @@ async function buildAutomationPreview(campaign: Campaign, mockMode = false): Pro
     }
   }
 
-  const leads = await findCampaignLeadRows(campaign.id);
+  const explicitLeads = await findCampaignLeadRows(campaign.id);
+  const triggerLeads = await findEligibleTriggerLeadsForCampaign(campaign.id);
+  
+  // Deduplicate in case a lead is in both (shouldn't happen with the SQL NOT EXISTS clause, but safe)
+  const leadsMap = new Map();
+  for (const l of [...explicitLeads, ...triggerLeads]) {
+    leadsMap.set(l.id, l);
+  }
+  const leads = Array.from(leadsMap.values());
+
   const eligibleLeads: AutomationPreview['eligibleLeads'] = [];
   const skippedLeads: AutomationPreview['skippedLeads'] = [];
 
@@ -311,6 +335,12 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   const preview = await buildAutomationPreview(existing, false);
   const launched = await launchCampaign(id);
   let enqueued = 0;
+
+  // Auto-enroll eligible leads that are not yet in campaign_leads
+  const leadIdsToInsert = preview.eligibleLeads.map(l => l.leadId);
+  if (leadIdsToInsert.length > 0) {
+    await addLeads(launched.id, leadIdsToInsert, actor);
+  }
 
   if (preview.firstStep && launched.sequence_id) {
     for (const lead of preview.eligibleLeads) {
@@ -524,4 +554,12 @@ export async function getStats(campaignId: string): Promise<CampaignStats> {
     throw new AppError('Campaign not found', 404);
   }
   return getCampaignStats(campaignId);
+}
+
+export async function getStepStats(campaignId: string): Promise<CampaignStepStats[]> {
+  const campaign = await findCampaignById(campaignId);
+  if (!campaign) {
+    throw new AppError('Campaign not found', 404);
+  }
+  return getCampaignStepStatsRows(campaignId);
 }

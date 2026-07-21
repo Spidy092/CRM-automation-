@@ -26,6 +26,10 @@ export interface DashboardMetrics {
   totalCampaigns: number;
   activeOutreach: number;
   pipelineConversion: number;
+  /** Total deal_value across leads with status = 'won'. */
+  wonRevenue: number;
+  /** Count of leads with status = 'won'. */
+  wonDeals: number;
   recentActivity: DashboardActivityPoint[];
 }
 

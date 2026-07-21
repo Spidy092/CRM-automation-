@@ -119,6 +119,7 @@ export const actionParameters: Record<AgentActionName, Record<string, unknown>> 
     required: ['configId'],
   },
   'outreach.send_manual': { type: 'object', additionalProperties: true },
+  'outreach.send_ai_reply': { type: 'object', additionalProperties: true },
   'ai.decision.recompute': {
     type: 'object',
     properties: {

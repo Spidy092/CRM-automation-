@@ -12,14 +12,35 @@ declare global {
   }
 }
 
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
+import { validateApiKey } from '../../modules/auth/auth.service';
+
+export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let token: string | undefined;
+
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    sendError(res, 'Missing or invalid Authorization header', 401);
+  if (authHeader?.startsWith('Bearer ')) {
+    token = authHeader.slice(7);
+  } else if (req.query.apiKey && typeof req.query.apiKey === 'string') {
+    // Allow API key via query string for simpler MCP SSE client integrations (like Claude Web)
+    token = req.query.apiKey;
+  }
+
+  if (!token) {
+    sendError(res, 'Missing or invalid Authorization header or apiKey query parameter', 401);
     return;
   }
 
-  const token = authHeader.slice(7);
+  if (token.startsWith('crm_')) {
+    try {
+      const user = await validateApiKey(token);
+      req.user = user;
+      next();
+    } catch (err: any) {
+      sendError(res, err.message || 'Invalid or expired API key', 401);
+    }
+    return;
+  }
+
   const publicKey = process.env.JWT_PUBLIC_KEY?.replace(/\\n/g, '\n');
 
   if (!publicKey) {

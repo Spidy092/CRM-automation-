@@ -5,12 +5,14 @@ import {
   OUTREACH_DISPATCH,
   OUTREACH_FOLLOW_UP,
   OUTREACH_STOP_CHECK,
+  OUTREACH_SEND_AI_REPLY,
   enqueueOutreachDispatch,
   enqueueOutreachFollowUp,
   enqueueLeadEvent,
   type OutreachDispatchJob,
   type OutreachFollowUpJob,
   type OutreachStopCheckJob,
+  type OutreachSendAiReplyJob,
 } from './queue';
 import { logger } from '../shared/utils/logger';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
@@ -18,6 +20,11 @@ import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { AppError } from '../shared/middleware/errorHandler';
 import { findSequenceById } from '../modules/outreach/outreach.repository';
+import {
+  findCampaignById,
+  countSentTodayForCampaign,
+} from '../modules/campaigns/campaigns.repository';
+import { computeDispatchDeferralMs } from '../modules/campaigns/campaigns.sendWindow';
 import { createLog, updateLogStatus } from '../modules/outreach/outreach.service';
 import { OutreachStatus } from '../shared/types';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
@@ -67,6 +74,8 @@ export function startOutreachWorker(): Worker {
           await handleFollowUp(job.data as OutreachFollowUpJob);
         } else if (job.name === OUTREACH_STOP_CHECK) {
           await handleStopCheck(job.data as OutreachStopCheckJob);
+        } else if (job.name === OUTREACH_SEND_AI_REPLY) {
+          await handleSendAiReply(job.data as OutreachSendAiReplyJob);
         } else {
           throw new AppError(`Unknown outreach job: ${job.name}`, 500);
         }
@@ -163,6 +172,39 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
       reason: stopResult.reason,
     });
     return;
+  }
+
+  // ── Send Window + Daily Cap Deferral ────────────────────────────────────
+  // Messages (not phone-call tasks) respect the campaign's send window and
+  // daily send limit: outside the window or over the cap, the job re-enqueues
+  // itself with a delay instead of sending. The deferred job's id encodes the
+  // target minute so repeated deferral evaluations dedupe instead of piling up.
+  if (channel !== 'phone_call') {
+    const campaign = await findCampaignById(campaignId);
+    if (campaign) {
+      const sentToday =
+        campaign.daily_send_limit != null
+          ? await countSentTodayForCampaign(campaignId, campaign.send_window_timezone || 'UTC')
+          : null;
+      const deferral = computeDispatchDeferralMs(campaign, sentToday);
+      if (deferral.delayMs > 0) {
+        const targetMinute = Math.ceil((Date.now() + deferral.delayMs) / 60_000);
+        await enqueueOutreachDispatch(data, {
+          jobIdSuffix: `deferred-${targetMinute}`,
+          delayMs: deferral.delayMs,
+        });
+        logger.info('dispatch deferred', {
+          leadId,
+          campaignId,
+          sequenceId,
+          stepNumber,
+          reason: deferral.reason,
+          delayMs: deferral.delayMs,
+          resumesAt: new Date(Date.now() + deferral.delayMs).toISOString(),
+        });
+        return;
+      }
+    }
   }
 
   // 2. phone_call steps create a task row for the rep — never auto-dispatch.
@@ -385,6 +427,59 @@ export async function handleFollowUp(data: OutreachFollowUpJob): Promise<void> {
     mockMode,
     aiPersonalizationEnabled,
   });
+}
+
+// ── AI Draft Reply Sender (exported for testability) ────────────────────────
+
+/**
+ * Sends a free-text AI-drafted reply (not template-driven). Reached only via
+ * the agent policy engine — `outreach.send_ai_reply` — which gates on
+ * autonomy level + confidence before ever enqueuing this job.
+ */
+export async function handleSendAiReply(data: OutreachSendAiReplyJob): Promise<void> {
+  const { leadId, campaignId, channel, body } = data;
+
+  const lead = await findLeadById(leadId);
+  if (!lead) {
+    throw new AppError(`Lead ${leadId} not found`, 404);
+  }
+
+  const destination = channel === 'email' ? lead.email : lead.phone;
+  if (!destination) {
+    throw new AppError(`Lead ${leadId} has no ${channel} destination`, 400);
+  }
+
+  const log = await createLog({
+    leadId,
+    campaignId,
+    channel,
+    templateId: null,
+    messageBody: body,
+    status: 'queued',
+  });
+
+  const outcome = await dispatchOutbound({
+    leadId,
+    campaignId: campaignId ?? '',
+    channel,
+    templateId: 'ai-reply-draft',
+    body,
+    destination,
+    mockMode: false,
+    logId: log.id,
+  });
+
+  if (outcome.ok) {
+    await updateLogStatus(log.id, 'sent' as OutreachStatus, {
+      externalMsgId: outcome.externalId,
+      sentAt: new Date().toISOString(),
+    });
+  } else {
+    await updateLogStatus(log.id, 'failed' as OutreachStatus, {
+      errorMessage: outcome.error ?? 'Unknown dispatch error',
+    });
+    throw new AppError(`AI reply dispatch failed for lead ${leadId} via ${channel}: ${outcome.error}`, 502);
+  }
 }
 
 // ── Stop Condition Checker (exported for testability) ──────────────────────

@@ -12,6 +12,7 @@ jest.mock('./campaigns.repository', () => ({
   findCampaignLeads: jest.fn(),
   findCampaignLeadsWithProgress: jest.fn(),
   findCampaignLeadRows: jest.fn(),
+  findEligibleTriggerLeadsForCampaign: jest.fn(),
   findLatestOutreachLogForLead: jest.fn(),
   getCampaignStats: jest.fn(),
 }));
@@ -48,6 +49,7 @@ import {
   removeLeadFromCampaign,
   findCampaignLeadsWithProgress,
   findCampaignLeadRows,
+  findEligibleTriggerLeadsForCampaign,
   findLatestOutreachLogForLead,
   getCampaignStats,
 } from './campaigns.repository';
@@ -97,6 +99,7 @@ const actor = { id: 'admin-1', role: 'admin', ipAddress: '127.0.0.1' };
 beforeEach(() => {
   jest.clearAllMocks();
   (findCampaignLeadRows as jest.Mock).mockResolvedValue([]);
+  (findEligibleTriggerLeadsForCampaign as jest.Mock).mockResolvedValue([]);
   (findTemplateById as jest.Mock).mockResolvedValue({
     id: 'tmpl-1',
     channel: 'email',

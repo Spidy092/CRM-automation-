@@ -12,8 +12,8 @@ jest.mock('../leads/leads.repository', () => ({
   findLeadById: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('../notifications/notifications.emitter', () => ({ pushToUser: jest.fn() }));
 
-import { AppError } from '../../shared/middleware/errorHandler';
 import {
   findAssignmentConfig,
   updateAssignmentConfig,
@@ -25,6 +25,7 @@ import {
 } from './assignments.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById } from '../leads/leads.repository';
+import { pushToUser } from '../notifications/notifications.emitter';
 import {
   assignManually,
   autoAssignLead,
@@ -54,7 +55,7 @@ const eligibleUser = {
 
 const actor = { id: 'admin-1', role: 'admin', ipAddress: '127.0.0.1' };
 
-const mockLead = { id: 'lead-1', deleted_at: null };
+const mockLead = { id: 'lead-1', business_name: 'Acme Co', deleted_at: null };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -99,6 +100,10 @@ describe('assignManually', () => {
     expect(res.id).toBe('a-1');
     expect(updateLeadAssignment).toHaveBeenCalledWith('lead-1', 'rep-1');
     expect(writeAuditLog).toHaveBeenCalled();
+    expect(pushToUser).toHaveBeenCalledWith(
+      'rep-1',
+      expect.objectContaining({ type: 'lead_assigned', data: { leadId: 'lead-1' } }),
+    );
   });
 });
 
@@ -110,6 +115,10 @@ describe('overrideAssignment', () => {
     const res = await overrideAssignment('lead-1', 'rep-2', 'reassigning', actor);
     expect(res.assigned_to).toBe('rep-2');
     expect(writeAuditLog).toHaveBeenCalled();
+    expect(pushToUser).toHaveBeenCalledWith(
+      'rep-2',
+      expect.objectContaining({ type: 'lead_assigned', data: { leadId: 'lead-1' } }),
+    );
   });
 });
 

@@ -1,5 +1,5 @@
 import { query, queryOne } from '../../shared/utils/db';
-import { User, UpdateProfileInput, CreateUserInput } from './users.types';
+import { User, UpdateProfileInput, CreateUserInput, UpdatePermissionsInput } from './users.types';
 
 /**
  * Fetches all non-deleted users ordered by creation date (newest first).
@@ -68,5 +68,25 @@ export async function updateUserProfile(
        AND deleted_at IS NULL
      RETURNING id, name, email, role, is_active, created_at`,
     [input.name, id],
+  );
+}
+
+/**
+ * Updates role and/or active status for a user. Only the fields present in
+ * `input` are changed — omitted fields keep their current value.
+ */
+export async function updateUserPermissions(
+  id: string,
+  input: UpdatePermissionsInput,
+): Promise<User | null> {
+  return queryOne<User>(
+    `UPDATE users
+     SET role = COALESCE($1, role),
+         is_active = COALESCE($2, is_active),
+         updated_at = NOW()
+     WHERE id = $3
+       AND deleted_at IS NULL
+     RETURNING id, name, email, role, is_active, created_at`,
+    [input.role ?? null, input.is_active ?? null, id],
   );
 }

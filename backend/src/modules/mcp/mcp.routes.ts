@@ -17,6 +17,11 @@ router.post(
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   wrap(handleMcpPost),
 );
+router.post(
+  '/message',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(handleMcpPost),
+);
 router.get('/', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), handleMcpGet);
 
 export { router as mcpRoutes };

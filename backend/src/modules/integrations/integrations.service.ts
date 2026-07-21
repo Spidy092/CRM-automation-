@@ -373,6 +373,11 @@ export async function testIntegration(
   }
 
   await recordTestResult(id, 'ok');
+  
+  if (!integration.is_enabled) {
+    await updateIntegrationRepo(id, { isEnabled: true, updatedBy: actor.id });
+  }
+
   await writeAuditLog({
     userId: actor.id,
     action: 'integration.tested',

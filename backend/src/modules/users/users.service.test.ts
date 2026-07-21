@@ -6,19 +6,23 @@ jest.mock('./users.repository', () => ({
   findUserById: jest.fn(),
   insertUser: jest.fn(),
   updateUserProfile: jest.fn(),
+  updateUserPermissions: jest.fn(),
 }));
 jest.mock('bcrypt', () => ({ hash: jest.fn(), compare: jest.fn() }));
 jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid-v4') }));
+jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
 import bcrypt from 'bcrypt';
-import { createUser, listUsers, getUser, updateProfile } from './users.service';
+import { createUser, listUsers, getUser, updateProfile, updatePermissions } from './users.service';
 import {
   findUserByEmail,
   findAllUsers,
   findUserById,
   insertUser,
   updateUserProfile,
+  updateUserPermissions,
 } from './users.repository';
+import { writeAuditLog } from '../../shared/utils/audit';
 import { User } from './users.types';
 import { AuthenticatedUser } from '../../shared/types';
 
@@ -186,5 +190,76 @@ describe('updateProfile', () => {
     await expect(updateProfile('missing', { name: 'X' }, adminUser)).rejects.toMatchObject({
       statusCode: 404,
     });
+  });
+});
+
+describe('updatePermissions', () => {
+  it('allows admin to change another user\'s role and status', async () => {
+    (findUserById as jest.Mock<any>).mockResolvedValue(sampleUser);
+    (updateUserPermissions as jest.Mock<any>).mockResolvedValue({
+      ...sampleUser,
+      role: 'manager',
+      is_active: false,
+    });
+
+    const result = await updatePermissions('user-1', { role: 'manager', is_active: false }, adminUser);
+
+    expect(result.role).toBe('manager');
+    expect(result.is_active).toBe(false);
+    expect(updateUserPermissions).toHaveBeenCalledWith('user-1', { role: 'manager', is_active: false });
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'admin-1',
+        action: 'user.permissions_updated',
+        entityId: 'user-1',
+        oldValue: { role: 'sales', is_active: true },
+        newValue: { role: 'manager', is_active: false },
+      }),
+    );
+  });
+
+  it('updates only the field provided', async () => {
+    (findUserById as jest.Mock<any>).mockResolvedValue(sampleUser);
+    (updateUserPermissions as jest.Mock<any>).mockResolvedValue({ ...sampleUser, role: 'viewer' });
+
+    const result = await updatePermissions('user-1', { role: 'viewer' }, adminUser);
+
+    expect(result.role).toBe('viewer');
+    expect(updateUserPermissions).toHaveBeenCalledWith('user-1', { role: 'viewer' });
+  });
+
+  it('blocks an admin from demoting their own role', async () => {
+    await expect(
+      updatePermissions('admin-1', { role: 'manager' }, adminUser),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(updateUserPermissions).not.toHaveBeenCalled();
+  });
+
+  it('blocks an admin from deactivating their own account', async () => {
+    await expect(
+      updatePermissions('admin-1', { is_active: false }, adminUser),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(updateUserPermissions).not.toHaveBeenCalled();
+  });
+
+  it('allows an admin to keep their own role as admin explicitly', async () => {
+    (findUserById as jest.Mock<any>).mockResolvedValue({ ...sampleUser, id: 'admin-1', role: 'admin' });
+    (updateUserPermissions as jest.Mock<any>).mockResolvedValue({
+      ...sampleUser,
+      id: 'admin-1',
+      role: 'admin',
+      is_active: true,
+    });
+
+    const result = await updatePermissions('admin-1', { role: 'admin' }, adminUser);
+    expect(result.role).toBe('admin');
+  });
+
+  it('returns 404 when the target user does not exist', async () => {
+    (findUserById as jest.Mock<any>).mockResolvedValue(null);
+    await expect(
+      updatePermissions('missing', { role: 'viewer' }, adminUser),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(updateUserPermissions).not.toHaveBeenCalled();
   });
 });

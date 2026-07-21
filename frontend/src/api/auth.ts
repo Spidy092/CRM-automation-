@@ -64,3 +64,46 @@ export function useResetPassword() {
     },
   });
 }
+
+// -----------------------------------------------------------------------------
+// API Keys
+// -----------------------------------------------------------------------------
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export function useApiKeys() {
+  return useQuery({
+    queryKey: ['apiKeys'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<ApiKey[]>>('/auth/api-keys');
+      return response.data.data;
+    },
+  });
+}
+
+export function useCreateApiKey() {
+  return useMutation({
+    mutationFn: async (data: { name: string; expiresInDays?: number }) => {
+      const response = await apiClient.post<ApiResponse<{ rawKey: string; apiKey: ApiKey }>>(
+        '/auth/api-keys',
+        data,
+      );
+      return response.data.data;
+    },
+  });
+}
+
+export function useDeleteApiKey() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiClient.delete<ApiResponse<{ message: string }>>(`/auth/api-keys/${id}`);
+      return response.data.data;
+    },
+  });
+}

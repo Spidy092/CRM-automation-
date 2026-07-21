@@ -7,6 +7,7 @@ import {
   listUsersHandler,
   getUserHandler,
   updateProfileHandler,
+  updatePermissionsHandler,
 } from './users.controller';
 
 const router = Router();
@@ -35,5 +36,8 @@ router.patch(
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   wrap(updateProfileHandler),
 );
+
+// PATCH /api/v1/users/:id/permissions — Update role and/or active status. Admin only.
+router.patch('/:id/permissions', authorize('admin'), wrap(updatePermissionsHandler));
 
 export { router as usersRoutes };

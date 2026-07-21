@@ -15,6 +15,7 @@ import {
   removeLead,
   getCampaignLeads,
   getStats,
+  getStepStats,
   retryLeadOutreachStep,
 } from './campaigns.service';
 import { createCampaignSchema, updateCampaignSchema, addLeadsSchema } from './campaigns.schema';
@@ -203,6 +204,19 @@ export async function getCampaignStatsHandler(
 ): Promise<void> {
   try {
     const stats = await getStats(req.params.id);
+    sendSuccess(res, stats);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaignStepStatsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const stats = await getStepStats(req.params.id);
     sendSuccess(res, stats);
   } catch (err) {
     next(err);

@@ -25,6 +25,7 @@ import { ScraperConfigPage } from '@/pages/ScraperConfigPage';
 import { ScoringPage } from '@/pages/ScoringPage';
 import { AssignmentsPage } from '@/pages/AssignmentsPage';
 import { IntegrationsPage } from '@/pages/IntegrationsPage';
+import { ApiKeysPage } from '@/pages/ApiKeysPage';
 import AISettingsPage from '@/pages/AISettingsPage';
 import { OutreachSequencesPage } from '@/pages/OutreachSequencesPage';
 import { AutomationRulesPage } from '@/pages/AutomationRulesPage';
@@ -157,6 +158,7 @@ function App() {
                 <Route path="settings/scoring" element={<ScoringPage />} />
                 <Route path="settings/assignments" element={<AssignmentsPage />} />
                 <Route path="settings/integrations" element={<IntegrationsPage />} />
+                <Route path="settings/api-keys" element={<ApiKeysPage />} />
                 <Route path="automation/rules" element={<AutomationRulesPage />} />
                 <Route path="outreach/sequences" element={<OutreachSequencesPage />} />
                 <Route path="templates" element={<TemplatesPage />} />

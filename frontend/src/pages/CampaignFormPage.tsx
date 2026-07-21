@@ -26,6 +26,7 @@ import {
   CHANNEL_COLORS,
 } from '@/components/SequenceStepEditor';
 import {
+  Clock,
   GitBranch,
   Info,
   Check,
@@ -40,6 +41,21 @@ import {
 } from 'lucide-react';
 
 // ── Wizard steps ─────────────────────────────────────────────────────────────
+
+const WEEKDAYS = [
+  { iso: 1, label: 'Mon' },
+  { iso: 2, label: 'Tue' },
+  { iso: 3, label: 'Wed' },
+  { iso: 4, label: 'Thu' },
+  { iso: 5, label: 'Fri' },
+  { iso: 6, label: 'Sat' },
+  { iso: 7, label: 'Sun' },
+] as const;
+
+const TIMEZONE_OPTIONS: string[] =
+  typeof Intl.supportedValuesOf === 'function'
+    ? Intl.supportedValuesOf('timeZone')
+    : ['UTC', 'America/New_York', 'Europe/London', 'Asia/Kolkata', 'Asia/Singapore'];
 
 const WIZARD_STEPS = [
   { title: 'Basics', description: 'Name, tone, and targeting' },
@@ -188,6 +204,14 @@ export function CampaignFormPage() {
   const [sequenceId, setSequenceId] = useState('');
   const [aiPersonalizationEnabled, setAiPersonalizationEnabled] = useState(false);
   const [showNewSequence, setShowNewSequence] = useState(false);
+  const [sendWindowEnabled, setSendWindowEnabled] = useState(false);
+  const [sendWindowStartHour, setSendWindowStartHour] = useState(9);
+  const [sendWindowEndHour, setSendWindowEndHour] = useState(18);
+  const [sendWindowDays, setSendWindowDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [sendWindowTimezone, setSendWindowTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  );
+  const [dailySendLimit, setDailySendLimit] = useState<string>('');
 
   // Set once the campaign row exists (immediately in edit mode) — enables the readiness check.
   const [savedCampaignId, setSavedCampaignId] = useState<string | null>(id ?? null);
@@ -211,6 +235,14 @@ export function CampaignFormPage() {
       setTriggerStageId(existingCampaign.trigger_stage_id || '');
       setSequenceId(existingCampaign.sequence_id || '');
       setAiPersonalizationEnabled(existingCampaign.ai_personalization_enabled);
+      setSendWindowEnabled(existingCampaign.send_window_enabled ?? false);
+      setSendWindowStartHour(existingCampaign.send_window_start_hour ?? 9);
+      setSendWindowEndHour(existingCampaign.send_window_end_hour ?? 18);
+      setSendWindowDays(existingCampaign.send_window_days ?? [1, 2, 3, 4, 5]);
+      setSendWindowTimezone(existingCampaign.send_window_timezone || 'UTC');
+      setDailySendLimit(
+        existingCampaign.daily_send_limit != null ? String(existingCampaign.daily_send_limit) : '',
+      );
       setMaxReached(WIZARD_STEPS.length - 1);
     }
   }, [isEditMode, existingCampaign]);
@@ -239,6 +271,12 @@ export function CampaignFormPage() {
     trigger_stage_id: triggerStageId || null,
     sequence_id: sequenceId || undefined,
     ai_personalization_enabled: aiPersonalizationEnabled,
+    send_window_enabled: sendWindowEnabled,
+    send_window_start_hour: sendWindowStartHour,
+    send_window_end_hour: sendWindowEndHour,
+    send_window_days: sendWindowDays.length > 0 ? sendWindowDays : [1, 2, 3, 4, 5],
+    send_window_timezone: sendWindowTimezone || 'UTC',
+    daily_send_limit: dailySendLimit.trim() ? Number(dailySendLimit) : null,
   });
 
   const isSaving = createCampaign.isPending || updateCampaign.isPending;
@@ -454,6 +492,7 @@ export function CampaignFormPage() {
 
       {/* ── Step 3: Sequence ───────────────────────────────────────────────── */}
       {step === 2 && (
+        <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Outreach Sequence</CardTitle>
@@ -503,6 +542,138 @@ export function CampaignFormPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Delivery controls — send window + daily cap */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-slate-500" />
+              Delivery Controls
+            </CardTitle>
+            <CardDescription>
+              Optional — restrict when messages go out and how many are sent per day. Deferred
+              messages are queued and sent automatically when the window reopens.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="send_window_enabled" className="text-base">Send Window</Label>
+                <div className="text-sm text-muted-foreground">
+                  Only send during business hours — messages outside the window wait for it to open.
+                </div>
+              </div>
+              <Switch
+                id="send_window_enabled"
+                checked={sendWindowEnabled}
+                onCheckedChange={setSendWindowEnabled}
+                className="data-[state=checked]:bg-indigo-600"
+              />
+            </div>
+
+            {sendWindowEnabled && (
+              <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="send_window_start">From</Label>
+                    <select
+                      id="send_window_start"
+                      value={sendWindowStartHour}
+                      onChange={(e) => setSendWindowStartHour(Number(e.target.value))}
+                      className={inputClass}
+                    >
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="send_window_end">Until</Label>
+                    <select
+                      id="send_window_end"
+                      value={sendWindowEndHour}
+                      onChange={(e) => setSendWindowEndHour(Number(e.target.value))}
+                      className={inputClass}
+                    >
+                      {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+                        <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="send_window_timezone">Timezone</Label>
+                    <select
+                      id="send_window_timezone"
+                      value={sendWindowTimezone}
+                      onChange={(e) => setSendWindowTimezone(e.target.value)}
+                      className={inputClass}
+                    >
+                      {TIMEZONE_OPTIONS.map((tz) => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Days</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {WEEKDAYS.map(({ iso, label }) => {
+                      const active = sendWindowDays.includes(iso);
+                      return (
+                        <button
+                          key={iso}
+                          type="button"
+                          onClick={() =>
+                            setSendWindowDays((prev) =>
+                              active ? prev.filter((d) => d !== iso) : [...prev, iso].sort(),
+                            )
+                          }
+                          className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+                            active
+                              ? 'border-indigo-600 bg-indigo-50 font-medium text-indigo-700'
+                              : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {sendWindowDays.length === 0 && (
+                    <p className="text-xs text-amber-700">
+                      Select at least one day — with none selected, weekdays are used.
+                    </p>
+                  )}
+                </div>
+
+                {sendWindowStartHour >= sendWindowEndHour && (
+                  <p className="flex items-center gap-1 text-xs text-red-600">
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                    The window start must be before its end.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="grid gap-2 sm:max-w-xs">
+              <Label htmlFor="daily_send_limit">Daily send limit</Label>
+              <Input
+                id="daily_send_limit"
+                type="number"
+                min={1}
+                value={dailySendLimit}
+                onChange={(e) => setDailySendLimit(e.target.value)}
+                placeholder="Unlimited"
+              />
+              <p className="text-xs text-slate-500">
+                Max messages this campaign sends per day. Leave empty for no limit — useful to
+                protect sender reputation on large lead lists.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+        </div>
       )}
 
       {/* ── Step 4: Review & Launch ────────────────────────────────────────── */}
@@ -566,6 +737,21 @@ export function CampaignFormPage() {
                   <dt className="text-slate-500">AI Personalization</dt>
                   <dd className="font-medium text-slate-900">
                     {aiPersonalizationEnabled ? 'Enabled' : 'Disabled'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Delivery</dt>
+                  <dd className="font-medium text-slate-900">
+                    {sendWindowEnabled
+                      ? `${String(sendWindowStartHour).padStart(2, '0')}:00–${String(sendWindowEndHour).padStart(2, '0')}:00 (${sendWindowTimezone}), ${
+                          sendWindowDays.length > 0
+                            ? WEEKDAYS.filter((d) => sendWindowDays.includes(d.iso))
+                                .map((d) => d.label)
+                                .join(', ')
+                            : 'weekdays'
+                        }`
+                      : 'Any time'}
+                    {dailySendLimit.trim() ? ` · max ${dailySendLimit}/day` : ''}
                   </dd>
                 </div>
               </dl>

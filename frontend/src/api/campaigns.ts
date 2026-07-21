@@ -16,6 +16,16 @@ export interface Campaign {
   pipeline_id: string | null;
   trigger_stage_id: string | null;
   ai_personalization_enabled: boolean;
+  send_window_enabled: boolean;
+  /** Local hour (0–23), inclusive, in send_window_timezone. */
+  send_window_start_hour: number;
+  /** Local hour (1–24), exclusive, in send_window_timezone. */
+  send_window_end_hour: number;
+  /** Allowed ISO weekdays, 1 = Monday … 7 = Sunday. */
+  send_window_days: number[];
+  send_window_timezone: string;
+  /** Max messages per campaign-local day; null = unlimited. */
+  daily_send_limit: number | null;
   created_by: string;
   launched_at: string | null;
   created_at: string;
@@ -63,6 +73,12 @@ export interface CreateCampaignInput {
   pipeline_id?: string;
   trigger_stage_id?: string | null;
   ai_personalization_enabled?: boolean;
+  send_window_enabled?: boolean;
+  send_window_start_hour?: number;
+  send_window_end_hour?: number;
+  send_window_days?: number[];
+  send_window_timezone?: string;
+  daily_send_limit?: number | null;
 }
 
 export interface UpdateCampaignInput {
@@ -74,6 +90,12 @@ export interface UpdateCampaignInput {
   pipeline_id?: string;
   trigger_stage_id?: string | null;
   ai_personalization_enabled?: boolean;
+  send_window_enabled?: boolean;
+  send_window_start_hour?: number;
+  send_window_end_hour?: number;
+  send_window_days?: number[];
+  send_window_timezone?: string;
+  daily_send_limit?: number | null;
 }
 
 export function useCampaigns() {
@@ -116,6 +138,29 @@ export function useCampaignStats(id: string) {
     queryFn: async () => {
       const response = await apiClient.get<ApiResponse<CampaignStats>>(`/campaigns/${id}/stats`);
       return response.data.data;
+    },
+    enabled: !!id,
+  });
+}
+
+export interface CampaignStepStats {
+  step_number: number;
+  attempts: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  replied: number;
+  failed: number;
+}
+
+export function useCampaignStepStats(id: string) {
+  return useQuery({
+    queryKey: ['campaigns', id, 'stats', 'steps'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<CampaignStepStats[]>>(
+        `/campaigns/${id}/stats/steps`,
+      );
+      return response.data.data ?? [];
     },
     enabled: !!id,
   });

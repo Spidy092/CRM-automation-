@@ -26,7 +26,13 @@ jest.mock('../../shared/utils/logger', () => ({
 
 const mockedService = service as jest.Mocked<typeof service>;
 
-function mockReq(options: { query?: Record<string, unknown>; body?: Record<string, unknown>; user?: { id: string; role: string } } = {}): Partial<Request> {
+function mockReq(
+  options: {
+    query?: Record<string, unknown>;
+    body?: Record<string, unknown>;
+    user?: { id: string; role: string };
+  } = {},
+): Partial<Request> {
   return {
     query: options.query || {},
     body: options.body || {},
@@ -105,6 +111,8 @@ describe('reports.controller', () => {
         totalCampaigns: 2,
         activeOutreach: 3,
         pipelineConversion: 25,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [],
       };
       mockedService.getDashboardMetrics.mockResolvedValue(metrics);
@@ -175,7 +183,17 @@ describe('reports.controller', () => {
   describe('getOutreachReportHandler', () => {
     it('returns 200 with outreach report', async () => {
       mockedService.getOutreachReport.mockResolvedValue({
-        items: [{ date: '2026-06-20', channel: 'email', sent: 10, delivered: 8, opened: 4, replied: 2, failed: 0 }],
+        items: [
+          {
+            date: '2026-06-20',
+            channel: 'email',
+            sent: 10,
+            delivered: 8,
+            opened: 4,
+            replied: 2,
+            failed: 0,
+          },
+        ],
         meta: { limit: 25, offset: 0, total: 1 },
       });
 
@@ -207,7 +225,16 @@ describe('reports.controller', () => {
   describe('getSalesRepReportHandler', () => {
     it('returns 200 with sales rep report', async () => {
       mockedService.getSalesRepReport.mockResolvedValue({
-        items: [{ repId: 'u1', repName: 'Alice', leadsAssigned: 10, leadsConverted: 3, conversionRate: 30, avgResponseTime: 0 }],
+        items: [
+          {
+            repId: 'u1',
+            repName: 'Alice',
+            leadsAssigned: 10,
+            leadsConverted: 3,
+            conversionRate: 30,
+            avgResponseTime: 0,
+          },
+        ],
         meta: { limit: 25, offset: 0, total: 1 },
       });
 
@@ -245,7 +272,9 @@ describe('reports.controller', () => {
     it('passes filters when provided', async () => {
       mockedService.enqueueExportJob.mockResolvedValue({ jobId: 'job-456', status: 'queued' });
 
-      const req = mockReq({ body: { reportType: 'leads', format: 'xlsx', filters: { startDate: '2026-06-01' } } });
+      const req = mockReq({
+        body: { reportType: 'leads', format: 'xlsx', filters: { startDate: '2026-06-01' } },
+      });
       const res = mockRes() as Response;
 
       await exportReportHandler(req as Request, res, mockNext);
@@ -274,7 +303,17 @@ describe('reports.controller', () => {
   describe('getCampaignAnalyticsReportHandler', () => {
     it('returns 200 with campaign analytics', async () => {
       mockedService.getCampaignAnalyticsReport.mockResolvedValue({
-        items: [{ date: '2026-06-20', campaignId: 'camp-1', campaignName: 'Summer Promo', channel: 'email', leadsTargeted: 10, leadsConverted: 2, conversionRate: 0.2 }],
+        items: [
+          {
+            date: '2026-06-20',
+            campaignId: 'camp-1',
+            campaignName: 'Summer Promo',
+            channel: 'email',
+            leadsTargeted: 10,
+            leadsConverted: 2,
+            conversionRate: 0.2,
+          },
+        ],
         meta: { limit: 25, offset: 0, total: 1 },
       });
 
@@ -319,7 +358,16 @@ describe('reports.controller', () => {
   describe('getIntegrationHealthReportHandler', () => {
     it('returns 200 with integration health rows', async () => {
       mockedService.getIntegrationHealthReport.mockResolvedValue([
-        { integrationId: 'int-1', name: 'twilio', displayName: 'Twilio', channel: 'sms', status: 'healthy', enabled: true, successRate: 95, lastTestedAt: new Date().toISOString() },
+        {
+          integrationId: 'int-1',
+          name: 'twilio',
+          displayName: 'Twilio',
+          channel: 'sms',
+          status: 'healthy',
+          enabled: true,
+          successRate: 95,
+          lastTestedAt: new Date().toISOString(),
+        },
       ]);
 
       const req = mockReq();
@@ -373,9 +421,11 @@ describe('reports.controller', () => {
       const res: Partial<Response> = {};
       res.status = jest.fn().mockReturnValue(res);
       res.json = jest.fn().mockReturnValue(res);
-      res.download = jest.fn().mockImplementation((_path: string, _filename: string, cb: (err?: Error) => void) => {
-        cb();
-      });
+      res.download = jest
+        .fn()
+        .mockImplementation((_path: string, _filename: string, cb: (err?: Error) => void) => {
+          cb();
+        });
       return res;
     }
 
@@ -385,7 +435,11 @@ describe('reports.controller', () => {
       fs.mkdirSync(exportsDir, { recursive: true });
       fs.writeFileSync(path.join(exportsDir, 'job-123-export.csv'), 'a,b,c');
 
-      const req = { params: { jobId: 'job-123' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const req = {
+        params: { jobId: 'job-123' },
+        ip: '127.0.0.1',
+        user: { id: 'admin-1', role: 'admin' },
+      } as unknown as Request;
       const res = mockDownloadRes() as Response;
 
       downloadExportHandler(req, res, mockNext);
@@ -400,7 +454,11 @@ describe('reports.controller', () => {
 
     it('rejects invalid job id format', () => {
       jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
-      const req = { params: { jobId: 'job-123/../../etc/passwd' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const req = {
+        params: { jobId: 'job-123/../../etc/passwd' },
+        ip: '127.0.0.1',
+        user: { id: 'admin-1', role: 'admin' },
+      } as unknown as Request;
       const res = mockDownloadRes() as Response;
 
       downloadExportHandler(req, res, mockNext);
@@ -411,7 +469,11 @@ describe('reports.controller', () => {
 
     it('returns 404 when exports directory is missing', () => {
       jest.spyOn(process, 'cwd').mockReturnValue('/tmp/no-such-crm-dir');
-      const req = { params: { jobId: 'job-123' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const req = {
+        params: { jobId: 'job-123' },
+        ip: '127.0.0.1',
+        user: { id: 'admin-1', role: 'admin' },
+      } as unknown as Request;
       const res = mockDownloadRes() as Response;
 
       downloadExportHandler(req, res, mockNext);
@@ -422,7 +484,11 @@ describe('reports.controller', () => {
 
     it('returns 404 when no file matches the job id', () => {
       jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
-      const req = { params: { jobId: 'job-missing' }, ip: '127.0.0.1', user: { id: 'admin-1', role: 'admin' } } as unknown as Request;
+      const req = {
+        params: { jobId: 'job-missing' },
+        ip: '127.0.0.1',
+        user: { id: 'admin-1', role: 'admin' },
+      } as unknown as Request;
       const res = mockDownloadRes() as Response;
 
       downloadExportHandler(req, res, mockNext);

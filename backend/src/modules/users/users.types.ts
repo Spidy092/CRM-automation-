@@ -13,6 +13,11 @@ export interface UpdateProfileInput {
   name: string;
 }
 
+export interface UpdatePermissionsInput {
+  role?: UserRole;
+  is_active?: boolean;
+}
+
 export interface CreateUserInput {
   name: string;
   email: string;

@@ -39,8 +39,15 @@ async function publishLeadReplyReceived(
   });
 }
 
-async function stopAutomationForReply(leadId: string): Promise<void> {
-  await cancelPendingOutreachJobs({ leadId });
+async function stopAutomationForReply(leadId: string, campaignIds: string[]): Promise<void> {
+  // Scope cancellation to the campaigns that actually had an in-flight
+  // message on the channel the reply came in on — not every campaign the
+  // lead happens to be enrolled in. Without this, a reply to Campaign A's
+  // WhatsApp message would also cancel Campaign B's unrelated email sequence
+  // for the same lead.
+  for (const campaignId of campaignIds) {
+    await cancelPendingOutreachJobs({ leadId, campaignId });
+  }
 
   const stage = await queryOne<{ id: string }>(
     `SELECT id FROM pipeline_stages WHERE name = 'Follow-Up Required' ORDER BY created_at ASC LIMIT 1`,
@@ -106,12 +113,17 @@ export async function handleWhatsAppMessage(
 
   if (existing) {
     // Update outreach_log for the lead — mark messages from this number as "replied"
+    let affectedCampaignIds: string[];
     try {
-      await pool.query(
+      const result = await pool.query<{ campaign_id: string | null }>(
         `UPDATE outreach_logs SET status = 'replied', replied_at = NOW(), updated_at = NOW()
-         WHERE lead_id = $1 AND channel = 'whatsapp' AND status NOT IN ('replied', 'failed')`,
+         WHERE lead_id = $1 AND channel = 'whatsapp' AND status NOT IN ('replied', 'failed')
+         RETURNING campaign_id`,
         [existing.id],
       );
+      affectedCampaignIds = [
+        ...new Set(result.rows.map((r) => r.campaign_id).filter((id): id is string => id != null)),
+      ];
     } catch (error) {
       logger.error('Failed to persist WhatsApp reply', {
         leadId: existing.id,
@@ -122,7 +134,7 @@ export async function handleWhatsAppMessage(
     }
 
     await publishLeadReplyReceived(existing.id, 'whatsapp', `wam:${wamId}`, textBody);
-    await stopAutomationForReply(existing.id);
+    await stopAutomationForReply(existing.id, affectedCampaignIds);
 
     if (textBody) {
       void enqueueAiClassifyReply({
@@ -259,12 +271,17 @@ export async function handleTwilioMessage(
   );
 
   if (existing) {
+    let affectedCampaignIds: string[];
     try {
-      await pool.query(
+      const result = await pool.query<{ campaign_id: string | null }>(
         `UPDATE outreach_logs SET status = 'replied', replied_at = NOW(), updated_at = NOW()
-         WHERE lead_id = $1 AND channel = 'sms' AND status NOT IN ('replied', 'failed')`,
+         WHERE lead_id = $1 AND channel = 'sms' AND status NOT IN ('replied', 'failed')
+         RETURNING campaign_id`,
         [existing.id],
       );
+      affectedCampaignIds = [
+        ...new Set(result.rows.map((r) => r.campaign_id).filter((id): id is string => id != null)),
+      ];
     } catch (error) {
       logger.error('Failed to persist Twilio SMS reply', {
         leadId: existing.id,
@@ -280,7 +297,7 @@ export async function handleTwilioMessage(
       smsSid ? `tw:${smsSid}` : 'unknown',
       body ?? '',
     );
-    await stopAutomationForReply(existing.id);
+    await stopAutomationForReply(existing.id, affectedCampaignIds);
 
     if (body) {
       void enqueueAiClassifyReply({

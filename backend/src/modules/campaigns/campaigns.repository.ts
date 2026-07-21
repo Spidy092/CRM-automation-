@@ -1,7 +1,7 @@
 import { pool } from '../../shared/utils/db';
 import { logger } from '../../shared/utils/logger';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { Campaign, CampaignLead, CampaignStats } from './campaigns.types';
+import { Campaign, CampaignLead, CampaignStats, CampaignStepStats } from './campaigns.types';
 
 export async function findCampaigns(): Promise<Campaign[]> {
   const result = await pool.query<Campaign>(
@@ -76,6 +76,12 @@ export async function insertCampaign(
     ab_test_min_samples?: number;
     ab_test_confidence?: number;
     ab_test_auto_promote?: boolean;
+    send_window_enabled?: boolean;
+    send_window_start_hour?: number;
+    send_window_end_hour?: number;
+    send_window_days?: number[];
+    send_window_timezone?: string;
+    daily_send_limit?: number | null;
   },
   createdBy: string,
 ): Promise<Campaign> {
@@ -86,8 +92,10 @@ export async function insertCampaign(
     `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id,
        trigger_stage_id, ai_personalization_enabled, autonomy_level,
        ab_test_enabled, ab_test_metric, ab_test_min_samples, ab_test_confidence, ab_test_auto_promote,
+       send_window_enabled, send_window_start_hour, send_window_end_hour, send_window_days,
+       send_window_timezone, daily_send_limit,
        created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING *`,
     [
       data.name,
       data.tone,
@@ -103,6 +111,12 @@ export async function insertCampaign(
       data.ab_test_min_samples ?? 100,
       data.ab_test_confidence ?? 95,
       data.ab_test_auto_promote ?? true,
+      data.send_window_enabled ?? false,
+      data.send_window_start_hour ?? 9,
+      data.send_window_end_hour ?? 18,
+      data.send_window_days ?? [1, 2, 3, 4, 5],
+      data.send_window_timezone ?? 'UTC',
+      data.daily_send_limit ?? null,
       createdBy,
     ],
   );
@@ -125,6 +139,12 @@ export async function updateCampaign(
     ab_test_min_samples?: number;
     ab_test_confidence?: number;
     ab_test_auto_promote?: boolean;
+    send_window_enabled?: boolean;
+    send_window_start_hour?: number;
+    send_window_end_hour?: number;
+    send_window_days?: number[];
+    send_window_timezone?: string;
+    daily_send_limit?: number | null;
   },
 ): Promise<Campaign> {
   const fields: string[] = [];
@@ -182,6 +202,30 @@ export async function updateCampaign(
   if (data.ab_test_auto_promote !== undefined) {
     fields.push(`ab_test_auto_promote = $${paramIndex++}`);
     values.push(data.ab_test_auto_promote);
+  }
+  if (data.send_window_enabled !== undefined) {
+    fields.push(`send_window_enabled = $${paramIndex++}`);
+    values.push(data.send_window_enabled);
+  }
+  if (data.send_window_start_hour !== undefined) {
+    fields.push(`send_window_start_hour = $${paramIndex++}`);
+    values.push(data.send_window_start_hour);
+  }
+  if (data.send_window_end_hour !== undefined) {
+    fields.push(`send_window_end_hour = $${paramIndex++}`);
+    values.push(data.send_window_end_hour);
+  }
+  if (data.send_window_days !== undefined) {
+    fields.push(`send_window_days = $${paramIndex++}`);
+    values.push(data.send_window_days);
+  }
+  if (data.send_window_timezone !== undefined) {
+    fields.push(`send_window_timezone = $${paramIndex++}`);
+    values.push(data.send_window_timezone);
+  }
+  if ('daily_send_limit' in data) {
+    fields.push(`daily_send_limit = $${paramIndex++}`);
+    values.push(data.daily_send_limit ?? null);
   }
 
   values.push(id);
@@ -356,6 +400,25 @@ export interface CampaignLeadRow {
   status: 'active' | 'paused' | 'won' | 'lost' | 'opted_out';
 }
 
+
+export async function findEligibleTriggerLeadsForCampaign(campaignId: string): Promise<CampaignLeadRow[]> {
+  const result = await pool.query<CampaignLeadRow>(
+    `SELECT l.id, l.business_name, l.phone, l.email, l.status
+     FROM campaigns c
+     JOIN leads l ON l.pipeline_stage_id = c.trigger_stage_id
+     WHERE c.id = $1
+       AND c.trigger_stage_id IS NOT NULL
+       AND c.deleted_at IS NULL
+       AND l.deleted_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM campaign_leads cl WHERE cl.campaign_id = c.id AND cl.lead_id = l.id
+       )
+     ORDER BY l.created_at ASC`,
+    [campaignId]
+  );
+  return result.rows;
+}
+
 export async function findCampaignLeadRows(campaignId: string): Promise<CampaignLeadRow[]> {
   const result = await pool.query<CampaignLeadRow>(
     `SELECT l.id, l.business_name, l.phone, l.email, l.status
@@ -369,6 +432,65 @@ export async function findCampaignLeadRows(campaignId: string): Promise<Campaign
     [campaignId],
   );
   return result.rows;
+}
+
+/**
+ * Messages already sent by this campaign during the current day in the given
+ * timezone — used to enforce the campaign's daily_send_limit.
+ */
+export async function countSentTodayForCampaign(
+  campaignId: string,
+  timezone: string,
+): Promise<number> {
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(*) as count
+     FROM outreach_logs
+     WHERE campaign_id = $1
+       AND sent_at IS NOT NULL
+       AND (sent_at AT TIME ZONE $2) >= date_trunc('day', (now() AT TIME ZONE $2))`,
+    [campaignId, timezone],
+  );
+  return parseInt(result.rows[0]?.count || '0');
+}
+
+/**
+ * Per-step funnel counts. Progress stages come from the timestamp columns
+ * (a log whose status advanced to 'replied' still counts as sent/delivered/
+ * opened); failures come from the status column.
+ */
+export async function getCampaignStepStatsRows(campaignId: string): Promise<CampaignStepStats[]> {
+  const result = await pool.query<{
+    step_number: number;
+    attempts: string;
+    sent: string;
+    delivered: string;
+    opened: string;
+    replied: string;
+    failed: string;
+  }>(
+    `SELECT
+       step_number,
+       COUNT(*) as attempts,
+       COUNT(*) FILTER (WHERE sent_at IS NOT NULL) as sent,
+       COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) as delivered,
+       COUNT(*) FILTER (WHERE opened_at IS NOT NULL) as opened,
+       COUNT(*) FILTER (WHERE replied_at IS NOT NULL) as replied,
+       COUNT(*) FILTER (WHERE status = 'failed') as failed
+     FROM outreach_logs
+     WHERE campaign_id = $1 AND step_number IS NOT NULL
+     GROUP BY step_number
+     ORDER BY step_number ASC`,
+    [campaignId],
+  );
+  return result.rows.map((row) => ({
+    step_number: row.step_number,
+    attempts: parseInt(row.attempts),
+    sent: parseInt(row.sent),
+    delivered: parseInt(row.delivered),
+    opened: parseInt(row.opened),
+    replied: parseInt(row.replied),
+    failed: parseInt(row.failed),
+  }));
 }
 
 export async function getCampaignStats(campaignId: string): Promise<CampaignStats> {

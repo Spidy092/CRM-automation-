@@ -19,9 +19,16 @@ import {
 import { listMcpTools, callMcpTool } from './mcp.service';
 import type { AgentActor } from '../agent/agent.types';
 
+import crypto from 'crypto';
+
+// In-memory store for active SSE sessions.
+// For a multi-instance deployment, this requires sticky sessions or a pub/sub backplane.
+const sseSessions = new Map<string, Response>();
+
 /**
- * Stateless MCP Streamable HTTP endpoint (single POST, JSON responses, no
- * SSE stream and no server-issued session ids — both optional per spec).
+ * Handles incoming JSON-RPC POST messages.
+ * If a ?sessionId=... query parameter is provided, it routes the response over the corresponding SSE stream.
+ * Otherwise, it responds statelessly directly to the POST request.
  */
 export async function handleMcpPost(req: Request, res: Response): Promise<void> {
   const parsed = jsonRpcBodySchema.safeParse(req.body);
@@ -43,25 +50,73 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
     if (response) responses.push(response);
   }
 
-  // Notification-only batch: acknowledge with no body (spec: 202 Accepted).
+  const sessionId = req.query.sessionId as string | undefined;
+
+  // Notification-only batch
   if (responses.length === 0) {
     res.status(202).end();
     return;
   }
 
-  res.status(200).json(Array.isArray(parsed.data) ? responses : responses[0]);
+  const finalResponse = Array.isArray(parsed.data) ? responses : responses[0];
+
+  if (sessionId) {
+    const sseStream = sseSessions.get(sessionId);
+    if (!sseStream) {
+      res.status(404).json({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: JSONRPC_INVALID_REQUEST, message: 'SSE session not found' },
+      });
+      return;
+    }
+    // Send standard MCP SSE message event
+    sseStream.write(`event: message\ndata: ${JSON.stringify(finalResponse)}\n\n`);
+    res.status(202).end(); // Acknowledge receipt to the POST client
+  } else {
+    // Stateless POST behavior
+    res.status(200).json(finalResponse);
+  }
 }
 
-/** MCP clients may open GET for an SSE stream; this server does not offer one. */
-export function handleMcpGet(_req: Request, res: Response): void {
-  res
-    .status(405)
-    .set('Allow', 'POST')
-    .json({
+/**
+ * Establishes an SSE stream for MCP clients.
+ * Generates a unique sessionId, stores the connection, and emits the 'endpoint' event.
+ */
+export function handleMcpGet(req: Request, res: Response): void {
+  // Only accept SSE connections
+  if (req.headers.accept !== 'text/event-stream') {
+    res.status(400).json({
       jsonrpc: '2.0',
       id: null,
-      error: { code: JSONRPC_METHOD_NOT_FOUND, message: 'SSE stream not supported; use POST' },
+      error: { code: JSONRPC_INVALID_REQUEST, message: 'Only text/event-stream is supported for GET' },
     });
+    return;
+  }
+
+  const sessionId = crypto.randomUUID();
+
+  // Setup SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  // Add to active sessions
+  sseSessions.set(sessionId, res);
+
+  // Clean up on client disconnect
+  req.on('close', () => {
+    sseSessions.delete(sessionId);
+  });
+
+  // Construct the absolute POST endpoint URL for this session
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  // req.originalUrl could be /api/v1/mcp
+  const endpointUrl = `${protocol}://${host}${req.originalUrl.split('?')[0]}/message?sessionId=${sessionId}`;
+
+  // Emit the MCP endpoint event
+  res.write(`event: endpoint\ndata: ${endpointUrl}\n\n`);
 }
 
 async function handleMessage(
@@ -129,3 +184,9 @@ function invalidParams(id: JsonRpcMessage['id'], message: string): JsonRpcRespon
     error: { code: JSONRPC_INVALID_PARAMS, message },
   };
 }
+
+
+
+
+
+

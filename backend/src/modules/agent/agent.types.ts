@@ -52,6 +52,7 @@ export type AgentActionName =
   | 'scraper.list'
   | 'scraper.run'
   | 'outreach.send_manual'
+  | 'outreach.send_ai_reply'
   | 'ai.decision.recompute'
   | 'ai.inbox.action'
   | 'activity.list'

@@ -1,6 +1,11 @@
 import type { z } from 'zod';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { enqueueAiDecision, enqueueAiCampaignBrief, enqueueAiResearch } from '../../workers/queue';
+import {
+  enqueueAiDecision,
+  enqueueAiCampaignBrief,
+  enqueueAiResearch,
+  enqueueOutreachSendAiReply,
+} from '../../workers/queue';
 import {
   listLeads,
   getLeadById,
@@ -76,6 +81,7 @@ import {
   leadUpdateArgsSchema,
   moveLeadArgsSchema,
   outreachSendManualArgsSchema,
+  outreachSendAiReplyArgsSchema,
   scraperRunArgsSchema,
   sequenceCreateArgsSchema,
   sequenceListArgsSchema,
@@ -356,6 +362,27 @@ export const AGENT_ACTIONS: Record<AgentActionName, AgentActionDefinition> = {
     entity: (args) => ({ leadId: args.leadId as string, campaignId: args.campaignId as string }),
     execute: async (args, actor) =>
       sendManualOutreach(args as z.infer<typeof outreachSendManualArgsSchema>, requireActor(actor)),
+  },
+  'outreach.send_ai_reply': {
+    name: 'outreach.send_ai_reply',
+    description: 'Send an AI-drafted free-text reply to a lead (not template-driven).',
+    riskTier: 'customer_facing_write',
+    allowedRoles: ['admin', 'manager', 'sales', 'marketing'],
+    schema: outreachSendAiReplyArgsSchema as AgentActionDefinition['schema'],
+    entity: (args) => ({
+      leadId: args.leadId as string,
+      campaignId: (args.campaignId as string | null | undefined) ?? undefined,
+    }),
+    execute: async (args) => {
+      const parsed = args as z.infer<typeof outreachSendAiReplyArgsSchema>;
+      await enqueueOutreachSendAiReply({
+        leadId: parsed.leadId,
+        campaignId: parsed.campaignId ?? null,
+        channel: parsed.channel,
+        body: parsed.body,
+      });
+      return { enqueued: true, leadId: parsed.leadId };
+    },
   },
   'ai.decision.recompute': {
     name: 'ai.decision.recompute',

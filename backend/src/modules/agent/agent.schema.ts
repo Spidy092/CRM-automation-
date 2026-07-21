@@ -32,6 +32,7 @@ export const agentActionNameSchema = z.enum([
   'scraper.list',
   'scraper.run',
   'outreach.send_manual',
+  'outreach.send_ai_reply',
   'ai.decision.recompute',
   'ai.inbox.action',
   'activity.list',
@@ -152,6 +153,12 @@ export const outreachSendManualArgsSchema = z.object({
   channel: messageChannel,
   templateId: uuid,
   mockMode: z.boolean().optional(),
+});
+export const outreachSendAiReplyArgsSchema = z.object({
+  leadId: uuid,
+  campaignId: uuid.nullable().optional(),
+  channel: z.enum(['whatsapp', 'email', 'sms']),
+  body: z.string().min(1).max(600),
 });
 export const aiDecisionRecomputeArgsSchema = z.object({
   leadId: uuid,

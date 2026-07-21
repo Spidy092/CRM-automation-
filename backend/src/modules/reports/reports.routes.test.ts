@@ -42,7 +42,15 @@ describe('Reports Routes', () => {
   describe('GET /reports', () => {
     it('returns 200 with list of reports', async () => {
       mockedService.listReports.mockResolvedValue({
-        items: [{ id: 'r1', name: 'Lead Generation Report', type: 'leads', description: '', createdAt: '' }],
+        items: [
+          {
+            id: 'r1',
+            name: 'Lead Generation Report',
+            type: 'leads',
+            description: '',
+            createdAt: '',
+          },
+        ],
         meta: { limit: 25, offset: 0, total: 4 },
       });
 
@@ -69,6 +77,8 @@ describe('Reports Routes', () => {
         totalCampaigns: 2,
         activeOutreach: 3,
         pipelineConversion: 25,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [{ date: '2026-06-21', leads: 1, outreach: 1 }],
       });
 
@@ -121,7 +131,17 @@ describe('Reports Routes', () => {
   describe('GET /reports/outreach', () => {
     it('returns 200 with outreach report', async () => {
       mockedService.getOutreachReport.mockResolvedValue({
-        items: [{ date: '2026-06-20', channel: 'email', sent: 10, delivered: 8, opened: 4, replied: 2, failed: 0 }],
+        items: [
+          {
+            date: '2026-06-20',
+            channel: 'email',
+            sent: 10,
+            delivered: 8,
+            opened: 4,
+            replied: 2,
+            failed: 0,
+          },
+        ],
         meta: { limit: 25, offset: 0, total: 1 },
       });
 
@@ -149,7 +169,16 @@ describe('Reports Routes', () => {
   describe('GET /reports/reps', () => {
     it('returns 200 with sales rep report', async () => {
       mockedService.getSalesRepReport.mockResolvedValue({
-        items: [{ repId: 'u1', repName: 'Alice', leadsAssigned: 10, leadsConverted: 3, conversionRate: 30, avgResponseTime: 0 }],
+        items: [
+          {
+            repId: 'u1',
+            repName: 'Alice',
+            leadsAssigned: 10,
+            leadsConverted: 3,
+            conversionRate: 30,
+            avgResponseTime: 0,
+          },
+        ],
         meta: { limit: 25, offset: 0, total: 1 },
       });
 
@@ -177,7 +206,9 @@ describe('Reports Routes', () => {
         meta: { limit: 25, offset: 0, total: 1 },
       });
 
-      const res = await request(app).get('/reports/campaigns?startDate=2026-06-01&endDate=2026-06-30');
+      const res = await request(app).get(
+        '/reports/campaigns?startDate=2026-06-01&endDate=2026-06-30',
+      );
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -243,9 +274,7 @@ describe('Reports Routes', () => {
     });
 
     it('returns 422 for missing reportType', async () => {
-      const res = await request(app)
-        .post('/reports/export')
-        .send({ format: 'csv' });
+      const res = await request(app).post('/reports/export').send({ format: 'csv' });
 
       expect(res.status).toBe(422);
     });
@@ -277,6 +306,8 @@ describe('Reports Routes', () => {
         totalCampaigns: 0,
         activeOutreach: 0,
         pipelineConversion: 0,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [],
       });
 
@@ -305,6 +336,8 @@ describe('Reports Routes', () => {
         totalCampaigns: 0,
         activeOutreach: 0,
         pipelineConversion: 0,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [],
       });
 

@@ -97,6 +97,12 @@ describe('campaigns.repository', () => {
           100,
           95,
           true,
+          false,
+          9,
+          18,
+          [1, 2, 3, 4, 5],
+          'UTC',
+          null,
           'admin-1',
         ],
       );
@@ -123,6 +129,12 @@ describe('campaigns.repository', () => {
         100,
         95,
         true,
+        false,
+        9,
+        18,
+        [1, 2, 3, 4, 5],
+        'UTC',
+        null,
         'admin-1',
       ]);
     });

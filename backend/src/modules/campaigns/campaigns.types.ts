@@ -22,6 +22,17 @@ export interface Campaign {
   ab_test_min_samples: number;
   ab_test_confidence: number;
   ab_test_auto_promote: boolean;
+  send_window_enabled: boolean;
+  /** Local hour (0–23), inclusive, in send_window_timezone. */
+  send_window_start_hour: number;
+  /** Local hour (1–24), exclusive, in send_window_timezone. */
+  send_window_end_hour: number;
+  /** Allowed ISO weekdays, 1 = Monday … 7 = Sunday. */
+  send_window_days: number[];
+  /** IANA timezone the send window is evaluated in. */
+  send_window_timezone: string;
+  /** Max messages sent per campaign-local day; null = unlimited. */
+  daily_send_limit: number | null;
   created_by: string;
   launched_at: string | null;
   created_at: string;
@@ -51,6 +62,12 @@ export interface CreateCampaignInput {
   ab_test_min_samples?: number;
   ab_test_confidence?: number;
   ab_test_auto_promote?: boolean;
+  send_window_enabled?: boolean;
+  send_window_start_hour?: number;
+  send_window_end_hour?: number;
+  send_window_days?: number[];
+  send_window_timezone?: string;
+  daily_send_limit?: number | null;
 }
 
 export interface UpdateCampaignInput {
@@ -69,6 +86,12 @@ export interface UpdateCampaignInput {
   ab_test_min_samples?: number;
   ab_test_confidence?: number;
   ab_test_auto_promote?: boolean;
+  send_window_enabled?: boolean;
+  send_window_start_hour?: number;
+  send_window_end_hour?: number;
+  send_window_days?: number[];
+  send_window_timezone?: string;
+  daily_send_limit?: number | null;
 }
 
 export interface AddLeadsInput {
@@ -77,6 +100,17 @@ export interface AddLeadsInput {
 
 export interface CampaignStats {
   total_leads: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  replied: number;
+  failed: number;
+}
+
+/** Per-sequence-step funnel counts, derived from outreach_logs timestamps. */
+export interface CampaignStepStats {
+  step_number: number;
+  attempts: number;
   sent: number;
   delivered: number;
   opened: number;

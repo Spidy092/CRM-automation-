@@ -25,6 +25,10 @@ export interface LeadRow {
   tags: string[];
   notes: string | null;
   deal_value: string | null;
+  /** Set when the lead's stage moves into an is_terminal_won pipeline stage. */
+  won_at: string | null;
+  /** Set when the lead's stage moves into an is_terminal_lost pipeline stage. */
+  lost_at: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -56,6 +60,8 @@ export interface LeadResponse {
   tags: string[];
   notes: string | null;
   deal_value: number | null;
+  won_at: string | null;
+  lost_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -142,6 +148,8 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
     tags: row.tags ?? [],
     notes: row.notes,
     deal_value: row.deal_value === null ? null : Number(row.deal_value),
+    won_at: row.won_at,
+    lost_at: row.lost_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

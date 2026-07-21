@@ -52,6 +52,10 @@ jest.mock('../modules/leads/leads.repository', () => ({
 jest.mock('../modules/templates/templates.repository', () => ({
   findTemplateById: jest.fn(),
 }));
+jest.mock('../modules/campaigns/campaigns.repository', () => ({
+  findCampaignById: jest.fn(),
+  countSentTodayForCampaign: jest.fn(),
+}));
 jest.mock('../modules/integrations/dispatch', () => ({
   dispatchOutbound: jest.fn(),
 }));

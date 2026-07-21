@@ -48,6 +48,7 @@ describe('reports.repository', () => {
       campaigns: [{ total: '3' }],
       outreach: [{ total: '8' }],
       conversion: [{ rate: '25.5' }],
+      revenue: [{ revenue: '15000.50', deals: '4' }],
       activity: [
         { date: '2026-06-20', leads: '2', outreach: '1' },
         { date: '2026-06-21', leads: '3', outreach: '2' },
@@ -61,6 +62,7 @@ describe('reports.repository', () => {
         .mockResolvedValueOnce(mockQueryResult(baseRows.campaigns))
         .mockResolvedValueOnce(mockQueryResult(baseRows.outreach))
         .mockResolvedValueOnce(mockQueryResult(baseRows.conversion))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.revenue))
         .mockResolvedValueOnce(mockQueryResult(baseRows.activity));
     }
 
@@ -72,8 +74,10 @@ describe('reports.repository', () => {
       expect(result.totalCampaigns).toBe(3);
       expect(result.activeOutreach).toBe(8);
       expect(result.pipelineConversion).toBe(25.5);
+      expect(result.wonRevenue).toBe(15000.5);
+      expect(result.wonDeals).toBe(4);
       expect(result.recentActivity).toHaveLength(2);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(6);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
     });
 
     it('returns metrics for manager', async () => {
@@ -81,7 +85,7 @@ describe('reports.repository', () => {
       const result = await findDashboardMetrics('mgr-1', 'manager');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(3);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(6);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
     });
 
     it('returns metrics for sales (no campaigns)', async () => {
@@ -90,13 +94,15 @@ describe('reports.repository', () => {
         .mockResolvedValueOnce(mockQueryResult(baseRows.qualifiedLeads))
         .mockResolvedValueOnce(mockQueryResult(baseRows.outreach))
         .mockResolvedValueOnce(mockQueryResult(baseRows.conversion))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.revenue))
         .mockResolvedValueOnce(mockQueryResult(baseRows.activity));
 
       const result = await findDashboardMetrics('sales-1', 'sales');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(0);
       expect(result.activeOutreach).toBe(8);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(5);
+      expect(result.wonRevenue).toBe(15000.5);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(6);
     });
 
     it('returns metrics for marketing', async () => {
@@ -104,7 +110,7 @@ describe('reports.repository', () => {
       const result = await findDashboardMetrics('mkt-1', 'marketing');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(3);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(6);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
     });
 
     it('returns metrics for viewer', async () => {
@@ -112,7 +118,7 @@ describe('reports.repository', () => {
       const result = await findDashboardMetrics('view-1', 'viewer');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(3);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(6);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
     });
 
     it('handles empty results gracefully', async () => {
@@ -122,12 +128,15 @@ describe('reports.repository', () => {
         .mockResolvedValueOnce(mockQueryResult([{ total: '0' }]))
         .mockResolvedValueOnce(mockQueryResult([{ total: '0' }]))
         .mockResolvedValueOnce(mockQueryResult([{ rate: '0' }]))
+        .mockResolvedValueOnce(mockQueryResult([{ revenue: '0', deals: '0' }]))
         .mockResolvedValueOnce(mockQueryResult([]));
 
       const result = await findDashboardMetrics('admin-1', 'admin');
       expect(result.totalLeads).toBe(0);
       expect(result.qualifiedLeads).toBe(0);
       expect(result.pipelineConversion).toBe(0);
+      expect(result.wonRevenue).toBe(0);
+      expect(result.wonDeals).toBe(0);
       expect(result.recentActivity).toEqual([]);
     });
   });

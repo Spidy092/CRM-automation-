@@ -37,7 +37,19 @@ export async function findTeamMetrics(
     stageClause = ` AND l.pipeline_stage_id = $${params.length}`;
   }
 
-  const leadFilter = `l.created_at BETWEEN $${fromIdx} AND $${toIdx}${stageClause}`;
+  // Date range scopes to when the lead was assigned to this rep (the
+  // relevant "team activity" event), not when the lead record itself was
+  // created/imported — leads are often scraped/imported long before being
+  // worked, so filtering on l.created_at made every metric read zero once a
+  // lead aged past the window.
+  //
+  // Only assignments made via the assign/reassign/round-robin flows write a
+  // row to `assignments` — leads created with an owner already set, or
+  // reassigned through the generic lead update path, have no such row. Fall
+  // back to l.created_at in that case so those leads aren't silently
+  // excluded from every metric.
+  const assignmentDate = 'COALESCE(latest_assignment.created_at, l.created_at)';
+  const leadFilter = `${assignmentDate} BETWEEN $${fromIdx} AND $${toIdx}${stageClause}`;
   const contactedFilter = `l.first_contacted_at IS NOT NULL AND ${leadFilter}`;
 
   let activityJoin = `a.user_id = u.id AND a.created_at BETWEEN $${fromIdx} AND $${toIdx}`;
@@ -62,6 +74,13 @@ export async function findTeamMetrics(
       COUNT(DISTINCT a.id) FILTER (WHERE ${activityJoin}) as total_activities
     FROM users u
     LEFT JOIN leads l ON l.assigned_to = u.id AND l.deleted_at IS NULL
+    LEFT JOIN LATERAL (
+      SELECT asg.created_at
+      FROM assignments asg
+      WHERE asg.lead_id = l.id AND asg.assigned_to = u.id
+      ORDER BY asg.created_at DESC
+      LIMIT 1
+    ) latest_assignment ON TRUE
     LEFT JOIN activities a ON a.lead_id = l.id
     WHERE u.deleted_at IS NULL AND ${userWhere}
     GROUP BY u.id, u.name

@@ -33,6 +33,8 @@ import {
   ArrowRight,
   CheckCircle2,
   ClipboardCheck,
+  DollarSign,
+  CalendarCheck,
 } from 'lucide-react';
 
 const statusTones: Record<LeadStatus, StatusTone> = {
@@ -642,6 +644,39 @@ export function LeadDetailPage() {
                 label="Score"
                 value={lead.classification ? <StatusBadge tone={lead.classification === 'hot' ? 'red' : lead.classification === 'warm' ? 'amber' : 'blue'}>{lead.classification}</StatusBadge> : '—'}
               />
+              {typeof lead.deal_value === 'number' && (
+                <Row
+                  icon={<DollarSign className="h-4 w-4 text-green-600" />}
+                  label="Deal Value"
+                  value={lead.deal_value.toLocaleString(undefined, {
+                    style: 'currency',
+                    currency: 'USD',
+                    maximumFractionDigits: 0,
+                  })}
+                />
+              )}
+              {lead.status === 'won' && lead.won_at && (
+                <Row
+                  icon={<CalendarCheck className="h-4 w-4 text-green-600" />}
+                  label="Won On"
+                  value={new Date(lead.won_at).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                />
+              )}
+              {lead.status === 'lost' && lead.lost_at && (
+                <Row
+                  icon={<CalendarCheck className="h-4 w-4 text-red-500" />}
+                  label="Lost On"
+                  value={new Date(lead.lost_at).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                />
+              )}
             </CardContent>
           </Card>
 

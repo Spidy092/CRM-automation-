@@ -50,6 +50,7 @@ import { formsRoutes } from './modules/forms/forms.routes';
 import { abTestRoutes } from './modules/ab-testing/ab-testing.routes';
 import { templateAbRoutes } from './modules/ab-testing/template-ab.routes';
 import { schedulingRoutes } from './modules/scheduling/scheduling.routes';
+import { newsletterRoutes } from './modules/newsletter/newsletter.routes';
 
 const app: Application = express();
 app.set('trust proxy', 1);
@@ -74,7 +75,18 @@ process.on('uncaughtException', (err: Error) => {
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+        'https://claude.ai'
+      ];
+      // Allow requests with no origin (like mobile apps or curl) or allowed origins
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
   }),
 );
@@ -160,6 +172,7 @@ app.use('/api/v1/forms', formsRoutes);
 app.use('/api/v1/ab-testing', abTestRoutes);
 app.use('/api/v1/template-ab', templateAbRoutes);
 app.use('/api/v1/scheduling', schedulingRoutes);
+app.use('/api/v1/newsletter', newsletterRoutes);
 
 // ── Public Tracking (no auth — called by email clients) ───────────────────
 app.use('/track', trackingRoutes);

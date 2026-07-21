@@ -11,6 +11,7 @@ import {
   handleDispatch,
   handleFollowUp,
   handleStopCheck,
+  handleSendAiReply,
   startOutreachWorker,
 } from './outreach.worker';
 
@@ -46,6 +47,11 @@ jest.mock('../modules/templates/templates.repository', () => ({
   findTemplateById: jest.fn(),
 }));
 
+jest.mock('../modules/campaigns/campaigns.repository', () => ({
+  findCampaignById: jest.fn(),
+  countSentTodayForCampaign: jest.fn(),
+}));
+
 jest.mock('../modules/integrations/dispatch', () => ({
   dispatchOutbound: jest.fn(),
 }));
@@ -58,6 +64,10 @@ import { findSequenceById, findLogsByLead } from '../modules/outreach/outreach.r
 import { createLog, updateLogStatus } from '../modules/outreach/outreach.service';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
+import {
+  findCampaignById,
+  countSentTodayForCampaign,
+} from '../modules/campaigns/campaigns.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from './queue';
@@ -401,6 +411,121 @@ describe('handleFollowUp', () => {
   });
 });
 
+describe('handleSendAiReply', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const createdLog = {
+    id: 'log-ai-1',
+    lead_id: 'lead1',
+    campaign_id: 'camp1',
+    channel: 'email',
+    template_id: null,
+    step_number: null,
+    status: 'queued',
+    external_msg_id: null,
+    message_body: 'Great, let us schedule a call.',
+    sent_at: null,
+    delivered_at: null,
+    opened_at: null,
+    replied_at: null,
+    error_message: null,
+    created_at: '2026-06-19T00:00:00Z',
+    updated_at: '2026-06-19T00:00:00Z',
+  };
+
+  it('sends the draft, creates a log with no template, and marks it sent', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-ai-1' });
+    (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
+
+    await handleSendAiReply({
+      leadId: 'lead1',
+      campaignId: 'camp1',
+      channel: 'email',
+      body: 'Great, let us schedule a call.',
+    });
+
+    expect(createLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead1',
+        campaignId: 'camp1',
+        channel: 'email',
+        templateId: null,
+        messageBody: 'Great, let us schedule a call.',
+        status: 'queued',
+      }),
+    );
+    expect(dispatchOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead1',
+        campaignId: 'camp1',
+        channel: 'email',
+        body: 'Great, let us schedule a call.',
+        destination: 'a@b.com',
+        logId: 'log-ai-1',
+      }),
+    );
+    expect(updateLogStatus).toHaveBeenCalledWith(
+      'log-ai-1',
+      'sent',
+      expect.objectContaining({ externalMsgId: 'ext-ai-1' }),
+    );
+  });
+
+  it('passes an empty campaignId through to dispatchOutbound when the lead has no active campaign', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-ai-2' });
+    (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
+
+    await handleSendAiReply({
+      leadId: 'lead1',
+      campaignId: null,
+      channel: 'sms',
+      body: 'Sure, calling you now.',
+    });
+
+    expect(createLog).toHaveBeenCalledWith(expect.objectContaining({ campaignId: null }));
+    expect(dispatchOutbound).toHaveBeenCalledWith(expect.objectContaining({ campaignId: '' }));
+  });
+
+  it('throws when the lead is not found', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      handleSendAiReply({ leadId: 'missing', campaignId: null, channel: 'email', body: 'Hi.' }),
+    ).rejects.toThrow('Lead missing not found');
+    expect(createLog).not.toHaveBeenCalled();
+  });
+
+  it('throws when the lead has no destination for the channel', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '' });
+
+    await expect(
+      handleSendAiReply({ leadId: 'lead1', campaignId: 'camp1', channel: 'email', body: 'Hi.' }),
+    ).rejects.toThrow('Lead lead1 has no email destination');
+    expect(createLog).not.toHaveBeenCalled();
+  });
+
+  it('marks the log failed and throws with 502 when dispatchOutbound returns ok:false', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: false, error: 'Provider error' });
+    (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'failed' });
+
+    await expect(
+      handleSendAiReply({ leadId: 'lead1', campaignId: 'camp1', channel: 'email', body: 'Hi.' }),
+    ).rejects.toMatchObject({ statusCode: 502 });
+
+    expect(updateLogStatus).toHaveBeenCalledWith(
+      'log-ai-1',
+      'failed',
+      expect.objectContaining({ errorMessage: 'Provider error' }),
+    );
+  });
+});
+
 describe('handleStopCheck', () => {
   beforeEach(() => jest.clearAllMocks());
 
@@ -465,5 +590,86 @@ describe('handleStopCheck', () => {
     });
 
     expect(result).toEqual({ stopped: false });
+  });
+});
+
+describe('handleDispatch — send window / daily cap deferral', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const seq = {
+    id: 'seq1',
+    name: 'Seq',
+    steps: [{ stepNumber: 1, channel: 'email' as const, delayHours: 0, templateId: 't1' }],
+    created_by: 'u1',
+    created_at: '2026-06-19T00:00:00Z',
+    updated_at: '2026-06-19T00:00:00Z',
+  };
+
+  const baseCampaign = {
+    id: 'camp1',
+    send_window_enabled: false,
+    send_window_start_hour: 9,
+    send_window_end_hour: 18,
+    send_window_days: [1, 2, 3, 4, 5],
+    send_window_timezone: 'UTC',
+    daily_send_limit: null as number | null,
+  };
+
+  const dispatchJob = {
+    leadId: 'lead1',
+    campaignId: 'camp1',
+    sequenceId: 'seq1',
+    stepNumber: 1,
+    channel: 'email' as const,
+    templateId: 't1',
+    mockMode: true,
+  };
+
+  it('re-enqueues with a delay when the daily cap is reached', async () => {
+    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findLogsByLead as jest.Mock).mockResolvedValue([]);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, daily_send_limit: 10 });
+    (countSentTodayForCampaign as jest.Mock).mockResolvedValue(10);
+
+    await handleDispatch(dispatchJob);
+
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      dispatchJob,
+      expect.objectContaining({
+        delayMs: expect.any(Number),
+        jobIdSuffix: expect.stringMatching(/^deferred-\d+$/),
+      }),
+    );
+    // No message log is created while deferred.
+    expect(createLog).not.toHaveBeenCalled();
+  });
+
+  it('sends normally when under the cap and no window is set', async () => {
+    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findLogsByLead as jest.Mock).mockResolvedValue([]);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, daily_send_limit: 10 });
+    (countSentTodayForCampaign as jest.Mock).mockResolvedValue(3);
+    (createLog as jest.Mock).mockResolvedValue({ id: 'log1' });
+    (updateLogStatus as jest.Mock).mockResolvedValue(undefined);
+
+    await handleDispatch(dispatchJob);
+
+    expect(createLog).toHaveBeenCalled();
+    expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not query the sent count when there is no daily limit', async () => {
+    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findLogsByLead as jest.Mock).mockResolvedValue([]);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (createLog as jest.Mock).mockResolvedValue({ id: 'log1' });
+    (updateLogStatus as jest.Mock).mockResolvedValue(undefined);
+
+    await handleDispatch(dispatchJob);
+
+    expect(countSentTodayForCampaign).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ import {
   handleGoogleAdsLeadForm,
 } from './webhook-handlers';
 import { publishAIDomainEvent } from '../shared/events/eventBus';
+import { cancelPendingOutreachJobs } from '../workers/queue';
 
 const mockQueryOne = jest.fn();
 const mockQuery = jest.fn();
@@ -27,6 +28,8 @@ jest.mock('../workers/queue', () => ({
   cancelPendingOutreachJobs: jest.fn().mockResolvedValue(undefined),
   enqueueAiClassifyReply: jest.fn().mockResolvedValue(undefined),
 }));
+
+const mockedCancelPendingOutreachJobs = cancelPendingOutreachJobs as jest.Mock;
 jest.mock('../shared/utils/db', () => ({
   pool: { query: (...args: unknown[]) => mockQuery(...args) },
   queryOne: (...args: unknown[]) => mockQueryOne(...args),
@@ -130,6 +133,31 @@ describe('handleWhatsAppMessage', () => {
     const result = await handleWhatsAppMessage({ entry: [{ changes: [{ value: {} }] }] });
     expect(result.action).toBe('noop');
   });
+
+  it('cancels pending jobs only for campaigns with an in-flight message on this channel', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'lead-1' }); // SELECT existing lead
+    // Two outreach_logs rows moved to 'replied' — one per campaign the lead
+    // was mid-sequence on for this channel.
+    mockQuery.mockResolvedValueOnce({
+      rowCount: 2,
+      rows: [{ campaign_id: 'campaign-a' }, { campaign_id: 'campaign-b' }],
+    });
+
+    await handleWhatsAppMessage(buildPayload('+12025551234'));
+
+    expect(mockedCancelPendingOutreachJobs).toHaveBeenCalledTimes(2);
+    expect(mockedCancelPendingOutreachJobs).toHaveBeenCalledWith({
+      leadId: 'lead-1',
+      campaignId: 'campaign-a',
+    });
+    expect(mockedCancelPendingOutreachJobs).toHaveBeenCalledWith({
+      leadId: 'lead-1',
+      campaignId: 'campaign-b',
+    });
+    // Must never fall back to a lead-wide cancel (no campaignId) — that
+    // would also cancel unrelated campaigns' sequences for this lead.
+    expect(mockedCancelPendingOutreachJobs).not.toHaveBeenCalledWith({ leadId: 'lead-1' });
+  });
 });
 
 // ── WhatsApp status ───────────────────────────────────────────────────────
@@ -219,6 +247,26 @@ describe('handleTwilioMessage', () => {
   it('returns noop when From is missing', async () => {
     const result = await handleTwilioMessage({ Body: 'test' });
     expect(result.action).toBe('noop');
+  });
+
+  it('cancels pending jobs only for campaigns with an in-flight SMS on this lead', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'lead-2' });
+    mockQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ campaign_id: 'campaign-c' }],
+    });
+
+    await handleTwilioMessage({
+      From: '+12025559999',
+      Body: 'Stop texting me',
+      SmsSid: 'SM123',
+    });
+
+    expect(mockedCancelPendingOutreachJobs).toHaveBeenCalledTimes(1);
+    expect(mockedCancelPendingOutreachJobs).toHaveBeenCalledWith({
+      leadId: 'lead-2',
+      campaignId: 'campaign-c',
+    });
   });
 });
 

@@ -431,7 +431,89 @@ describe('classifyInboundReply', () => {
     });
 
     expect(result.update_stage_to).toBeNull();
-    expect(mockedProposeAgentAction).not.toHaveBeenCalled();
+    expect(mockedFindStageByName).not.toHaveBeenCalled();
+    expect(mockedProposeAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ actionName: 'pipeline.move_lead' }),
+    );
+  });
+
+  it('proposes sending the draft reply when autopilot + confident + non-urgent', async () => {
+    const output = makeAiOutput();
+    mockOpenAICompletion(output);
+
+    const result = await classifyInboundReply({
+      leadId,
+      channel: 'email',
+      messageText: 'I am interested.',
+    });
+
+    expect(result.requires_human_review).toBe(false);
+    expect(mockedEnqueueAiCreateInboxItem).not.toHaveBeenCalled();
+    expect(mockedProposeAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'ai_reply',
+        actionName: 'outreach.send_ai_reply',
+        actor: expect.objectContaining({ id: 'user-1', role: 'sales' }),
+        assignTo: 'user-1',
+        confidence: 92,
+        autonomyLevel: 'autopilot',
+        aiMinConfidence: 70,
+        args: { leadId, campaignId, channel: 'email', body: output.draft_response },
+        sourceMessage: output.draft_response,
+      }),
+    );
+  });
+
+  it('does not propose a draft send for opt_out replies (already hard-stopped)', async () => {
+    const output = makeAiOutput({
+      intent_class: 'opt_out',
+      should_stop_sequence: true,
+      draft_response: 'Sorry to see you go.',
+    });
+    mockOpenAICompletion(output);
+
+    await classifyInboundReply({
+      leadId,
+      channel: 'email',
+      messageText: 'stop messaging me',
+    });
+
+    expect(mockedProposeAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ actionName: 'outreach.send_ai_reply' }),
+    );
+  });
+
+  it('does not propose a draft send when there is no draft_response', async () => {
+    const output = makeAiOutput({ draft_response: null });
+    mockOpenAICompletion(output);
+
+    await classifyInboundReply({
+      leadId,
+      channel: 'email',
+      messageText: 'ok',
+    });
+
+    expect(mockedProposeAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ actionName: 'outreach.send_ai_reply' }),
+    );
+  });
+
+  it('logs and continues when the draft send proposal throws', async () => {
+    const output = makeAiOutput();
+    mockOpenAICompletion(output);
+    mockedProposeAgentAction.mockRejectedValue(new Error('policy unavailable'));
+
+    const result = await classifyInboundReply({
+      leadId,
+      channel: 'email',
+      messageText: 'I am interested.',
+    });
+
+    expect(result.intent_class).toBe('interested');
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'ai reply: draft send proposal failed',
+      expect.objectContaining({ leadId, error: 'policy unavailable' }),
+    );
   });
 
   it('proposes a typed stage movement action when update_stage_to is present', async () => {

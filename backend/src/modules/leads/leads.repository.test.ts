@@ -16,6 +16,7 @@ import {
   updateLead,
   softDeleteLead,
   updateLeadStatus,
+  updateLeadOutcome,
   runInTransaction,
   findActivityForLead,
 } from './leads.repository';
@@ -49,6 +50,8 @@ const sampleRow: LeadRow = {
   tags: [],
   notes: null,
   deal_value: null,
+  won_at: null,
+  lost_at: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   deleted_at: null,
@@ -361,6 +364,29 @@ describe('updateLeadStatus', () => {
   it('throws when not found', async () => {
     mockQueryOne.mockResolvedValue(null);
     await expect(updateLeadStatus('x', 'active')).rejects.toThrow('Lead not found or deleted');
+  });
+});
+
+describe('updateLeadOutcome', () => {
+  it('stamps won_at and clears lost_at when outcome is won', async () => {
+    mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'won', won_at: '2026-07-20T00:00:00Z' });
+    const result = await updateLeadOutcome('lead-1', 'won');
+    expect(result.status).toBe('won');
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
+      'won',
+      'lead-1',
+    ]);
+  });
+
+  it('reopens the deal (clears both timestamps) when outcome is active', async () => {
+    mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'active', won_at: null, lost_at: null });
+    const result = await updateLeadOutcome('lead-1', 'active');
+    expect(result.status).toBe('active');
+  });
+
+  it('throws when not found', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await expect(updateLeadOutcome('x', 'lost')).rejects.toThrow('Lead not found or deleted');
   });
 });
 

@@ -1,6 +1,9 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { resolveStageOutcome } from '../../shared/utils/leadOutcome';
 import { enqueueLeadEvent } from '../../workers/queue';
+import { findLeadById, updateLeadOutcome } from '../leads/leads.repository';
+import { insertActivity } from '../activities/activities.repository';
 import {
   findPipelines,
   findPipelineById,
@@ -206,15 +209,10 @@ export async function moveLead(leadId: string, stageId: string, actor: Actor): P
     throw new AppError('Pipeline stage not found', 404);
   }
 
-  if (actor.role === 'sales') {
-    const { pool } = await import('../../shared/utils/db');
-    const leadResult = await pool.query<{ assigned_to: string | null }>(
-      'SELECT assigned_to FROM leads WHERE id = $1 AND deleted_at IS NULL',
-      [leadId],
-    );
-    const lead = leadResult.rows[0];
-    if (!lead) throw new AppError('Lead not found', 404);
-    if (lead.assigned_to !== actor.id) throw new AppError('Forbidden', 403);
+  const lead = await findLeadById(leadId);
+  if (!lead) throw new AppError('Lead not found', 404);
+  if (actor.role === 'sales' && lead.assigned_to !== actor.id) {
+    throw new AppError('Forbidden', 403);
   }
 
   await moveLeadToStage(leadId, stageId);
@@ -227,6 +225,19 @@ export async function moveLead(leadId: string, stageId: string, actor: Actor): P
     newValue: { pipeline_stage_id: stageId },
     ipAddress: actor.ipAddress ?? null,
   });
+
+  // Deals moved into (or out of) a Closed Won/Lost stage carry their outcome
+  // automatically — see resolveStageOutcome() for the exact rules.
+  const outcome = resolveStageOutcome(lead.status, stage);
+  if (outcome) {
+    await updateLeadOutcome(leadId, outcome);
+    await insertActivity({
+      lead_id: leadId,
+      user_id: actor.id,
+      type: 'status_change',
+      metadata: { field: 'status', from: lead.status, to: outcome, reason: 'pipeline_stage_move' },
+    });
+  }
 
   void enqueueLeadEvent({
     event: 'lead.stage_moved',

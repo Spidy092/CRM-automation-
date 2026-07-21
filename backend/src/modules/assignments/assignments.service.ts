@@ -1,6 +1,7 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById } from '../leads/leads.repository';
+import { pushToUser } from '../notifications/notifications.emitter';
 import {
   findAssignmentConfig,
   updateAssignmentConfig,
@@ -70,6 +71,15 @@ export async function assignManually(
     ipAddress: actor.ipAddress ?? null,
   });
 
+  void pushToUser(userId, {
+    id: `assign:${leadId}`,
+    type: 'lead_assigned',
+    title: 'New lead assigned',
+    message: `${lead.business_name ?? 'A lead'} was assigned to you.`,
+    data: { leadId },
+    timestamp: new Date().toISOString(),
+  });
+
   return assignment;
 }
 
@@ -92,6 +102,15 @@ export async function overrideAssignment(
     entityId: assignment.id,
     newValue: { lead_id: leadId, new_user_id: newUserId, reason },
     ipAddress: actor.ipAddress ?? null,
+  });
+
+  void pushToUser(newUserId, {
+    id: `assign:${leadId}`,
+    type: 'lead_assigned',
+    title: 'New lead assigned',
+    message: `${lead.business_name ?? 'A lead'} was reassigned to you.`,
+    data: { leadId },
+    timestamp: new Date().toISOString(),
   });
 
   return assignment;

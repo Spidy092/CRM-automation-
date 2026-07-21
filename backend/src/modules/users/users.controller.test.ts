@@ -5,6 +5,7 @@ import {
   listUsersHandler,
   getUserHandler,
   updateProfileHandler,
+  updatePermissionsHandler,
 } from './users.controller';
 import * as usersService from './users.service';
 import { ZodError } from 'zod';
@@ -217,6 +218,66 @@ describe('users.controller', () => {
       const res = mockRes() as Response;
       await updateProfileHandler(
         mockReq({ params: { id: 'missing' }, body: { name: 'X' } }) as Request,
+        res,
+        mockNext,
+      );
+      expect(mockNext).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+  });
+
+  describe('updatePermissionsHandler', () => {
+    it('returns 200 with the updated user', async () => {
+      mocked.updatePermissions.mockResolvedValue({ ...sampleUser, role: 'manager' });
+      const res = mockRes() as Response;
+      await updatePermissionsHandler(
+        mockReq({ params: { id: 'user-1' }, body: { role: 'manager' } }) as Request,
+        res,
+        mockNext,
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ role: 'manager' }) }),
+      );
+    });
+
+    it('returns 401 when req.user is missing', async () => {
+      const res = mockRes() as Response;
+      await updatePermissionsHandler(
+        mockReq({ params: { id: 'user-1' }, body: { role: 'manager' }, user: undefined }) as Request,
+        res,
+        mockNext,
+      );
+      expect(mockNext).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+      expect(mocked.updatePermissions).not.toHaveBeenCalled();
+    });
+
+    it('passes validation errors (empty body) to next', async () => {
+      const res = mockRes() as Response;
+      await updatePermissionsHandler(
+        mockReq({ params: { id: 'user-1' }, body: {} }) as Request,
+        res,
+        mockNext,
+      );
+      expect(mockNext).toHaveBeenCalledWith(expect.any(ZodError));
+      expect(mocked.updatePermissions).not.toHaveBeenCalled();
+    });
+
+    it('passes self-lockout (400) errors to next', async () => {
+      mocked.updatePermissions.mockRejectedValue(new AppError('You cannot deactivate your own account', 400));
+      const res = mockRes() as Response;
+      await updatePermissionsHandler(
+        mockReq({ params: { id: 'admin-1' }, body: { is_active: false } }) as Request,
+        res,
+        mockNext,
+      );
+      expect(mockNext).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('passes not-found (404) errors to next', async () => {
+      mocked.updatePermissions.mockRejectedValue(new AppError('User not found', 404));
+      const res = mockRes() as Response;
+      await updatePermissionsHandler(
+        mockReq({ params: { id: 'missing' }, body: { role: 'viewer' } }) as Request,
         res,
         mockNext,
       );

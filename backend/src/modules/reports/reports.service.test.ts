@@ -17,14 +17,16 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { IntegrationHealthRow } from './reports.types';
 
 jest.mock('./reports.cache', () => ({
-  getOrComputeReport: jest.fn().mockImplementation((_key: string, compute: () => Promise<unknown>) =>
-    compute().then((data: unknown) => ({
-      key: _key,
-      generatedAt: new Date().toISOString(),
-      ttlSeconds: 300,
-      data,
-    })),
-  ),
+  getOrComputeReport: jest
+    .fn()
+    .mockImplementation((_key: string, compute: () => Promise<unknown>) =>
+      compute().then((data: unknown) => ({
+        key: _key,
+        generatedAt: new Date().toISOString(),
+        ttlSeconds: 300,
+        data,
+      })),
+    ),
   DEFAULT_ANALYTICS_TTL_SECONDS: 300,
 }));
 jest.mock('./reports.repository');
@@ -63,8 +65,20 @@ describe('reports.service', () => {
     it('returns paginated reports from repository', async () => {
       mockedRepo.findAvailableReports.mockResolvedValue({
         items: [
-          { id: 'rpt-1', name: 'Report One', description: 'Report One (leads)', type: 'leads', createdAt: '2026-06-20T10:00:00.000Z' },
-          { id: 'rpt-2', name: 'Report Two', description: 'Report Two (outreach)', type: 'outreach', createdAt: '2026-06-19T10:00:00.000Z' },
+          {
+            id: 'rpt-1',
+            name: 'Report One',
+            description: 'Report One (leads)',
+            type: 'leads',
+            createdAt: '2026-06-20T10:00:00.000Z',
+          },
+          {
+            id: 'rpt-2',
+            name: 'Report Two',
+            description: 'Report Two (outreach)',
+            type: 'outreach',
+            createdAt: '2026-06-19T10:00:00.000Z',
+          },
         ],
         total: 4,
       });
@@ -87,8 +101,20 @@ describe('reports.service', () => {
     it('returns second page', async () => {
       mockedRepo.findAvailableReports.mockResolvedValue({
         items: [
-          { id: 'rpt-3', name: 'Report Three', description: 'Report Three (pipeline)', type: 'pipeline', createdAt: '2026-06-18T10:00:00.000Z' },
-          { id: 'rpt-4', name: 'Report Four', description: 'Report Four (reps)', type: 'reps', createdAt: '2026-06-17T10:00:00.000Z' },
+          {
+            id: 'rpt-3',
+            name: 'Report Three',
+            description: 'Report Three (pipeline)',
+            type: 'pipeline',
+            createdAt: '2026-06-18T10:00:00.000Z',
+          },
+          {
+            id: 'rpt-4',
+            name: 'Report Four',
+            description: 'Report Four (reps)',
+            type: 'reps',
+            createdAt: '2026-06-17T10:00:00.000Z',
+          },
         ],
         total: 4,
       });
@@ -120,7 +146,13 @@ describe('reports.service', () => {
     it('returns meta.total from DB total, not from items.length', async () => {
       mockedRepo.findAvailableReports.mockResolvedValue({
         items: [
-          { id: 'rpt-1', name: 'A', description: 'A (leads)', type: 'leads', createdAt: '2026-06-20T10:00:00.000Z' },
+          {
+            id: 'rpt-1',
+            name: 'A',
+            description: 'A (leads)',
+            type: 'leads',
+            createdAt: '2026-06-20T10:00:00.000Z',
+          },
         ],
         total: 47,
       });
@@ -151,6 +183,8 @@ describe('reports.service', () => {
         totalCampaigns: 2,
         activeOutreach: 3,
         pipelineConversion: 25,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [],
       };
       mockedRepo.findDashboardMetrics.mockResolvedValue(metrics);
@@ -167,6 +201,8 @@ describe('reports.service', () => {
         totalCampaigns: 0,
         activeOutreach: 2,
         pipelineConversion: 50,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [{ date: '2026-06-21', leads: 1, outreach: 1 }],
       };
       mockedRepo.findDashboardMetrics.mockResolvedValue(metrics);
@@ -183,6 +219,8 @@ describe('reports.service', () => {
         totalCampaigns: 5,
         activeOutreach: 8,
         pipelineConversion: 30,
+        wonRevenue: 0,
+        wonDeals: 0,
         recentActivity: [],
       });
 
@@ -233,8 +271,24 @@ describe('reports.service', () => {
   describe('getOutreachReport', () => {
     it('returns paginated rows', async () => {
       const rows = [
-        { date: '2026-06-20', channel: 'email', sent: 10, delivered: 8, opened: 4, replied: 2, failed: 0 },
-        { date: '2026-06-21', channel: 'sms', sent: 5, delivered: 5, opened: 3, replied: 1, failed: 0 },
+        {
+          date: '2026-06-20',
+          channel: 'email',
+          sent: 10,
+          delivered: 8,
+          opened: 4,
+          replied: 2,
+          failed: 0,
+        },
+        {
+          date: '2026-06-21',
+          channel: 'sms',
+          sent: 5,
+          delivered: 5,
+          opened: 3,
+          replied: 1,
+          failed: 0,
+        },
       ];
       mockedRepo.findOutreachReport.mockResolvedValue(rows);
 
@@ -267,7 +321,14 @@ describe('reports.service', () => {
   describe('getSalesRepReport', () => {
     it('returns paginated rows', async () => {
       const rows = [
-        { repId: 'u1', repName: 'Alice', leadsAssigned: 10, leadsConverted: 3, conversionRate: 30, avgResponseTime: 0 },
+        {
+          repId: 'u1',
+          repName: 'Alice',
+          leadsAssigned: 10,
+          leadsConverted: 3,
+          conversionRate: 30,
+          avgResponseTime: 0,
+        },
       ];
       mockedRepo.findSalesRepReport.mockResolvedValue(rows);
 
@@ -318,9 +379,7 @@ describe('reports.service', () => {
       );
 
       expect(result.jobId).toBe('job-456');
-      expect(mockedEnqueue).toHaveBeenCalledWith(
-        expect.objectContaining({ format: 'xlsx' }),
-      );
+      expect(mockedEnqueue).toHaveBeenCalledWith(expect.objectContaining({ format: 'xlsx' }));
     });
 
     it('enqueues pdf export', async () => {
@@ -381,10 +440,7 @@ describe('reports.service', () => {
     it('applies sales role scope to lead generation report', async () => {
       mockedRepo.findLeadGenerationReport.mockResolvedValue([]);
 
-      await getLeadGenerationReport(
-        { limit: 25, offset: 0 },
-        { id: 'sales-1', role: 'sales' },
-      );
+      await getLeadGenerationReport({ limit: 25, offset: 0 }, { id: 'sales-1', role: 'sales' });
 
       expect(mockedRepo.findLeadGenerationReport).toHaveBeenCalledWith(
         expect.objectContaining({ limit: 25, offset: 0 }),
@@ -396,10 +452,7 @@ describe('reports.service', () => {
     it('applies sales role scope to outreach report', async () => {
       mockedRepo.findOutreachReport.mockResolvedValue([]);
 
-      await getOutreachReport(
-        { limit: 25, offset: 0 },
-        { id: 'sales-1', role: 'sales' },
-      );
+      await getOutreachReport({ limit: 25, offset: 0 }, { id: 'sales-1', role: 'sales' });
 
       expect(mockedRepo.findOutreachReport).toHaveBeenCalledWith(
         expect.objectContaining({ limit: 25, offset: 0 }),
@@ -411,10 +464,7 @@ describe('reports.service', () => {
     it('applies sales role scope to pipeline report', async () => {
       mockedRepo.findPipelineReport.mockResolvedValue([]);
 
-      await getPipelineReport(
-        { limit: 25, offset: 0 },
-        { id: 'sales-1', role: 'sales' },
-      );
+      await getPipelineReport({ limit: 25, offset: 0 }, { id: 'sales-1', role: 'sales' });
 
       expect(mockedRepo.findPipelineReport).toHaveBeenCalledWith(
         expect.objectContaining({ limit: 25, offset: 0 }),
@@ -426,10 +476,7 @@ describe('reports.service', () => {
     it('applies sales role scope to sales rep report', async () => {
       mockedRepo.findSalesRepReport.mockResolvedValue([]);
 
-      await getSalesRepReport(
-        { limit: 25, offset: 0 },
-        { id: 'sales-1', role: 'sales' },
-      );
+      await getSalesRepReport({ limit: 25, offset: 0 }, { id: 'sales-1', role: 'sales' });
 
       expect(mockedRepo.findSalesRepReport).toHaveBeenCalledWith(
         expect.objectContaining({ limit: 25, offset: 0 }),
@@ -442,7 +489,15 @@ describe('reports.service', () => {
   describe('getCampaignAnalyticsReport', () => {
     it('returns paginated campaign rows', async () => {
       const rows = [
-        { date: '2026-06-20', campaignId: 'camp-1', campaignName: 'Summer Promo', channel: 'email', leadsTargeted: 10, leadsConverted: 2, conversionRate: 0.2 },
+        {
+          date: '2026-06-20',
+          campaignId: 'camp-1',
+          campaignName: 'Summer Promo',
+          channel: 'email',
+          leadsTargeted: 10,
+          leadsConverted: 2,
+          conversionRate: 0.2,
+        },
       ];
       mockedRepo.findCampaignAnalytics.mockResolvedValue(rows);
 
@@ -462,8 +517,24 @@ describe('reports.service', () => {
 
     it('paginates rows', async () => {
       mockedRepo.findCampaignAnalytics.mockResolvedValue([
-        { date: '2026-06-20', campaignId: 'camp-1', campaignName: 'A', channel: 'email', leadsTargeted: 1, leadsConverted: 0, conversionRate: 0 },
-        { date: '2026-06-21', campaignId: 'camp-2', campaignName: 'B', channel: 'sms', leadsTargeted: 2, leadsConverted: 1, conversionRate: 0.5 },
+        {
+          date: '2026-06-20',
+          campaignId: 'camp-1',
+          campaignName: 'A',
+          channel: 'email',
+          leadsTargeted: 1,
+          leadsConverted: 0,
+          conversionRate: 0,
+        },
+        {
+          date: '2026-06-21',
+          campaignId: 'camp-2',
+          campaignName: 'B',
+          channel: 'sms',
+          leadsTargeted: 2,
+          leadsConverted: 1,
+          conversionRate: 0.5,
+        },
       ]);
 
       const result = await getCampaignAnalyticsReport(
@@ -479,7 +550,16 @@ describe('reports.service', () => {
   describe('getIntegrationHealthReport', () => {
     it('returns integration health rows', async () => {
       const rows: IntegrationHealthRow[] = [
-        { integrationId: 'int-1', name: 'twilio', displayName: 'Twilio', channel: 'sms', status: 'healthy', enabled: true, successRate: 95, lastTestedAt: new Date().toISOString() },
+        {
+          integrationId: 'int-1',
+          name: 'twilio',
+          displayName: 'Twilio',
+          channel: 'sms',
+          status: 'healthy',
+          enabled: true,
+          successRate: 95,
+          lastTestedAt: new Date().toISOString(),
+        },
       ];
       mockedRepo.findIntegrationHealth.mockResolvedValue(rows);
 

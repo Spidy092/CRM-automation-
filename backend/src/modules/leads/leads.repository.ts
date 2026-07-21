@@ -4,7 +4,7 @@ import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
-  deal_value, created_at, updated_at, deleted_at, scraper_log_id`;
+  deal_value, won_at, lost_at, created_at, updated_at, deleted_at, scraper_log_id`;
 
 function jsonArray(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -259,6 +259,29 @@ export async function updateLeadStatus(id: string, status: 'active' | 'paused'):
   const row = await queryOne<LeadRow>(
     `UPDATE leads SET status = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING ${COLS}`,
     [status, id],
+  );
+  if (!row) throw new Error('Lead not found or deleted');
+  return row;
+}
+
+/**
+ * Applies the outcome of a pipeline stage move: 'won' and 'lost' stamp their
+ * respective close timestamp (and clear the other); 'active' reopens the deal
+ * and clears both. Used only when the destination/origin stage crosses a
+ * terminal boundary — see resolveTerminalStatus() in pipeline.service.ts.
+ */
+export async function updateLeadOutcome(
+  id: string,
+  outcome: 'won' | 'lost' | 'active',
+): Promise<LeadRow> {
+  const row = await queryOne<LeadRow>(
+    `UPDATE leads
+     SET status = $1,
+         won_at = CASE WHEN $1 = 'won' THEN NOW() ELSE NULL END,
+         lost_at = CASE WHEN $1 = 'lost' THEN NOW() ELSE NULL END
+     WHERE id = $2 AND deleted_at IS NULL
+     RETURNING ${COLS}`,
+    [outcome, id],
   );
   if (!row) throw new Error('Lead not found or deleted');
   return row;

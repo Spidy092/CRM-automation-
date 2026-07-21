@@ -111,6 +111,9 @@ const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
   hunter: [
     { key: 'api_key', label: 'Hunter.io API Key', type: 'password', required: true, helpText: 'Get your free API key at hunter.io' },
   ],
+  apify: [
+    { key: 'apiToken', label: 'API Token', type: 'password', required: true, helpText: 'Get your personal API token from Apify Settings -> Integrations.' },
+  ],
   mailchimp: [
     { key: 'apiKey',       label: 'API Key',       type: 'password', required: true, placeholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-us1', helpText: 'Found in Mailchimp → Account → Extras → API keys.' },
     { key: 'serverPrefix', label: 'Server Prefix', required: true, placeholder: 'us1', helpText: 'The part after the dash in your API key (e.g. us1, us6).' },
@@ -150,6 +153,7 @@ const CATEGORY_MAP: Record<string, string> = {
   facebook:        'Advertising',
   linkedin:        'Lead Generation',
   hunter:          'Data Enrichment',
+  apify:           'Data Enrichment',
   mailchimp:       'Email Marketing',
   stripe:          'Payments',
   google_drive:    'Storage',

@@ -33,3 +33,22 @@ export function useCreateUser() {
     },
   });
 }
+
+export interface UpdateUserPermissionsInput {
+  id: string;
+  role?: UserRole;
+  is_active?: boolean;
+}
+
+export function useUpdateUserPermissions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...input }: UpdateUserPermissionsInput) => {
+      const response = await apiClient.patch<ApiResponse<User>>(`/users/${id}/permissions`, input);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+  });
+}
