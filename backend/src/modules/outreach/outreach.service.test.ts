@@ -11,6 +11,8 @@ import {
   getTask,
   updateTask,
   getLeadTimeline,
+  sendQuickMessage,
+  sendManualOutreach,
 } from './outreach.service';
 
 jest.mock('./outreach.repository', () => ({
@@ -29,6 +31,10 @@ jest.mock('./outreach.repository', () => ({
 }));
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('../leads/leads.repository', () => ({ findLeadById: jest.fn() }));
+jest.mock('../templates/templates.repository', () => ({ findTemplateById: jest.fn() }));
+jest.mock('./outreach.prompt', () => ({ personalizeMessage: jest.fn() }));
+jest.mock('../integrations/dispatch', () => ({ dispatchOutbound: jest.fn() }));
 
 import {
   findSequences,
@@ -45,6 +51,10 @@ import {
   findTimelineByLead,
 } from './outreach.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { findLeadById } from '../leads/leads.repository';
+import { findTemplateById } from '../templates/templates.repository';
+import { personalizeMessage } from './outreach.prompt';
+import { dispatchOutbound } from '../integrations/dispatch';
 
 const actor = { id: 'u1', role: 'admin', ipAddress: '127.0.0.1' };
 
@@ -267,5 +277,133 @@ describe('getLeadTimeline', () => {
     const result = await getLeadTimeline('lead1');
     expect(result).toHaveLength(1);
     expect(result[0].type).toBe('outreach_log');
+  });
+});
+
+// ── Quick send ──────────────────────────────────────────────────────────────
+
+describe('sendQuickMessage', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const baseLead = {
+    id: 'lead1',
+    status: 'active',
+    email: 'lead@example.com',
+    phone: '+15551234567',
+  };
+
+  const baseTemplate = {
+    id: 't1',
+    channel: 'email',
+    subject: 'Hi there',
+    body: 'Hello {business_name}',
+    approval_status: 'approved',
+    attachments: [],
+  };
+
+  it('rejects a lead that does not exist', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(null);
+    await expect(
+      sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
+    ).rejects.toThrow('Lead not found');
+  });
+
+  it('rejects an opted-out lead', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseLead, status: 'opted_out' });
+    await expect(
+      sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
+    ).rejects.toThrow('opted out');
+  });
+
+  it('rejects when the template channel does not match', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseLead);
+    (findTemplateById as jest.Mock).mockResolvedValue({ ...baseTemplate, channel: 'sms' });
+    await expect(
+      sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
+    ).rejects.toThrow('channel mismatch');
+  });
+
+  it('rejects an unapproved template', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseLead);
+    (findTemplateById as jest.Mock).mockResolvedValue({ ...baseTemplate, approval_status: 'pending' });
+    await expect(
+      sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
+    ).rejects.toThrow('not approved');
+  });
+
+  it('sends, logs with a null campaign_id, and audits on success', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseLead);
+    (findTemplateById as jest.Mock).mockResolvedValue(baseTemplate);
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello Acme' });
+    (insertOutreachLog as jest.Mock).mockResolvedValue({ ...baseLog, status: 'queued' });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext1', latencyMs: 10, retryable: false });
+    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({ ...baseLog, status: 'sent', external_msg_id: 'ext1' });
+
+    const result = await sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor);
+
+    expect(insertOutreachLog).toHaveBeenCalledWith(
+      expect.objectContaining({ lead_id: 'lead1', campaign_id: null, template_id: 't1' }),
+    );
+    expect(dispatchOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: null, destination: 'lead@example.com' }),
+    );
+    expect(result.status).toBe('sent');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'outreach.quick_send' }),
+    );
+  });
+
+  it('marks the log failed and throws when dispatch fails', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseLead);
+    (findTemplateById as jest.Mock).mockResolvedValue(baseTemplate);
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello Acme' });
+    (insertOutreachLog as jest.Mock).mockResolvedValue({ ...baseLog, status: 'queued' });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: false, error: 'boom', latencyMs: 10, retryable: false });
+    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({ ...baseLog, status: 'failed', error_message: 'boom' });
+
+    await expect(
+      sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
+    ).rejects.toThrow('Quick send failed');
+    expect(updateOutreachLogStatus).toHaveBeenCalledWith('l1', 'failed', expect.objectContaining({ errorMessage: 'boom' }));
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendManualOutreach', () => {
+  const actor = { id: 'user1', role: 'admin' as const };
+  const baseLead = { id: 'lead1', status: 'active', email: 'lead@example.com' };
+
+  it('rejects an opted-out lead with specific opted out message', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseLead, status: 'opted_out' });
+    await expect(
+      sendManualOutreach(
+        {
+          leadId: 'lead1',
+          campaignId: 'c1',
+          sequenceId: 's1',
+          stepNumber: 1,
+          channel: 'email',
+          templateId: 't1',
+        },
+        actor,
+      ),
+    ).rejects.toThrow('Lead has opted out of outreach');
+  });
+
+  it('rejects an inactive non-opted-out lead with inactive message', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseLead, status: 'inactive' });
+    await expect(
+      sendManualOutreach(
+        {
+          leadId: 'lead1',
+          campaignId: 'c1',
+          sequenceId: 's1',
+          stepNumber: 1,
+          channel: 'email',
+          templateId: 't1',
+        },
+        actor,
+      ),
+    ).rejects.toThrow('Lead is not active');
   });
 });

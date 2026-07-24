@@ -68,21 +68,32 @@ function cacheKey(leadId: string, templateId: string): string {
 
 function performFallback(templateBody: string, lead: LeadRow): string {
   let body = templateBody;
+  const firstName = lead.contact_name?.split(' ')[0] || lead.contact_name;
+  // Keys cover both the scraper-oriented vocabulary ({business_name}, {industry}, …)
+  // and the contact-oriented vocabulary templates are actually authored with
+  // ({client_name}, {first_name}, …) — both are used across existing templates.
   const safeReplacements: Record<string, string | number | null> = {
     business_name: lead.business_name,
+    company_name: lead.business_name,
     industry: lead.industry,
     location: lead.location,
     country: lead.country ?? '',
     rating: lead.google_rating ?? '',
     source_platform: lead.source_platform,
     classification: lead.classification ?? '',
+    contact_name: lead.contact_name,
+    client_name: lead.contact_name,
+    first_name: firstName,
   };
   for (const [key, value] of Object.entries(safeReplacements)) {
-    const regex = new RegExp(`\\{${key}\\}`, 'g');
-    body = body.replace(regex, String(value));
+    // Match {{key}} before {key} — both forms appear across existing templates.
+    const doubleBraceRegex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
+    const singleBraceRegex = new RegExp(`\\{${key}\\}`, 'g');
+    body = body.replace(doubleBraceRegex, String(value)).replace(singleBraceRegex, String(value));
   }
-  // Strip any remaining unmatched placeholders
-  body = body.replace(/\{[^}]+\}/g, '');
+  // Strip any remaining unmatched placeholders, {{double}} first so a leftover
+  // outer brace from an unmatched {{var}} doesn't survive as stray text.
+  body = body.replace(/\{\{[^}]+\}\}/g, '').replace(/\{[^}]+\}/g, '');
   return body;
 }
 

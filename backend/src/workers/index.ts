@@ -9,6 +9,7 @@ import { startAssignmentWorker } from './assignment.worker';
 import { startOutreachWorker } from './outreach.worker';
 import { startReportExportWorker } from './reportExport.worker';
 import { startScraperWorker } from './scraper.worker';
+import { reconcileSchedules } from '../modules/scraper/scraper.scheduler';
 import { startEventsWorker } from './events.worker';
 import { startAiResearchWorker } from './aiResearch.worker';
 import { startAiReplyWorker } from './aiReply.worker';
@@ -19,6 +20,7 @@ import {
   startAgentPlanRecoveryWorker,
   scheduleAgentPlanRecovery,
 } from '../modules/agent-planner/recovery.worker';
+import { startNewsletterWorker } from './newsletter.worker';
 
 /**
  * CRM Worker Process
@@ -62,6 +64,13 @@ async function startWorkers(): Promise<void> {
   const outreach = startOutreachWorker();
   const reportExport = startReportExportWorker();
   const scraper = startScraperWorker();
+  try {
+    await reconcileSchedules();
+  } catch (err) {
+    logger.error('Failed to reconcile scraper schedules on startup', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   const events = startEventsWorker();
   const aiResearch = startAiResearchWorker();
   const aiReply = startAiReplyWorker();
@@ -70,6 +79,7 @@ async function startWorkers(): Promise<void> {
   const aiDecision = startAiDecisionWorker();
   const agentPlanRecovery = startAgentPlanRecoveryWorker();
   void scheduleAgentPlanRecovery();
+  const newsletter = startNewsletterWorker();
 
   logger.info('Worker process started — listening for jobs', {
     queues: [
@@ -85,6 +95,7 @@ async function startWorkers(): Promise<void> {
       'ai-inbox',
       'ai-decisions',
       'agent-plan-recovery',
+      'newsletter',
     ],
   });
 
@@ -100,6 +111,7 @@ async function startWorkers(): Promise<void> {
   void aiInbox;
   void aiDecision;
   void agentPlanRecovery;
+  void newsletter;
 }
 
 // Graceful shutdown

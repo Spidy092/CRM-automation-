@@ -4,8 +4,11 @@ import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById, updateLead } from './leads.repository';
 import { enrichDomain } from '../integrations/hunter/hunter.service';
 import { AuthenticatedUser } from '../../shared/types';
+import { assertAccess } from './leads.service';
+import { toLeadResponse } from './leads.types';
 
 const MIN_CONFIDENCE = 50;
+const ENRICHMENT_TIMEOUT_MS = 15_000;
 
 function isPlaceholderEmail(email: string): boolean {
   return email.includes('scraped.local') || email.startsWith('no-reply-');
@@ -31,9 +34,11 @@ export async function enrichLead(
   actor: { id: string; role: AuthenticatedUser['role']; ipAddress?: string | null },
 ) {
   const lead = await findLeadById(id);
-  if (!lead) {
+  if (!lead || lead.deleted_at !== null) {
     throw new AppError('Lead not found', 404);
   }
+
+  assertAccess(lead.assigned_to, actor, true);
 
   let rawDomain = lead.website;
 
@@ -53,7 +58,13 @@ export async function enrichLead(
 
   logger.info('starting enrichment for lead', { leadId: id, domain });
 
-  const result = await enrichDomain(domain);
+  const result = await Promise.race([
+    enrichDomain(domain),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new AppError('Enrichment request timed out', 504)), ENRICHMENT_TIMEOUT_MS),
+    ),
+  ]);
+
   if (!result) {
     throw new AppError('No contacts found for this domain.', 404);
   }
@@ -104,5 +115,5 @@ export async function enrichLead(
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return updatedLead;
+  return toLeadResponse(updatedLead);
 }

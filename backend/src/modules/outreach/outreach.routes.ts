@@ -14,6 +14,7 @@ import {
   getLeadLogsHandler,
   listTasksHandler,
   sendManualOutreachHandler,
+  quickSendHandler,
   createTaskHandler,
   updateTaskHandler,
 } from './outreach.controller';
@@ -35,6 +36,11 @@ router.get('/leads/:leadId/timeline', wrap(getLeadTimelineHandler));
 router.get('/leads/:leadId/logs', wrap(getLeadLogsHandler));
 
 router.post('/send', authorize('admin', 'manager', 'sales'), wrap(sendManualOutreachHandler));
+router.post(
+  '/leads/:leadId/quick-send',
+  authorize('admin', 'manager', 'sales'),
+  wrap(quickSendHandler),
+);
 
 // Tasks (sales + admin + manager can create/update)
 router.get('/tasks', authorize('admin', 'manager', 'sales'), wrap(listTasksHandler));

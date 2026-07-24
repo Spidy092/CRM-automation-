@@ -14,6 +14,10 @@ export interface Campaign {
   /** When set, auto-enrollment only fires when a lead moves TO this specific stage.
    *  When null (but pipeline_id is set), enrollment fires on any stage move. */
   trigger_stage_id: string | null;
+  /** When set, a newly created lead whose source_platform is in this list auto-enrolls. */
+  trigger_source: string[] | null;
+  /** When set, a newly created lead with any tag in this list auto-enrolls. */
+  trigger_tags: string[] | null;
   ai_personalization_enabled: boolean;
   autonomy_level: AutonomyLevel;
   ai_min_confidence: number;
@@ -54,6 +58,8 @@ export interface CreateCampaignInput {
   sequence_id?: string;
   pipeline_id?: string;
   trigger_stage_id?: string | null;
+  trigger_source?: string[] | null;
+  trigger_tags?: string[] | null;
   ai_personalization_enabled?: boolean;
   autonomy_level?: AutonomyLevel;
   ai_min_confidence?: number;
@@ -78,6 +84,8 @@ export interface UpdateCampaignInput {
   sequence_id?: string;
   pipeline_id?: string;
   trigger_stage_id?: string | null;
+  trigger_source?: string[] | null;
+  trigger_tags?: string[] | null;
   ai_personalization_enabled?: boolean;
   autonomy_level?: AutonomyLevel;
   ai_min_confidence?: number;

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { AppError } from '../../shared/middleware/errorHandler';
+import { enqueueNewsletterBroadcast, toggleNewsletterAutomatedDigest } from '../../workers/queue';
 import { redis } from '../../shared/utils/redis';
 import { logger } from '../../shared/utils/logger';
 import { clampLimit } from '../../shared/utils/pagination';
@@ -21,6 +22,7 @@ import {
   NewsletterSubscriberRow,
   NewsletterSubscriberStatus,
   NewsletterFrequency,
+  NewsletterDigestConfig,
   NewsletterResult,
 } from './newsletter.types';
 
@@ -236,3 +238,63 @@ export async function getSubscriberById(
     return { ok: false, error: new AppError(message, 500) };
   }
 }
+
+export async function triggerBroadcast(
+  subject: string,
+  htmlBody: string,
+): Promise<NewsletterResult<{ enqueued: boolean }, AppError>> {
+  try {
+    await enqueueNewsletterBroadcast({ subject, htmlBody });
+    return { ok: true, value: { enqueued: true } };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to enqueue broadcast';
+    return { ok: false, error: new AppError(message, 500) };
+  }
+}
+
+export async function toggleAutomatedDigest(
+  enabled: boolean,
+): Promise<NewsletterResult<{ enabled: boolean }, AppError>> {
+  try {
+    await toggleNewsletterAutomatedDigest(enabled);
+    return { ok: true, value: { enabled } };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to toggle automated digest';
+    return { ok: false, error: new AppError(message, 500) };
+  }
+}
+
+const DIGEST_CONFIG_REDIS_KEY = 'newsletter:digest:config';
+
+export const DEFAULT_DIGEST_CONFIG: NewsletterDigestConfig = {
+  topic: 'Weekly Sales Tips & Growth Hacks',
+  tone: 'professional',
+  customPrompt: 'Provide actionable sales techniques and productivity advice.',
+  targetAudience: 'Sales reps and business professionals',
+};
+
+export async function getDigestConfig(): Promise<NewsletterResult<NewsletterDigestConfig, AppError>> {
+  try {
+    const raw = await redis.get(DIGEST_CONFIG_REDIS_KEY);
+    if (!raw) {
+      return { ok: true, value: DEFAULT_DIGEST_CONFIG };
+    }
+    const parsed = JSON.parse(raw) as NewsletterDigestConfig;
+    return { ok: true, value: { ...DEFAULT_DIGEST_CONFIG, ...parsed } };
+  } catch (err) {
+    return { ok: true, value: DEFAULT_DIGEST_CONFIG };
+  }
+}
+
+export async function updateDigestConfig(
+  config: NewsletterDigestConfig,
+): Promise<NewsletterResult<NewsletterDigestConfig, AppError>> {
+  try {
+    await redis.set(DIGEST_CONFIG_REDIS_KEY, JSON.stringify(config));
+    return { ok: true, value: config };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to update digest config';
+    return { ok: false, error: new AppError(message, 500) };
+  }
+}
+

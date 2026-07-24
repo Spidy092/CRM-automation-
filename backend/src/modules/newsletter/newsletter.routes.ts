@@ -11,6 +11,10 @@ import {
   updatePreferencesHandler,
   listSubscribersHandler,
   getSubscriberHandler,
+  broadcastHandler,
+  toggleAutomatedDigestHandler,
+  getDigestConfigHandler,
+  updateDigestConfigHandler,
 } from './newsletter.controller';
 
 const router = Router();
@@ -28,5 +32,9 @@ router.patch('/preferences', publicLimiter, wrap(updatePreferencesHandler));
 router.use('/admin', authenticate, authenticatedLimiter, authorize('admin', 'marketing'));
 router.get('/admin/subscribers', wrap(listSubscribersHandler));
 router.get('/admin/subscribers/:id', wrap(getSubscriberHandler));
+router.post('/admin/broadcast', wrap(broadcastHandler));
+router.post('/admin/automated-digest', wrap(toggleAutomatedDigestHandler));
+router.get('/admin/digest-config', wrap(getDigestConfigHandler));
+router.put('/admin/digest-config', wrap(updateDigestConfigHandler));
 
 export { router as newsletterRoutes };

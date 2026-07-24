@@ -7,8 +7,11 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
+import { statusTones } from '@/lib/constants';
 import { useToast } from '@/components/ui/Toast';
-import type { ActivityType, Lead, LeadStatus } from '@/types';
+import { QuickResponseModal } from '@/components/ui/QuickResponseModal';
+import { FollowUpPicker } from '@/components/ui/FollowUpPicker';
+import type { ActivityType, Lead } from '@/types';
 import {
   ArrowLeft,
   Edit,
@@ -16,42 +19,36 @@ import {
   Pause,
   Play,
   AlertCircle,
-  Globe,
-  Star,
-  MessageSquare,
-  Tag,
-  GitBranch,
   User,
   Activity,
   Sparkles,
   Phone,
   Mail,
   FileText,
+  MessageSquare,
   ArrowRightLeft,
   UserCheck,
   Send,
   ArrowRight,
+  GitBranch,
+  Tag,
+  Globe,
+  Star,
   CheckCircle2,
   ClipboardCheck,
   DollarSign,
   CalendarCheck,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 
-const statusTones: Record<LeadStatus, StatusTone> = {
-  active: 'green',
-  paused: 'amber',
-  won: 'blue',
-  lost: 'red',
-  opted_out: 'gray',
-};
-
 const activityTypeIcons: Record<import('@/types').ActivityType, React.ReactNode> = {
-  call: <Phone className="h-3.5 w-3.5" />,
-  whatsapp: <MessageSquare className="h-3.5 w-3.5" />,
-  email: <Mail className="h-3.5 w-3.5" />,
-  note: <FileText className="h-3.5 w-3.5" />,
-  status_change: <ArrowRightLeft className="h-3.5 w-3.5" />,
-  assignment_change: <UserCheck className="h-3.5 w-3.5" />,
+  call: <Phone className="h-3.5 w-3.5" role="img" aria-label="Call" />,
+  whatsapp: <MessageSquare className="h-3.5 w-3.5" role="img" aria-label="WhatsApp" />,
+  email: <Mail className="h-3.5 w-3.5" role="img" aria-label="Email" />,
+  note: <FileText className="h-3.5 w-3.5" role="img" aria-label="Note" />,
+  status_change: <ArrowRightLeft className="h-3.5 w-3.5" role="img" aria-label="Status change" />,
+  assignment_change: <UserCheck className="h-3.5 w-3.5" role="img" aria-label="Assignment change" />,
 };
 
 const activityTypeLabels: Record<import('@/types').ActivityType, string> = {
@@ -254,17 +251,13 @@ function classifyActivity(type: import('@/types').ActivityType, metadata: Record
     return `Assignment changed from ${from} to ${to}`;
   }
   if (type === 'note') {
-    const outcomeLabel = metadata?.outcome_label;
-    if (outcomeLabel) {
-      return `Outcome · ${String(outcomeLabel)}`;
+    if (metadata?.outcome_label) {
+      return `Outcome · ${String(metadata.outcome_label)}`;
     }
-    const quickAction = metadata?.quick_action_type;
-    const direction = metadata?.direction;
-    if (quickAction) {
-      const label = activityTypeLabels[quickAction as ActivityType] ?? String(quickAction);
-      return direction ? `${label} · ${String(direction)}` : label;
+    if (metadata?.note) {
+      return String(metadata.note);
     }
-    return String(metadata?.note ?? '');
+    return 'Note';
   }
   if (type === 'call') {
     const direction = String(metadata?.direction ?? '');
@@ -283,6 +276,7 @@ function classifyActivity(type: import('@/types').ActivityType, metadata: Record
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 0) return 'just now';
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
@@ -300,36 +294,49 @@ function LeadOutcomeBar({
   onSelectOutcome: (outcome: LeadOutcomeOption) => void;
   isSaving: boolean;
 }) {
+  const [expanded, setExpanded] = React.useState(false);
+
   return (
     <Card className="overflow-hidden border-slate-200">
-      <CardHeader className="border-b bg-white">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">What happened?</h3>
-            <p className="text-sm text-slate-500">Record the outcome so the next step is obvious</p>
-          </div>
-          <StatusBadge tone="violet">outcome</StatusBadge>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition hover:bg-slate-50"
+      >
+        <div className="flex items-center gap-2">
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+          )}
+          <h3 className="text-sm font-semibold text-slate-900">What happened?</h3>
+          {!expanded && (
+            <span className="hidden text-xs text-slate-400 sm:inline">Record the outcome so the next step is obvious</span>
+          )}
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-2 p-4 sm:grid-cols-2 xl:grid-cols-5">
-        {outcomeOptions.map((outcome) => (
-          <button
-            key={outcome.id}
-            type="button"
-            disabled={isSaving}
-            onClick={() => onSelectOutcome(outcome)}
-            className="flex min-h-28 flex-col rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span className="flex items-center justify-between gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700">
-                {outcome.icon}
+        <StatusBadge tone="violet">outcome</StatusBadge>
+      </button>
+      {expanded && (
+        <CardContent className="grid gap-2 border-t p-4 sm:grid-cols-2 xl:grid-cols-5">
+          {outcomeOptions.map((outcome) => (
+            <button
+              key={outcome.id}
+              type="button"
+              disabled={isSaving}
+              onClick={() => onSelectOutcome(outcome)}
+              className="flex min-h-28 flex-col rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700">
+                  {outcome.icon}
+                </span>
+                <StatusBadge tone={outcome.tone}>{outcome.label}</StatusBadge>
               </span>
-              <StatusBadge tone={outcome.tone}>{outcome.label}</StatusBadge>
-            </span>
-            <span className="mt-3 text-xs leading-5 text-slate-500">{outcome.nextStep}</span>
-          </button>
-        ))}
-      </CardContent>
+              <span className="mt-3 text-xs leading-5 text-slate-500">{outcome.nextStep}</span>
+            </button>
+          ))}
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -343,18 +350,30 @@ function LeadActionPlan({
   onLogActivity: (type: Exclude<ActivityType, 'status_change' | 'assignment_change'>) => void;
   isLogging: boolean;
 }) {
+  const [expanded, setExpanded] = React.useState(false);
+
   return (
     <Card className="overflow-hidden border-slate-200">
-      <CardHeader className="border-b bg-slate-50/70">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">Recommended next actions</h3>
-            <p className="text-sm text-slate-500">A short path from lead review to follow-up</p>
-          </div>
-          <StatusBadge tone="blue">guided flow</StatusBadge>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 bg-slate-50/70 px-4 py-2.5 text-left transition hover:bg-slate-100"
+      >
+        <div className="flex items-center gap-2">
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+          )}
+          <h3 className="text-sm font-semibold text-slate-900">Recommended next actions</h3>
+          {!expanded && (
+            <span className="hidden text-xs text-slate-400 sm:inline">A short path from lead review to follow-up</span>
+          )}
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-3 p-4 md:grid-cols-3">
+        <StatusBadge tone="blue">guided flow</StatusBadge>
+      </button>
+      {expanded && (
+      <CardContent className="grid gap-3 border-t p-4 md:grid-cols-3">
         {actions.map((action) => (
           <div key={action.id} className="flex min-h-40 flex-col rounded-lg border border-slate-200 bg-white p-4">
             <div className="flex items-start justify-between gap-3">
@@ -394,23 +413,28 @@ function LeadActionPlan({
           </div>
         ))}
       </CardContent>
+      )}
     </Card>
   );
 }
 
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const leadId = id ?? '';
   const navigate = useNavigate();
   const { showToast } = useToast();
 
-  const { data: lead, isLoading: leadLoading, error: leadError } = useLead(id!);
-  const { data: activitiesPage, isLoading: activityLoading } = useLeadActivities(id!, { limit: 50 });
+  const [activityLimit, setActivityLimit] = React.useState(25);
+  const { data: lead, isLoading: leadLoading, error: leadError } = useLead(leadId);
+  const { data: activitiesPage, isLoading: activityLoading } = useLeadActivities(leadId, { limit: activityLimit });
   const createActivity = useCreateLeadActivity();
   const pauseLead = usePauseLead();
   const deleteLead = useDeleteLead();
   const enrichLead = useEnrichLead();
 
   const [noteText, setNoteText] = React.useState('');
+  const [showQuickResponse, setShowQuickResponse] = React.useState(false);
+  const [showDeleteModal, setShowDeleteModal] = React.useState(false);
 
   const activities = activitiesPage?.items ?? [];
 
@@ -421,35 +445,35 @@ export function LeadDetailPage() {
       await createActivity.mutateAsync({
         leadId: id,
         input: {
-          type: 'note',
-          metadata: {
-            note: `${label} follow-up logged from recommended actions.`,
-            quick_action_type: type,
-            direction: 'outgoing',
-            source: 'next_action_panel',
-          },
+          type,
+          metadata: { source: 'quick_actions', note: `${label} logged` },
         },
       });
-      showToast(`${label} logged.`, 'success');
+      showToast(`${label} logged successfully.`, 'success');
     } catch {
       showToast(`Failed to log ${label.toLowerCase()}.`, 'error');
     }
   };
 
-  const handleSubmitNote = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!id || !noteText.trim() || createActivity.isPending) return;
+  const handleAddNote = async () => {
+    if (!id || !noteText.trim()) return;
     try {
-      await createActivity.mutateAsync({ leadId: id, input: { type: 'note', metadata: { note: noteText.trim() } } });
-      setNoteText('');
+      await createActivity.mutateAsync({
+        leadId: id,
+        input: {
+          type: 'note',
+          metadata: { note: noteText.trim(), source: 'detail_view' },
+        },
+      });
       showToast('Note added.', 'success');
+      setNoteText('');
     } catch {
       showToast('Failed to add note.', 'error');
     }
   };
 
-  const handleOutcome = async (outcome: LeadOutcomeOption) => {
-    if (!id || createActivity.isPending) return;
+  const handleOutcome = async (outcome: { id: LeadOutcome; label: string; nextStep: string }) => {
+    if (!id) return;
     try {
       await createActivity.mutateAsync({
         leadId: id,
@@ -471,6 +495,7 @@ export function LeadDetailPage() {
 
   const handlePause = async () => {
     if (!lead) return;
+    if (lead.status !== 'active' && lead.status !== 'paused') return;
     const willPause = lead.status === 'active';
     try {
       await pauseLead.mutateAsync({ id: lead.id, paused: willPause });
@@ -480,12 +505,12 @@ export function LeadDetailPage() {
     }
   };
 
-  const handleDelete = async () => {
+  const confirmDelete = async () => {
     if (!lead) return;
-    if (!window.confirm('Delete this lead? This cannot be undone.')) return;
     try {
       await deleteLead.mutateAsync(lead.id);
       showToast('Lead deleted.', 'success');
+      setShowDeleteModal(false);
       navigate('/leads');
     } catch {
       showToast('Failed to delete lead.', 'error');
@@ -527,13 +552,21 @@ export function LeadDetailPage() {
                 Back
               </Link>
             </Button>
-            <Button variant="outline" size="sm" onClick={handlePause}>
-              {lead.status === 'active' ? (
-                <><Pause className="mr-2 h-4 w-4" />Pause</>
-              ) : (
-                <><Play className="mr-2 h-4 w-4" />Resume</>
-              )}
-            </Button>
+            {(lead.status === 'active' || lead.status === 'paused') && (
+              <Button variant="outline" size="sm" onClick={handlePause} disabled={pauseLead.isPending}>
+                {lead.status === 'active' ? (
+                  <><Pause className="mr-2 h-4 w-4" />Pause</>
+                ) : (
+                  <><Play className="mr-2 h-4 w-4" />Resume</>
+                )}
+              </Button>
+            )}
+            {lead.status !== 'opted_out' && (
+              <Button size="sm" onClick={() => setShowQuickResponse(true)}>
+                <Send className="mr-2 h-4 w-4" />
+                Send Quick Response
+              </Button>
+            )}
             <Button variant="outline" size="sm" asChild>
               <Link to={`/leads/${lead.id}/ai`}>
                 <Sparkles className="mr-2 h-4 w-4" />
@@ -546,7 +579,7 @@ export function LeadDetailPage() {
                 Edit
               </Link>
             </Button>
-            <Button variant="outline" size="sm" onClick={handleDelete} className="text-red-600 hover:text-red-700">
+            <Button variant="outline" size="sm" onClick={() => setShowDeleteModal(true)} className="text-red-600 hover:text-red-700">
               <Trash2 className="mr-2 h-4 w-4" />
               Delete
             </Button>
@@ -559,6 +592,8 @@ export function LeadDetailPage() {
           { label: 'Source', value: lead.source_platform?.replace(/_/g, ' ') ?? '—' },
         ]}
       />
+
+      <FollowUpPicker leadId={lead.id} value={lead.next_follow_up_at} />
 
       <LeadActionPlan
         actions={actionPlan}
@@ -734,7 +769,7 @@ export function LeadDetailPage() {
               <h3 className="text-sm font-semibold text-slate-900">Activity Timeline</h3>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmitNote} className="mb-6 flex flex-col gap-3">
+              <form onSubmit={handleAddNote} className="mb-6 flex flex-col gap-3">
                 <Textarea
                   placeholder="Add a note..."
                   value={noteText}
@@ -789,12 +824,44 @@ export function LeadDetailPage() {
                       </li>
                     ))}
                   </ul>
+                  {activitiesPage?.meta?.total && activitiesPage.meta.total > activities.length && (
+                    <div className="mt-6 flex justify-center border-t border-slate-100 pt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setActivityLimit((prev) => prev + 25)}
+                      >
+                        Load older activities ({activitiesPage.meta.total - activities.length} remaining)
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
       </div>
+      {showQuickResponse && (
+        <QuickResponseModal lead={lead} onClose={() => setShowQuickResponse(false)} />
+      )}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fade-in">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900">Delete Lead</h2>
+            <p className="text-sm text-slate-600">
+              Are you sure you want to delete <span className="font-semibold text-slate-800">{lead?.business_name}</span>? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
+              <Button variant="outline" size="sm" onClick={() => setShowDeleteModal(false)} disabled={deleteLead.isPending}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={confirmDelete} disabled={deleteLead.isPending}>
+                {deleteLead.isPending ? 'Deleting...' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -4,6 +4,8 @@ import {
   updateConfig,
   removeConfig,
   runScrape,
+  runScrapeForJob,
+  queueScrapeRun,
   listConfigs,
   getLogsByConfig,
   detectSelectors,
@@ -15,8 +17,17 @@ import {
 import * as repo from './scraper.repository';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { AppError } from '../../shared/middleware/errorHandler';
+import { syncSchedule, removeSchedule } from './scraper.scheduler';
+import { enqueueScraperRun } from '../../workers/queue';
 
 jest.mock('./scraper.repository');
+jest.mock('./scraper.scheduler', () => ({
+  syncSchedule: jest.fn(),
+  removeSchedule: jest.fn(),
+}));
+jest.mock('../../workers/queue', () => ({
+  enqueueScraperRun: jest.fn(),
+}));
 jest.mock('../ai-settings/ai-settings.service', () => ({
   getAiConfig: jest.fn(),
 }));
@@ -150,6 +161,7 @@ describe('Scraper Service', () => {
         mockActor,
       );
       expect(result.id).toBe('1');
+      expect(syncSchedule).toHaveBeenCalledWith('1', undefined, undefined);
     });
 
     it('creates youtube config (apiKeyRef path)', async () => {
@@ -234,6 +246,7 @@ describe('Scraper Service', () => {
         mockActor,
       );
       expect(result.name).toBe('New');
+      expect(syncSchedule).toHaveBeenCalledWith('1', undefined, true);
     });
 
     it('updates config without config blob (skips env validation)', async () => {
@@ -274,6 +287,7 @@ describe('Scraper Service', () => {
       (repo.deleteScraperConfig as jest.Mock).mockResolvedValue(undefined);
       await removeConfig('1', mockActor);
       expect(repo.deleteScraperConfig).toHaveBeenCalledWith('1');
+      expect(removeSchedule).toHaveBeenCalledWith('1');
     });
 
     it('throws 404 when config to remove does not exist', async () => {
@@ -317,6 +331,59 @@ describe('Scraper Service', () => {
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toBe('Unknown error');
+    });
+  });
+
+  // ── Background run (queueScrapeRun / runScrapeForJob) ──────────────────────
+
+  describe('queueScrapeRun', () => {
+    it('throws if config is inactive', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({ id: '1', is_active: false });
+      await expect(queueScrapeRun('1', mockActor)).rejects.toThrow(AppError);
+      expect(enqueueScraperRun).not.toHaveBeenCalled();
+    });
+
+    it('creates a running log row and enqueues the job without waiting for it', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY' }),
+      );
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-9' });
+
+      const result = await queueScrapeRun('1', mockActor);
+
+      expect(repo.insertScraperLog).toHaveBeenCalledWith({ config_id: '1', status: 'running' });
+      expect(enqueueScraperRun).toHaveBeenCalledWith({
+        configId: '1',
+        logId: 'log-9',
+        triggeredBy: mockActor.id,
+      });
+      expect(result).toEqual({
+        logId: 'log-9',
+        recordsFound: 0,
+        recordsImported: 0,
+        recordsDuplicate: 0,
+        recordsFailed: 0,
+        status: 'running',
+      });
+    });
+  });
+
+  describe('runScrapeForJob', () => {
+    it('reuses the given logId instead of creating a new one', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'x' }),
+      );
+      global.fetch = jest.fn().mockRejectedValue(new Error('boom'));
+
+      const result = await runScrapeForJob('1', 'log-9');
+
+      expect(repo.insertScraperLog).not.toHaveBeenCalled();
+      expect(repo.updateScraperLog).toHaveBeenCalledWith(
+        'log-9',
+        expect.objectContaining({ status: 'failed', error_message: 'boom' }),
+      );
+      expect(result.logId).toBe('log-9');
+      expect(result.status).toBe('failed');
     });
   });
 

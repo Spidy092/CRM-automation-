@@ -119,6 +119,23 @@ export function useUploadTemplateAttachment() {
   });
 }
 
+export function useAttachTemplateFromLibrary() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, fileId }: { id: string; fileId: string }) => {
+      const response = await apiClient.post<ApiResponse<Template>>(
+        `/templates/${id}/attachments/from-library`,
+        { file_id: fileId },
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', id] });
+    },
+  });
+}
+
 export function useDeleteTemplateAttachment() {
   const queryClient = useQueryClient();
   return useMutation({

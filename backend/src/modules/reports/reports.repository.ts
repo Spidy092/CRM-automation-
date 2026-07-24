@@ -165,6 +165,38 @@ export async function findDashboardMetrics(
     outreach: parseInt(row.outreach ?? '0', 10),
   }));
 
+  let leadSources: { name: string; value: number }[] | undefined;
+  if (actorRole === 'admin' || actorRole === 'manager' || actorRole === 'viewer') {
+    const sourcesResult = await pool.query<{ name: string; value: string }>(
+      `SELECT source_platform as name, COUNT(*) as value
+       FROM leads
+       WHERE ${leadWhere} AND source_platform IS NOT NULL
+       GROUP BY source_platform
+       ORDER BY value DESC`,
+      leadParams,
+    );
+    leadSources = sourcesResult.rows.map((r) => ({
+      name: r.name,
+      value: parseInt(r.value ?? '0', 10),
+    }));
+  }
+
+  let myPipelineStages: { name: string; count: number }[] | undefined;
+  if (actorRole === 'sales') {
+    const pipelineResult = await pool.query<{ name: string; count: string }>(
+      `SELECT ps.name, COUNT(l.id) as count
+       FROM pipeline_stages ps
+       LEFT JOIN leads l ON l.pipeline_stage_id = ps.id AND l.assigned_to = $1 AND l.deleted_at IS NULL
+       GROUP BY ps.id, ps.name, ps.position
+       ORDER BY ps.position`,
+      [actorId],
+    );
+    myPipelineStages = pipelineResult.rows.map((r) => ({
+      name: r.name,
+      count: parseInt(r.count ?? '0', 10),
+    }));
+  }
+
   return {
     totalLeads: parseInt(totalLeadsResult.rows[0]?.total ?? '0', 10),
     qualifiedLeads: parseInt(qualifiedLeadsResult.rows[0]?.total ?? '0', 10),
@@ -174,6 +206,8 @@ export async function findDashboardMetrics(
     wonRevenue: parseFloat(revenueResult.rows[0]?.revenue ?? '0'),
     wonDeals: parseInt(revenueResult.rows[0]?.deals ?? '0', 10),
     recentActivity,
+    leadSources,
+    myPipelineStages,
   };
 }
 

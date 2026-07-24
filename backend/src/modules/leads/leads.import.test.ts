@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 
+jest.mock('../../workers/queue');
 jest.mock('./leads.repository', () => ({
   findExistingForDedup: jest.fn(),
   insertLead: jest.fn(),
@@ -21,6 +22,7 @@ import { importLeads, isSupportedFile, parseFile } from './leads.import';
 import { findExistingForDedup, insertLead, updateLead } from './leads.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { findActiveDefinitions } from '../custom-fields/customFields.repository';
+import { enqueueScoringCalculate } from '../../workers/queue';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -56,25 +58,23 @@ describe('parseFile', () => {
     expect(rows[0].business_name).toBe('Acme');
   });
 
-  it('parses an XLSX buffer into row objects', () => {
+  it('parses a multi-sheet XLSX buffer into row objects across all sheets (F3)', () => {
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([
-      [
-        'business_name',
-        'contact_name',
-        'phone',
-        'email',
-        'industry',
-        'location',
-        'source_platform',
-      ],
+    const ws1 = XLSX.utils.aoa_to_sheet([
+      ['business_name', 'contact_name', 'phone', 'email', 'industry', 'location', 'source_platform'],
       ['Beta', 'Jane', '+1987654321', 'jane@beta.com', 'Tech', 'LA', 'manual_upload'],
     ]);
-    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      ['business_name', 'contact_name', 'phone', 'email', 'industry', 'location', 'source_platform'],
+      ['Gamma', 'Guy', '+1555555555', 'guy@gamma.com', 'Finance', 'CHI', 'manual_upload'],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Sheet1');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Sheet2');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     const rows = parseFile(buf, 'leads.xlsx');
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
     expect(rows[0].business_name).toBe('Beta');
+    expect(rows[1].business_name).toBe('Gamma');
   });
 
   it('throws on unsupported file type', () => {
@@ -92,7 +92,7 @@ describe('importLeads', () => {
 
     (findExistingForDedup as jest.Mock)
       .mockResolvedValueOnce(null) // row 1 -> new
-      .mockResolvedValueOnce({ id: 'existing-1' }); // row 2 -> existing
+      .mockResolvedValueOnce({ id: 'existing-1', custom_fields: {}, tags: ['existing'] }); // row 2 -> existing
     (insertLead as jest.Mock).mockResolvedValue({ id: 'new-1' });
     (updateLead as jest.Mock).mockResolvedValue({ id: 'existing-1' });
 
@@ -107,6 +107,49 @@ describe('importLeads', () => {
     expect(summary.errors).toHaveLength(1);
     expect(insertLead).toHaveBeenCalledTimes(1);
     expect(updateLead).toHaveBeenCalledTimes(1);
+    expect(enqueueScoringCalculate).toHaveBeenCalledWith('new-1');
+    expect(enqueueScoringCalculate).toHaveBeenCalledWith('existing-1');
+  });
+
+  it('handles header typo buisness_name cleanly via alias mapping (F4)', async () => {
+    const csv =
+      'buisness_name,contact_name,phone,email,industry,location,source_platform\n' +
+      'Acme Typo,John,+1234567890,john@acme.com,Tech,NYC,manual_upload\n';
+
+    (findExistingForDedup as jest.Mock).mockResolvedValue(null);
+    (insertLead as jest.Mock).mockResolvedValue({ id: 'new-typo' });
+
+    const summary = await importLeads(Buffer.from(csv), 'leads.csv', 'manual_upload', {
+      id: 'admin-1',
+    });
+
+    expect(summary.created).toBe(1);
+    expect(insertLead).toHaveBeenCalledWith(
+      expect.objectContaining({ business_name: 'Acme Typo' }),
+    );
+  });
+
+  it('merges custom fields and tags non-destructively on duplicate update (F1)', async () => {
+    const csv =
+      'business_name,contact_name,phone,email,industry,location,source_platform,tags\n' +
+      'Acme,John,+1234567890,john@acme.com,Tech,NYC,manual_upload,new_tag\n';
+
+    (findExistingForDedup as jest.Mock).mockResolvedValue({
+      id: 'existing-1',
+      tags: ['old_tag'],
+      custom_fields: { vip: true },
+    });
+    (updateLead as jest.Mock).mockResolvedValue({ id: 'existing-1' });
+
+    await importLeads(Buffer.from(csv), 'leads.csv', 'manual_upload', { id: 'admin-1' });
+
+    expect(updateLead).toHaveBeenCalledWith(
+      'existing-1',
+      expect.objectContaining({
+        tags: expect.arrayContaining(['old_tag', 'new_tag']),
+        custom_fields: { vip: true },
+      }),
+    );
   });
 
   it('fails a row whose custom fields are invalid', async () => {

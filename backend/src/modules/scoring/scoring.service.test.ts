@@ -124,9 +124,13 @@ describe('getRuleById / createRule / updateRuleById / deleteRuleById', () => {
 });
 
 describe('calculateLeadScore', () => {
-  it('throws 404 when lead missing', async () => {
+  it('throws 404 when lead missing or soft-deleted (G1)', async () => {
     (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
     await expect(calculateLeadScore('missing')).rejects.toMatchObject({ statusCode: 404 });
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE id = $1 AND deleted_at IS NULL'),
+      ['missing'],
+    );
   });
 
   it('sums matched rule scores and classifies hot', async () => {

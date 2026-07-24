@@ -52,6 +52,7 @@ const sampleRow: LeadRow = {
   deal_value: null,
   won_at: null,
   lost_at: null,
+  next_follow_up_at: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   deleted_at: null,
@@ -140,6 +141,20 @@ describe('findLeads', () => {
     expect(sql).not.toContain('tags &&');
     expect(sql).not.toContain('(created_at, id) <');
     expect(params).toEqual([11]);
+  });
+
+  it('applies exclude_tags condition when provided', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    const filters: LeadListFilters = {
+      limit: 10,
+      exclude_tags: ['contacted'],
+    };
+    const result = await findLeads(filters);
+    expect(result.rows).toEqual([sampleRow]);
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("NOT (COALESCE(tags, '{}'::text[]) && $1)");
+    expect(params).toEqual([['contacted'], 11]);
   });
 });
 
@@ -318,6 +333,20 @@ describe('updateLead', () => {
     const [sql, params] = mockQueryOne.mock.calls[0];
     expect(sql).toContain('tags = $1');
     expect(params[0]).toEqual([]); // input.tags ?? []
+  });
+
+  it('updates next_follow_up_at, including clearing it with null', async () => {
+    mockQueryOne.mockResolvedValue(sampleRow);
+    await updateLead('lead-1', { next_follow_up_at: '2026-08-01T09:00:00Z' });
+    const [sql, params] = mockQueryOne.mock.calls[0];
+    expect(sql).toContain('next_follow_up_at = $1');
+    expect(params[0]).toBe('2026-08-01T09:00:00Z');
+
+    mockQueryOne.mockClear();
+    mockQueryOne.mockResolvedValue(sampleRow);
+    await updateLead('lead-1', { next_follow_up_at: null });
+    const [, clearParams] = mockQueryOne.mock.calls[0];
+    expect(clearParams[0]).toBeNull();
   });
 
   it('returns current row when nothing to update', async () => {

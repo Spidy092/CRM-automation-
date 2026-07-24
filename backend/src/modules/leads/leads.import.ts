@@ -1,6 +1,6 @@
 import { parse as parseCsv } from 'csv-parse/sync';
 import { read as readXlsx, utils } from 'xlsx';
-import { enqueueLeadEvent } from '../../workers/queue';
+import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { normalizePhone } from '../../shared/utils/phone';
 import { findActiveDefinitions } from '../custom-fields/customFields.repository';
@@ -11,12 +11,50 @@ import { ImportSummary, LeadInput } from './leads.types';
 
 const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
 
+const HEADER_ALIASES: Record<string, string> = {
+  buisness_name: 'business_name',
+  business: 'business_name',
+  company: 'business_name',
+  company_name: 'business_name',
+  organization: 'business_name',
+  contact: 'contact_name',
+  name: 'contact_name',
+  full_name: 'contact_name',
+  client_name: 'contact_name',
+  phone_number: 'phone',
+  mobile: 'phone',
+  cell: 'phone',
+  telephone: 'phone',
+  email_address: 'email',
+  e_mail: 'email',
+  site: 'website',
+  url: 'website',
+  web: 'website',
+  sector: 'industry',
+  category: 'industry',
+  address: 'location',
+  city: 'location',
+  city_state: 'location',
+  nation: 'country',
+  rating: 'google_rating',
+  stars: 'google_rating',
+  reviews: 'review_count',
+  reviews_count: 'review_count',
+  source: 'source_platform',
+  platform: 'source_platform',
+  tag: 'tags',
+  labels: 'tags',
+  note: 'notes',
+  comments: 'notes',
+  description: 'notes',
+};
+
 export function isSupportedFile(filename: string): boolean {
   const lower = filename.toLowerCase();
   return ALLOWED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-/** Parse an uploaded file buffer into an array of row objects (header-keyed). */
+/** Parse an uploaded file buffer into an array of row objects (header-keyed across all sheets). */
 export function parseFile(buffer: Buffer, filename: string): Record<string, unknown>[] {
   const lower = filename.toLowerCase();
   if (lower.endsWith('.csv')) {
@@ -29,20 +67,26 @@ export function parseFile(buffer: Buffer, filename: string): Record<string, unkn
   }
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
     const wb = readXlsx(buffer, { type: 'buffer' });
-    const sheetName = wb.SheetNames[0];
-    if (!sheetName) return [];
-    const sheet = wb.Sheets[sheetName];
-    return utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+    const allRows: Record<string, unknown>[] = [];
+    for (const name of wb.SheetNames) {
+      const sheet = wb.Sheets[name];
+      if (sheet) {
+        const sheetRows = utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+        allRows.push(...sheetRows);
+      }
+    }
+    return allRows;
   }
   throw new Error('Unsupported file type');
 }
 
 function normalizeHeader(key: string): string {
-  return key
+  const norm = key
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+  return HEADER_ALIASES[norm] ?? norm;
 }
 
 function toStr(value: unknown): string {
@@ -168,7 +212,28 @@ export async function importLeads(
 
       const existing = await findExistingForDedup(input.email, input.phone, input.source_platform);
       if (existing) {
-        const updated = await updateLead(existing.id, input);
+        const mergePatch: Partial<LeadInput> = {};
+        if (input.business_name) mergePatch.business_name = input.business_name;
+        if (input.contact_name) mergePatch.contact_name = input.contact_name;
+        if (input.phone) mergePatch.phone = input.phone;
+        if (input.email) mergePatch.email = input.email;
+        if (input.website) mergePatch.website = input.website;
+        if (input.industry) mergePatch.industry = input.industry;
+        if (input.location) mergePatch.location = input.location;
+        if (input.country) mergePatch.country = input.country;
+        if (input.google_rating !== null) mergePatch.google_rating = input.google_rating;
+        if (input.review_count !== null) mergePatch.review_count = input.review_count;
+        if (input.notes) mergePatch.notes = input.notes;
+
+        const existingCustomFields = typeof existing.custom_fields === 'object' && existing.custom_fields !== null
+          ? (existing.custom_fields as Record<string, unknown>)
+          : {};
+        mergePatch.custom_fields = { ...existingCustomFields, ...(input.custom_fields ?? {}) };
+
+        const existingTags = Array.isArray(existing.tags) ? existing.tags : [];
+        mergePatch.tags = Array.from(new Set([...existingTags, ...(input.tags ?? [])]));
+
+        const updated = await updateLead(existing.id, mergePatch);
         summary.updated++;
         await writeAuditLog({
           userId: actor.id,
@@ -178,6 +243,7 @@ export async function importLeads(
           newValue: { source: 'import' },
           ipAddress: actor.ipAddress ?? null,
         });
+        void enqueueScoringCalculate(updated.id);
       } else {
         const created = await insertLead(input);
         summary.created++;
@@ -190,6 +256,7 @@ export async function importLeads(
           ipAddress: actor.ipAddress ?? null,
         });
         void enqueueLeadEvent({ event: 'lead.created', leadId: created.id, payload: {} });
+        void enqueueScoringCalculate(created.id);
       }
     } catch (err) {
       summary.failed++;

@@ -9,6 +9,8 @@ import {
   pauseLeadSchema,
   updateLeadSchema,
   bulkClassifySchema,
+  bulkUpdateSchema,
+  bulkPauseSchema,
 } from './leads.schema';
 import * as leadsService from './leads.service';
 import { importLeads, isSupportedFile } from './leads.import';
@@ -48,6 +50,13 @@ export async function listLeadsHandler(
           .filter(Boolean)
       : undefined;
 
+    const excludeTags = parsed.exclude_tags
+      ? parsed.exclude_tags
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : undefined;
+
     const filters: LeadListFilters = {
       limit: clampLimit(parsed.limit),
       cursorTs,
@@ -60,6 +69,7 @@ export async function listLeadsHandler(
       assigned_to: parsed.assigned_to,
       search: parsed.search,
       tags,
+      exclude_tags: excludeTags,
       created_after: parsed.created_after,
       unclassified: parsed.unclassified || undefined,
       pipeline_id: parsed.pipeline_id,
@@ -210,6 +220,36 @@ export async function bulkClassifyHandler(
     const actor = actorFromReq(req);
     const updated = await leadsService.bulkClassifyLeads(ids, classification, actor);
     sendSuccess(res, { updated });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkUpdateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { ids, patch } = bulkUpdateSchema.parse(req.body);
+    const actor = actorFromReq(req);
+    const updated = await leadsService.bulkUpdateLeads(ids, patch, actor);
+    sendSuccess(res, { updated });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkPauseHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { ids, paused } = bulkPauseSchema.parse(req.body);
+    const actor = actorFromReq(req);
+    const result = await leadsService.bulkPauseLeads(ids, paused, actor);
+    sendSuccess(res, typeof result === 'number' ? { updated: result, cancelledJobs: 0 } : result);
   } catch (err) {
     next(err);
   }

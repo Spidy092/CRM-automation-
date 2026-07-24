@@ -13,7 +13,7 @@ import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { Mail, MessageSquare, Phone, Zap, Target, Play, GitBranch, ArrowRight } from 'lucide-react';
+import { Mail, MessageSquare, Phone, Zap, Target, Play, GitBranch, ArrowRight, Tag } from 'lucide-react';
 
 // ── Channel icons ────────────────────────────────────────────────────────────
 
@@ -139,6 +139,41 @@ function TriggerSection({
           Loading pipeline…
         </div>
       ) : null}
+
+      {((campaign.trigger_source?.length ?? 0) > 0 || (campaign.trigger_tags?.length ?? 0) > 0) && (
+        <div className="rounded-md border border-teal-100 bg-teal-50 px-3 py-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <Tag className="h-3.5 w-3.5 text-teal-600 shrink-0" />
+            <span className="text-xs font-medium text-teal-800">On lead creation</span>
+          </div>
+          {(campaign.trigger_source?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-1 text-xs text-teal-700">
+              <span className="text-teal-500">Source:</span>
+              {campaign.trigger_source!.map((src) => (
+                <span
+                  key={src}
+                  className="inline-flex items-center rounded-md border border-teal-200 bg-white px-2 py-0.5 font-medium"
+                >
+                  {src}
+                </span>
+              ))}
+            </div>
+          )}
+          {(campaign.trigger_tags?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-1 text-xs text-teal-700">
+              <span className="text-teal-500">Tags:</span>
+              {campaign.trigger_tags!.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center rounded-md border border-teal-200 bg-white px-2 py-0.5 font-medium"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <p className="text-xs text-slate-500">Tone</p>

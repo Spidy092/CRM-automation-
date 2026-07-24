@@ -989,18 +989,12 @@ export function ScraperConfigPage() {
       onSuccess: (res) => {
         if (res.status === 'failed') {
           showToast(res.errorMessage || 'Scrape failed. Open the run logs for details.', 'error');
-        } else if (res.recordsFound === 0) {
-          showToast(
-            'Scrape finished, but no results matched. Try a broader query or location.',
-            'success',
-          );
         } else {
-          const duplicateNote =
-            res.recordsDuplicate > 0 ? `, ${res.recordsDuplicate} already existed` : '';
-          showToast(
-            `Scrape complete: ${res.recordsImported} new lead${res.recordsImported === 1 ? '' : 's'}${duplicateNote} (${res.recordsFound} found).`,
-            'success',
-          );
+          // The run happens in the background now — the request only confirms
+          // it was queued. Recent Runs (below) polls automatically while the
+          // latest entry is still 'running', so the final counts show up there
+          // without the user needing to refresh.
+          showToast('Scrape started — watch Recent Runs for progress.', 'success');
         }
         // Reveal the run history for this source so the user sees the new entry.
         setShowLogs(config.id);

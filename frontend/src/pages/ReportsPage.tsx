@@ -27,6 +27,7 @@ import {
   BarChart3, Download, RefreshCw, Users, TrendingUp, Mail,
   Target, Activity, Link2, Calendar, ArrowUpRight, ArrowDownRight,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { ReportListFilters } from '@/types';
 
 type Tab = 'leadgen' | 'outreach' | 'pipeline' | 'reps' | 'campaigns' | 'integrations';
@@ -65,11 +66,12 @@ interface KpiCardProps {
   sub?: string;
   trend?: number;
   accent: string;
+  to?: string;
 }
 
-function KpiCard({ label, value, sub, trend, accent }: KpiCardProps) {
-  return (
-    <div className={`rounded-xl border bg-white p-4 shadow-sm ${accent}`}>
+function KpiCard({ label, value, sub, trend, accent, to }: KpiCardProps) {
+  const content = (
+    <div className={`rounded-xl border bg-white p-4 shadow-sm ${accent} ${to ? 'transition-transform hover:scale-[1.02] hover:shadow-md cursor-pointer' : ''}`}>
       <p className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</p>
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="text-2xl font-bold text-slate-900">{value}</span>
@@ -83,6 +85,11 @@ function KpiCard({ label, value, sub, trend, accent }: KpiCardProps) {
       {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
     </div>
   );
+
+  if (to) {
+    return <Link to={to} className="block">{content}</Link>;
+  }
+  return content;
 }
 
 // ── Section wrapper ────────────────────────────────────────────────────────
@@ -244,12 +251,12 @@ export function ReportsPage() {
       {/* KPI bar */}
       {dashboard && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <KpiCard label="Total Leads"     value={dashboard.totalLeads.toLocaleString()}       accent="border-l-4 border-blue-500"   />
-          <KpiCard label="Qualified"       value={dashboard.qualifiedLeads.toLocaleString()}    accent="border-l-4 border-amber-500"  />
-          <KpiCard label="Active Outreach" value={dashboard.activeOutreach.toLocaleString()}    accent="border-l-4 border-cyan-500"   />
-          <KpiCard label="Pipeline Conv."  value={`${(dashboard.pipelineConversion ?? 0).toFixed(1)}%`} accent="border-l-4 border-emerald-500" />
-          <KpiCard label="Campaigns"       value={dashboard.activeCampaigns ?? dashboard.totalCampaigns ?? 0} accent="border-l-4 border-violet-500" />
-          <KpiCard label="Reply Rate"      value={`${avgReply}%`}                              accent="border-l-4 border-pink-500"   sub={`${healthyInt} integrations healthy`} />
+          <KpiCard label="Total Leads"     value={dashboard.totalLeads.toLocaleString()}       accent="border-l-4 border-blue-500"   to="/leads" />
+          <KpiCard label="Qualified"       value={dashboard.qualifiedLeads.toLocaleString()}    accent="border-l-4 border-amber-500"  to="/leads" />
+          <KpiCard label="Active Outreach" value={dashboard.activeOutreach.toLocaleString()}    accent="border-l-4 border-cyan-500"   to="/campaigns" />
+          <KpiCard label="Pipeline Conv."  value={`${(dashboard.pipelineConversion ?? 0).toFixed(1)}%`} accent="border-l-4 border-emerald-500" to="/leads" />
+          <KpiCard label="Campaigns"       value={dashboard.activeCampaigns ?? dashboard.totalCampaigns ?? 0} accent="border-l-4 border-violet-500" to="/campaigns" />
+          <KpiCard label="Reply Rate"      value={`${avgReply}%`}                              accent="border-l-4 border-pink-500"   sub={`${healthyInt} integrations healthy`} to="/campaigns" />
         </div>
       )}
 
@@ -330,10 +337,10 @@ export function ReportsPage() {
       {tab === 'outreach' && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <KpiCard label="Total Sent"      value={totalSent.toLocaleString()}    accent="border-l-4 border-cyan-500" />
-            <KpiCard label="Delivered"       value={outItems.reduce((s,r)=>s+r.delivered,0).toLocaleString()} accent="border-l-4 border-emerald-500" />
-            <KpiCard label="Replied"         value={totalReplied.toLocaleString()} accent="border-l-4 border-violet-500" />
-            <KpiCard label="Reply Rate"      value={`${avgReply}%`}               accent="border-l-4 border-pink-500" />
+            <KpiCard label="Total Sent"      value={totalSent.toLocaleString()}    accent="border-l-4 border-cyan-500" to="/campaigns" />
+            <KpiCard label="Delivered"       value={outItems.reduce((s,r)=>s+r.delivered,0).toLocaleString()} accent="border-l-4 border-emerald-500" to="/campaigns" />
+            <KpiCard label="Replied"         value={totalReplied.toLocaleString()} accent="border-l-4 border-violet-500" to="/campaigns" />
+            <KpiCard label="Reply Rate"      value={`${avgReply}%`}               accent="border-l-4 border-pink-500" to="/campaigns" />
           </div>
           <Section title="Outreach Activity Over Time" description="Sent · Delivered · Replied · Failed per day">
             {outChartData.length

@@ -8,8 +8,19 @@ export interface TemplateAttachment {
   sizeBytes: number;
   /** Public URL the frontend/connectors use to reference the file. */
   url: string;
-  /** Absolute path on disk — server-only, stripped before the API response. */
+  /**
+   * Absolute path on disk — server-only, stripped before the API response.
+   * Always populated (SMTP/SendGrid dispatch reads the file directly), even
+   * for attachments referencing a shared Files-library entry.
+   */
   storagePath: string;
+  /**
+   * Set when this attachment references a Files-library entry instead of a
+   * direct upload — the template does not own that file's disk copy, so
+   * template/attachment deletion must never unlink it (only the library
+   * entry's own deletion may).
+   */
+  libraryFileId?: string;
 }
 
 /** `TemplateAttachment` shape sent to the frontend — no server-only fields. */

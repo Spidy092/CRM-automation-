@@ -1,10 +1,11 @@
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
+import { LeadStatus } from '../../shared/types';
 import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
 
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
-  deal_value, won_at, lost_at, created_at, updated_at, deleted_at, scraper_log_id`;
+  deal_value, won_at, lost_at, next_follow_up_at, created_at, updated_at, deleted_at, scraper_log_id`;
 
 function jsonArray(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -58,6 +59,10 @@ export async function findLeads(
   if (filters.tags && filters.tags.length > 0) {
     conditions.push(`tags && $${i++}`); // array overlap
     params.push(filters.tags);
+  }
+  if (filters.exclude_tags && filters.exclude_tags.length > 0) {
+    conditions.push(`NOT (COALESCE(tags, '{}'::text[]) && $${i++})`);
+    params.push(filters.exclude_tags);
   }
   if (filters.created_after) {
     conditions.push(`created_at >= $${i++}`);
@@ -188,6 +193,7 @@ export async function updateLead(id: string, input: Partial<LeadInput>): Promise
     ['pipeline_stage_id', 'pipeline_stage_id', false],
     ['notes', 'notes', false],
     ['deal_value', 'deal_value', false],
+    ['next_follow_up_at', 'next_follow_up_at', false],
   ];
 
   for (const [key, col, lower] of scalars) {
@@ -249,7 +255,8 @@ export async function bulkClassifyLeads(
     `UPDATE leads
         SET classification = ${classParam}, updated_at = NOW()
       WHERE id IN (${placeholders})
-        AND deleted_at IS NULL`,
+        AND deleted_at IS NULL
+        AND status NOT IN ('won', 'lost', 'opted_out')`,
     [...ids, classification],
   );
   return result.rowCount ?? 0;
@@ -326,4 +333,77 @@ export async function findActivityForLead(
     [leadId, limit],
   );
   return rows;
+}
+
+export async function bulkUpdateLeads(
+  ids: string[],
+  input: Partial<LeadInput>,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+
+  const sets: string[] = ['updated_at = NOW()'];
+  const params: unknown[] = [];
+  let i = 1;
+
+  const scalars: [keyof LeadInput, string, boolean][] = [
+    ['business_name', 'business_name', false],
+    ['contact_name', 'contact_name', false],
+    ['phone', 'phone', false],
+    ['email', 'email', true],
+    ['website', 'website', false],
+    ['industry', 'industry', false],
+    ['location', 'location', false],
+    ['country', 'country', false],
+    ['google_rating', 'google_rating', false],
+    ['review_count', 'review_count', false],
+    ['source_platform', 'source_platform', false],
+    ['assigned_to', 'assigned_to', false],
+    ['pipeline_stage_id', 'pipeline_stage_id', false],
+    ['notes', 'notes', false],
+    ['deal_value', 'deal_value', false],
+    ['next_follow_up_at', 'next_follow_up_at', false],
+  ];
+
+  for (const [key, col, lower] of scalars) {
+    if (key in input && input[key] !== undefined) {
+      const val = input[key] ?? null;
+      sets.push(lower ? `${col} = lower($${i++})` : `${col} = $${i++}`);
+      params.push(val);
+    }
+  }
+
+  if (input.social_links !== undefined) {
+    sets.push(`social_links = $${i++}::jsonb`);
+    params.push(jsonArray(input.social_links));
+  }
+  if (input.custom_fields !== undefined) {
+    sets.push(`custom_fields = $${i++}::jsonb`);
+    params.push(jsonArray(input.custom_fields) ?? '{}');
+  }
+  if (input.tags !== undefined) {
+    sets.push(`tags = $${i++}`);
+    params.push(input.tags ?? []);
+  }
+
+  if (sets.length === 1) {
+    return 0;
+  }
+
+  params.push(ids);
+  const sql = `UPDATE leads SET ${sets.join(', ')} WHERE id = ANY($${i}::uuid[]) AND deleted_at IS NULL`;
+  const res = await pool.query(sql, params);
+  return res.rowCount ?? 0;
+}
+
+export async function bulkPauseLeads(
+  ids: string[],
+  status: LeadStatus,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const sourceStatusFilter = status === 'paused' ? "'active'" : "'paused'";
+  const res = await pool.query(
+    `UPDATE leads SET status = $1, updated_at = NOW() WHERE id = ANY($2::uuid[]) AND deleted_at IS NULL AND status = ${sourceStatusFilter}`,
+    [status, ids],
+  );
+  return res.rowCount ?? 0;
 }

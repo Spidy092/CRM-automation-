@@ -36,6 +36,8 @@ function campaignWith(overrides: Partial<Campaign>): Campaign {
     sequence_id: 's1',
     pipeline_id: null,
     trigger_stage_id: null,
+    trigger_source: null,
+    trigger_tags: null,
     ai_personalization_enabled: false,
     autonomy_level: 'guarded',
     ai_min_confidence: 70,

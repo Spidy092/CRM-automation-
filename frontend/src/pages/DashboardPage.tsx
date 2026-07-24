@@ -70,6 +70,7 @@ interface StatConfig {
   accent: string;
   bg: string;
   trend?: number;
+  to?: string;
 }
 
 interface WorkQueueItem {
@@ -252,6 +253,17 @@ function getWorkQueueItems({
     .slice(0, 5);
 }
 
+function StatCardWrapper({ to, className, children }: { to?: string; className?: string; children: React.ReactNode }) {
+  if (to) {
+    return (
+      <Link to={to} className={cn("block transition-transform hover:-translate-y-0.5", className)}>
+        {children}
+      </Link>
+    );
+  }
+  return <div className={className}>{children}</div>;
+}
+
 function getStatsForRole(
   role: UserRole,
   metrics: ExtendedDashboardMetrics,
@@ -285,6 +297,7 @@ function getStatsForRole(
           accent: accentMap.leads.accent,
           bg: accentMap.leads.bg,
           trend: leadTrend,
+          to: '/leads',
         },
         {
           title: 'New Leads This Period',
@@ -296,6 +309,7 @@ function getStatsForRole(
           icon: <Activity className="h-5 w-5 text-cyan-600" />,
           accent: accentMap.outreach.accent,
           bg: accentMap.outreach.bg,
+          to: '/leads',
         },
         {
           title: 'Qualified Leads',
@@ -305,6 +319,7 @@ function getStatsForRole(
           icon: <Target className="h-5 w-5 text-amber-600" />,
           accent: accentMap.qualified.accent,
           bg: accentMap.qualified.bg,
+          to: '/leads',
         },
         {
           title: 'Conversion Rate',
@@ -317,6 +332,7 @@ function getStatsForRole(
           format: 'percent',
           accent: accentMap.conversion.accent,
           bg: accentMap.conversion.bg,
+          to: '/reports',
         },
         {
           title: 'Revenue Won',
@@ -329,6 +345,7 @@ function getStatsForRole(
           format: 'currency',
           accent: accentMap.revenue.accent,
           bg: accentMap.revenue.bg,
+          to: '/reports',
         },
       ];
 
@@ -343,6 +360,7 @@ function getStatsForRole(
           accent: accentMap.leads.accent,
           bg: accentMap.leads.bg,
           trend: leadTrend,
+          to: '/leads',
         },
         {
           title: 'Qualified Leads',
@@ -352,6 +370,7 @@ function getStatsForRole(
           icon: <Target className="h-5 w-5 text-amber-600" />,
           accent: accentMap.qualified.accent,
           bg: accentMap.qualified.bg,
+          to: '/leads',
         },
         {
           title: 'Active Campaigns',
@@ -361,6 +380,7 @@ function getStatsForRole(
           icon: <Mail className="h-5 w-5 text-violet-600" />,
           accent: accentMap.campaigns.accent,
           bg: accentMap.campaigns.bg,
+          to: '/campaigns',
         },
         {
           title: 'Conversion Rate',
@@ -373,6 +393,7 @@ function getStatsForRole(
           format: 'percent',
           accent: accentMap.conversion.accent,
           bg: accentMap.conversion.bg,
+          to: '/reports',
         },
         {
           title: 'Revenue Won',
@@ -385,6 +406,7 @@ function getStatsForRole(
           format: 'currency',
           accent: accentMap.revenue.accent,
           bg: accentMap.revenue.bg,
+          to: '/reports',
         },
       ];
 
@@ -399,6 +421,7 @@ function getStatsForRole(
           accent: accentMap.leads.accent,
           bg: accentMap.leads.bg,
           trend: leadTrend,
+          to: '/leads',
         },
         {
           title: 'My Won Leads',
@@ -407,6 +430,7 @@ function getStatsForRole(
           icon: <CheckCircle2 className="h-5 w-5 text-rose-600" />,
           accent: accentMap.won.accent,
           bg: accentMap.won.bg,
+          to: '/leads',
         },
         {
           title: 'My Revenue Won',
@@ -416,6 +440,7 @@ function getStatsForRole(
           format: 'currency',
           accent: accentMap.revenue.accent,
           bg: accentMap.revenue.bg,
+          to: '/reports',
         },
         {
           title: 'My Pending Tasks',
@@ -436,6 +461,7 @@ function getStatsForRole(
           format: 'percent',
           accent: accentMap.conversion.accent,
           bg: accentMap.conversion.bg,
+          to: '/reports',
         },
       ];
 
@@ -450,6 +476,7 @@ function getStatsForRole(
           accent: accentMap.leads.accent,
           bg: accentMap.leads.bg,
           trend: leadTrend,
+          to: '/leads',
         },
         {
           title: 'New Leads This Period',
@@ -461,6 +488,7 @@ function getStatsForRole(
           icon: <Activity className="h-5 w-5 text-cyan-600" />,
           accent: accentMap.outreach.accent,
           bg: accentMap.outreach.bg,
+          to: '/leads',
         },
         {
           title: 'Active Campaigns',
@@ -470,6 +498,7 @@ function getStatsForRole(
           icon: <Mail className="h-5 w-5 text-violet-600" />,
           accent: accentMap.campaigns.accent,
           bg: accentMap.campaigns.bg,
+          to: '/campaigns',
         },
         {
           title: 'Qualified Leads',
@@ -479,6 +508,7 @@ function getStatsForRole(
           icon: <Target className="h-5 w-5 text-amber-600" />,
           accent: accentMap.qualified.accent,
           bg: accentMap.qualified.bg,
+          to: '/leads',
         },
       ];
 
@@ -494,6 +524,7 @@ function getStatsForRole(
           accent: accentMap.leads.accent,
           bg: accentMap.leads.bg,
           trend: leadTrend,
+          to: '/leads',
         },
         {
           title: 'New Leads This Period',
@@ -505,6 +536,7 @@ function getStatsForRole(
           icon: <Activity className="h-5 w-5 text-cyan-600" />,
           accent: accentMap.outreach.accent,
           bg: accentMap.outreach.bg,
+          to: '/leads',
         },
         {
           title: 'Qualified Leads',
@@ -514,6 +546,7 @@ function getStatsForRole(
           icon: <Target className="h-5 w-5 text-amber-600" />,
           accent: accentMap.qualified.accent,
           bg: accentMap.qualified.bg,
+          to: '/leads',
         },
         {
           title: 'Conversion Rate',
@@ -526,6 +559,7 @@ function getStatsForRole(
           format: 'percent',
           accent: accentMap.conversion.accent,
           bg: accentMap.conversion.bg,
+          to: '/reports',
         },
       ];
   }
@@ -761,14 +795,15 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         ) : stats[0] ? (
-          <Card
-            className={cn(
-              'lg:col-span-2 overflow-hidden',
-              stats[0].accent,
-              stats[0].bg,
-            )}
-          >
-            <CardContent className="p-7">
+          <StatCardWrapper to={stats[0].to} className="lg:col-span-2">
+            <Card
+              className={cn(
+                'overflow-hidden h-full',
+                stats[0].accent,
+                stats[0].bg,
+              )}
+            >
+              <CardContent className="p-7">
               <div className="flex items-start justify-between">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-600">
@@ -826,6 +861,7 @@ export function DashboardPage() {
               )}
             </CardContent>
           </Card>
+          </StatCardWrapper>
         ) : null}
 
         {/* Stacked secondary stats */}
@@ -841,11 +877,11 @@ export function DashboardPage() {
                 </Card>
               ))
             : stats.slice(1, 3).map((stat) => (
-                <Card
-                  key={stat.title}
-                  className={cn('flex-1', stat.accent, stat.bg)}
-                >
-                  <CardContent className="p-5">
+                <StatCardWrapper key={stat.title} to={stat.to} className="flex-1 flex flex-col">
+                  <Card
+                    className={cn('flex-1', stat.accent, stat.bg)}
+                  >
+                    <CardContent className="p-5">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-medium text-slate-600">
                         {stat.title}
@@ -862,6 +898,7 @@ export function DashboardPage() {
                     </p>
                   </CardContent>
                 </Card>
+                </StatCardWrapper>
               ))}
         </div>
       </div>
@@ -870,8 +907,9 @@ export function DashboardPage() {
       {!isLoading && stats.length > 3 && (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {stats.slice(3).map((stat) => (
-            <Card key={stat.title} className={cn(stat.accent, stat.bg)}>
-              <CardContent className="flex items-center gap-4 p-5">
+            <StatCardWrapper key={stat.title} to={stat.to}>
+              <Card className={cn(stat.accent, stat.bg, "h-full")}>
+                <CardContent className="flex items-center gap-4 p-5">
                 <div className="shrink-0 rounded-xl bg-white/70 p-2.5 shadow-sm">
                   {stat.icon}
                 </div>
@@ -887,7 +925,8 @@ export function DashboardPage() {
                   </p>
                 </div>
               </CardContent>
-            </Card>
+              </Card>
+            </StatCardWrapper>
           ))}
         </div>
       )}
@@ -1093,7 +1132,7 @@ export function DashboardPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            ) : (role === 'admin' || role === 'manager') &&
+            ) : role !== 'sales' &&
               metrics?.leadSources &&
               metrics.leadSources.length > 0 ? (
               <div className="h-64">

@@ -38,6 +38,10 @@ export const approveTemplateSchema = z.object({
   rejection_reason: z.string().optional().nullable(),
 });
 
+export const attachFromLibrarySchema = z.object({
+  file_id: z.string().uuid('file_id must be a valid UUID'),
+});
+
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;
 export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
 export type ApproveTemplateInput = z.infer<typeof approveTemplateSchema>;

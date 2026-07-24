@@ -106,8 +106,7 @@ export function LeadFormPage() {
         showToast('Lead created successfully.', 'success');
       }
       navigate('/leads');
-    } catch (error) {
-      console.error('Failed to save lead:', error);
+    } catch {
       showToast(
         isEditing ? 'Failed to update lead. Please try again.' : 'Failed to create lead. Please try again.',
         'error'
@@ -161,11 +160,13 @@ export function LeadFormPage() {
   };
 
   const handleTogglePause = async () => {
-    if (!id) return;
+    if (!id || !lead) return;
+    if (lead.status !== 'active' && lead.status !== 'paused') return;
+    const willPause = lead.status === 'active';
     try {
-      await pauseLead.mutateAsync({ id, paused: !isPaused });
+      await pauseLead.mutateAsync({ id, paused: willPause });
       showToast(
-        isPaused ? 'Automation resumed.' : 'Automation paused.',
+        willPause ? 'Automation paused.' : 'Automation resumed.',
         'success',
       );
     } catch {
@@ -179,7 +180,7 @@ export function LeadFormPage() {
         title={isEditing ? 'Edit Lead' : 'Add New Lead'}
         eyebrow="Leads"
         actions={
-          isEditing && lead ? (
+          isEditing && lead && (lead.status === 'active' || lead.status === 'paused') ? (
             <Button
               variant="outline"
               size="sm"
@@ -309,7 +310,7 @@ export function LeadFormPage() {
                   onChange={handleChange}
                   className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                 >
-                  <option value="">No Stage</option>
+                  <option value="">None (No Pipeline Assigned)</option>
                   {pipelines?.map((p) => (
                     <optgroup key={p.id} label={p.name}>
                       {p.stages?.map((s) => (
@@ -537,22 +538,54 @@ export function LeadFormPage() {
                 ))}
               </select>
             </div>
-            <div className="mt-3 flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleManualSend}
-                disabled={
-                  manualSend.isPending ||
-                  !manualSendData.campaignId ||
-                  !manualSendData.sequenceId ||
-                  !manualSendData.templateId ||
-                  lead?.status !== 'active'
-                }
-              >
-                <Send className="mr-2 h-4 w-4" />
-                Queue Send
-              </Button>
+            <div className="mt-3 flex flex-col items-end gap-1">
+              {(() => {
+                const hasChannelDestination = Boolean(
+                  manualSendData.channel === 'email'
+                    ? (formData.email || lead?.email || '').trim()
+                    : (formData.phone || lead?.phone || '').trim()
+                );
+                return (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleManualSend}
+                      disabled={
+                        manualSend.isPending ||
+                        !manualSendData.campaignId ||
+                        !manualSendData.sequenceId ||
+                        !manualSendData.templateId ||
+                        !hasChannelDestination ||
+                        lead?.status !== 'active'
+                      }
+                      title={
+                        lead?.status !== 'active'
+                          ? 'Lead status must be active to queue a manual send'
+                          : !hasChannelDestination
+                          ? `Selected channel (${manualSendData.channel}) requires a ${manualSendData.channel === 'email' ? 'valid email address' : 'valid phone number'}`
+                          : !manualSendData.campaignId || !manualSendData.sequenceId || !manualSendData.templateId
+                          ? 'Please select a campaign, sequence, and approved template'
+                          : 'Queue a manual send for this lead'
+                      }
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      Queue Send
+                    </Button>
+                    {lead?.status !== 'active' && (
+                      <span className="text-xs text-amber-600">Manual send requires an active lead status.</span>
+                    )}
+                    {lead?.status === 'active' && !hasChannelDestination && (
+                      <span className="text-xs text-amber-600">
+                        Selected channel ({manualSendData.channel}) requires a {manualSendData.channel === 'email' ? 'valid email address' : 'valid phone number'}.
+                      </span>
+                    )}
+                    {lead?.status === 'active' && hasChannelDestination && (!manualSendData.campaignId || !manualSendData.sequenceId || !manualSendData.templateId) && (
+                      <span className="text-xs text-slate-500">Select a campaign, sequence, and approved template to enable send.</span>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </CardContent>
         </Card>

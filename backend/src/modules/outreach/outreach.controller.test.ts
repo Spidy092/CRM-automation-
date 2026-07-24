@@ -9,6 +9,7 @@ jest.mock('./outreach.service', () => ({
   createTask: jest.fn(),
   getTask: jest.fn(),
   updateTask: jest.fn(),
+  sendQuickMessage: jest.fn(),
 }));
 
 import * as outreachService from './outreach.service';
@@ -23,6 +24,7 @@ import {
   createTaskHandler,
   getTaskHandler,
   updateTaskHandler,
+  quickSendHandler,
 } from './outreach.controller';
 
 function mockReq(overrides: Record<string, unknown> = {}) {
@@ -169,6 +171,40 @@ describe('getTaskHandler', () => {
       next,
     );
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe('quickSendHandler', () => {
+  it('sends and returns 201', async () => {
+    (outreachService.sendQuickMessage as jest.Mock).mockResolvedValue({ id: 'log1', status: 'sent' });
+    const res = mockRes();
+    await quickSendHandler(
+      mockReq({
+        params: { leadId: '550e8400-e29b-41d4-a716-446655440000' },
+        body: { channel: 'email', templateId: '660e8400-e29b-41d4-a716-446655440000' },
+      }),
+      res,
+      next,
+    );
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(outreachService.sendQuickMessage).toHaveBeenCalledWith(
+      '550e8400-e29b-41d4-a716-446655440000',
+      { channel: 'email', templateId: '660e8400-e29b-41d4-a716-446655440000' },
+      expect.objectContaining({ id: 'u1' }),
+    );
+  });
+
+  it('calls next on error', async () => {
+    (outreachService.sendQuickMessage as jest.Mock).mockRejectedValue(new Error('boom'));
+    await quickSendHandler(
+      mockReq({
+        params: { leadId: '550e8400-e29b-41d4-a716-446655440000' },
+        body: { channel: 'email', templateId: '660e8400-e29b-41d4-a716-446655440000' },
+      }),
+      mockRes(),
+      next,
+    );
+    expect(next).toHaveBeenCalled();
   });
 });
 

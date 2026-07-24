@@ -8,6 +8,7 @@ import {
   updateTemplateSchema,
   listTemplatesQuerySchema,
   approveTemplateSchema,
+  attachFromLibrarySchema,
 } from './templates.schema';
 import * as templatesService from './templates.service';
 import { TemplateActor } from './templates.types';
@@ -129,6 +130,25 @@ export async function addTemplateAttachmentHandler(
     const { id } = templateIdParamSchema.parse(req.params);
     if (!req.file) throw new AppError('No file uploaded', 400);
     const updated = await templatesService.addTemplateAttachment(id, req.file, actorFromReq(req));
+    sendSuccess(res, updated, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function addTemplateAttachmentFromLibraryHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const { file_id } = attachFromLibrarySchema.parse(req.body);
+    const updated = await templatesService.addTemplateAttachmentFromLibrary(
+      id,
+      file_id,
+      actorFromReq(req),
+    );
     sendSuccess(res, updated, 201);
   } catch (err) {
     next(err);

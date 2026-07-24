@@ -210,7 +210,7 @@ function evaluateCondition(
 }
 
 export async function calculateLeadScore(leadId: string): Promise<LeadScore> {
-  const leadResult = await pool.query<LeadRow>('SELECT * FROM leads WHERE id = $1', [leadId]);
+  const leadResult = await pool.query<LeadRow>('SELECT * FROM leads WHERE id = $1 AND deleted_at IS NULL', [leadId]);
   if (leadResult.rows.length === 0) {
     throw new AppError('Lead not found', 404);
   }

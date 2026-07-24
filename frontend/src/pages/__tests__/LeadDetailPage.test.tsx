@@ -74,6 +74,10 @@ vi.mock('@/api/leads', () => ({
     mutate: vi.fn(),
     isPending: false,
   }),
+  useUpdateLead: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
 }));
 
 describe('LeadDetailPage', () => {

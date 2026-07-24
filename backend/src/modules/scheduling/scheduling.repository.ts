@@ -1,6 +1,6 @@
 import { pool, query, queryOne } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { Availability, BookingUrl, Booking } from './scheduling.types';
+import { Availability, BookingUrl, Booking, UserDateOverride } from './scheduling.types';
 
 // ── Availability ─────────────────────────────────────────────────────────
 
@@ -258,4 +258,63 @@ export async function getLastBookedUser(): Promise<string | null> {
     `SELECT user_id FROM bookings WHERE status != 'cancelled' ORDER BY created_at DESC LIMIT 1`,
   );
   return row?.user_id ?? null;
+}
+
+// ── Date Overrides ───────────────────────────────────────────────────────
+
+const OVERRIDE_COLS =
+  'id, user_id, override_date, is_blocked, start_time, end_time, reason, created_at, updated_at';
+
+export async function findDateOverridesByUser(userId: string): Promise<UserDateOverride[]> {
+  return query<UserDateOverride>(
+    `SELECT ${OVERRIDE_COLS} FROM user_date_overrides WHERE user_id = $1 ORDER BY override_date DESC`,
+    [userId],
+  );
+}
+
+export async function findDateOverrideByUserAndDate(
+  userId: string,
+  date: string,
+): Promise<UserDateOverride | null> {
+  return queryOne<UserDateOverride>(
+    `SELECT ${OVERRIDE_COLS} FROM user_date_overrides WHERE user_id = $1 AND override_date = $2`,
+    [userId, date],
+  );
+}
+
+export async function upsertDateOverride(
+  userId: string,
+  data: {
+    overrideDate: string;
+    isBlocked: boolean;
+    startTime?: string;
+    endTime?: string;
+    reason?: string;
+  },
+): Promise<UserDateOverride> {
+  const row = await queryOne<UserDateOverride>(
+    `INSERT INTO user_date_overrides (user_id, override_date, is_blocked, start_time, end_time, reason)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_id, override_date) DO UPDATE SET
+       is_blocked = EXCLUDED.is_blocked,
+       start_time = EXCLUDED.start_time,
+       end_time = EXCLUDED.end_time,
+       reason = EXCLUDED.reason,
+       updated_at = NOW()
+     RETURNING ${OVERRIDE_COLS}`,
+    [
+      userId,
+      data.overrideDate,
+      data.isBlocked,
+      data.startTime ?? null,
+      data.endTime ?? null,
+      data.reason ?? null,
+    ],
+  );
+  if (!row) throw new AppError('Failed to save date override', 500);
+  return row;
+}
+
+export async function deleteDateOverride(id: string, userId: string): Promise<void> {
+  await pool.query('DELETE FROM user_date_overrides WHERE id = $1 AND user_id = $2', [id, userId]);
 }

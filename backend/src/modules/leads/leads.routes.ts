@@ -15,6 +15,8 @@ import {
   updateLeadHandler,
   enrichLeadHandler,
   bulkClassifyHandler,
+  bulkUpdateHandler,
+  bulkPauseHandler,
 } from './leads.controller';
 
 const router = Router();
@@ -28,6 +30,12 @@ router.get('/:id', authorize('admin', 'manager', 'sales', 'viewer'), wrap(getLea
 
 // Create — Admin, Manager.
 router.post('/', authorize('admin', 'manager'), wrap(createLeadHandler));
+
+// Bulk update — Admin, Manager, Sales.
+router.post('/bulk-update', authorize('admin', 'manager', 'sales'), wrap(bulkUpdateHandler));
+
+// Bulk pause — Admin, Manager, Sales.
+router.post('/bulk-pause', authorize('admin', 'manager', 'sales'), wrap(bulkPauseHandler));
 
 // Update — Admin, Manager, Sales (sales: own only, enforced in service).
 router.put('/:id', authorize('admin', 'manager', 'sales'), wrap(updateLeadHandler));

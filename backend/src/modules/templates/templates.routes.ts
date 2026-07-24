@@ -11,6 +11,7 @@ import {
   approveTemplateHandler,
   deleteTemplateHandler,
   addTemplateAttachmentHandler,
+  addTemplateAttachmentFromLibraryHandler,
   removeTemplateAttachmentHandler,
 } from './templates.controller';
 
@@ -34,6 +35,11 @@ router.post(
   authorize('admin', 'marketing'),
   templateAttachmentUpload.single('file'),
   wrap(addTemplateAttachmentHandler),
+);
+router.post(
+  '/:id/attachments/from-library',
+  authorize('admin', 'marketing'),
+  wrap(addTemplateAttachmentFromLibraryHandler),
 );
 router.delete(
   '/:id/attachments/:attachmentId',

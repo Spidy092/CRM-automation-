@@ -107,7 +107,15 @@ export async function enrichDomain(domain: string): Promise<HunterEmailResult | 
 
   try {
     const url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(cleanDomain)}&limit=1&api_key=${creds.api_key}`;
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       logger.warn('hunter api domain search failed', {

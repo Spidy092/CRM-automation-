@@ -29,7 +29,7 @@ const DEFAULT_INTEGRATION_KEY = 'default';
 export interface SendMessageInput {
   credentials: OpenWACredentials;
   leadId: string;
-  campaignId: string;
+  campaignId: string | null;
   to: string;
   body: string;
   integrationId?: string;

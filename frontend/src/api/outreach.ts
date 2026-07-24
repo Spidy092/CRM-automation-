@@ -235,3 +235,29 @@ export function useManualOutreachSend() {
     },
   });
 }
+
+// ── Quick response (ad-hoc single-lead send) ───────────────────────────────
+
+export interface QuickSendInput {
+  leadId: string;
+  channel: SequenceStep['channel'];
+  templateId: string;
+}
+
+export function useQuickSend() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ leadId, ...input }: QuickSendInput) => {
+      const response = await apiClient.post<ApiResponse<OutreachLog>>(
+        `/outreach/leads/${leadId}/quick-send`,
+        input,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { leadId }) => {
+      queryClient.invalidateQueries({ queryKey: ['leads', leadId, 'timeline'] });
+      queryClient.invalidateQueries({ queryKey: ['leads', leadId, 'logs'] });
+    },
+  });
+}

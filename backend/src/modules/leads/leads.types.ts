@@ -29,6 +29,8 @@ export interface LeadRow {
   won_at: string | null;
   /** Set when the lead's stage moves into an is_terminal_lost pipeline stage. */
   lost_at: string | null;
+  /** Rep-set reminder date ("Quick Response"-adjacent follow-up picker). Not tied to any task/sequence. */
+  next_follow_up_at: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -62,6 +64,7 @@ export interface LeadResponse {
   deal_value: number | null;
   won_at: string | null;
   lost_at: string | null;
+  next_follow_up_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +89,7 @@ export interface LeadInput {
   notes?: string | null;
   deal_value?: number | null;
   scraper_log_id?: string | null;
+  next_follow_up_at?: string | null;
 }
 
 export interface LeadListFilters {
@@ -101,6 +105,7 @@ export interface LeadListFilters {
   pipeline_id?: string;
   search?: string;
   tags?: string[];
+  exclude_tags?: string[];
   /** ISO-8601 string — only return leads with created_at >= this value */
   created_after?: string;
   /** When true, only return leads where classification IS NULL */
@@ -150,6 +155,7 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
     deal_value: row.deal_value === null ? null : Number(row.deal_value),
     won_at: row.won_at,
     lost_at: row.lost_at,
+    next_follow_up_at: row.next_follow_up_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

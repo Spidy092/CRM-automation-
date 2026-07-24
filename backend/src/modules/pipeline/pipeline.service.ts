@@ -215,6 +215,21 @@ export async function moveLead(leadId: string, stageId: string, actor: Actor): P
     throw new AppError('Forbidden', 403);
   }
 
+  // H3: Cross-pipeline validation — cannot move lead across different pipelines unless unassigned
+  if (lead.pipeline_stage_id) {
+    const currentStage = await findStageById(lead.pipeline_stage_id);
+    if (currentStage && currentStage.pipeline_id !== stage.pipeline_id) {
+      throw new AppError('Target stage belongs to a different pipeline than the lead’s current pipeline', 400);
+    }
+  }
+
+  // H1: Prevent moving closed leads (won/lost/opted_out) to a non-terminal stage
+  const isTargetTerminal = stage.is_terminal_won || stage.is_terminal_lost;
+  const isLeadClosed = ['won', 'lost', 'opted_out'].includes(lead.status);
+  if (isLeadClosed && !isTargetTerminal) {
+    throw new AppError('Cannot move a closed (won/lost/opted_out) lead to an active stage. Reopen the lead status first.', 400);
+  }
+
   await moveLeadToStage(leadId, stageId);
 
   await writeAuditLog({

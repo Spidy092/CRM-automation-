@@ -146,7 +146,7 @@ describe('ReportsPage', () => {
 
   it('renders the default lead generation chart', async () => {
     renderWithProviders(<ReportsPage />);
-    await waitFor(() => expect(screen.getByText('Leads by Date')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Daily Lead Volume/i)).toBeInTheDocument());
   });
 
   it('renders the campaign chart when the campaigns tab is clicked', async () => {
@@ -155,7 +155,7 @@ describe('ReportsPage', () => {
     await act(async () => {
       fireEvent.click(campaignsTab);
     });
-    await waitFor(() => expect(screen.getByText('Leads Targeted')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Leads Targeted/i)).toBeInTheDocument());
   });
 
   it('renders the integration status pie when the integrations tab is clicked', async () => {

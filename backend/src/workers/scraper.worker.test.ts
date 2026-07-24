@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { startScraperWorker } from './scraper.worker';
 import { SCRAPER_QUEUE, SCRAPER_RUN } from './queue';
-import { runScrape } from '../modules/scraper/scraper.service';
+import { runScrape, runScrapeForJob } from '../modules/scraper/scraper.service';
 
 const mockWorkerInstance: any = {
   on: jest.fn().mockReturnThis(),
@@ -21,7 +21,10 @@ jest.mock('./queue', () => ({
   getBullConnection: jest.fn().mockReturnValue({ host: 'localhost', port: 6379 }),
 }));
 
-jest.mock('../modules/scraper/scraper.service', () => ({ runScrape: jest.fn() }));
+jest.mock('../modules/scraper/scraper.service', () => ({
+  runScrape: jest.fn(),
+  runScrapeForJob: jest.fn(),
+}));
 jest.mock('../shared/utils/logger', () => ({
   logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
@@ -47,12 +50,26 @@ describe('scraper.worker', () => {
     expect(mockWorkerInstance.on).toHaveBeenCalledWith('failed', expect.any(Function));
   });
 
-  it('processes scraper:run job successfully', async () => {
+  it('processes a scheduled scraper:run job (no logId) via runScrape', async () => {
     startScraperWorker();
     const job = { id: 'job-1', name: SCRAPER_RUN, data: { configId: 'cfg-1', triggeredBy: 'u1' } };
     (runScrape as jest.Mock).mockResolvedValue(undefined);
     await mockWorkerInstance.processor(job);
     expect(runScrape).toHaveBeenCalledWith('cfg-1', { id: 'u1', role: 'admin', ipAddress: null });
+    expect(runScrapeForJob).not.toHaveBeenCalled();
+  });
+
+  it('processes a background scraper:run job (logId present) via runScrapeForJob', async () => {
+    startScraperWorker();
+    const job = {
+      id: 'job-1b',
+      name: SCRAPER_RUN,
+      data: { configId: 'cfg-1', triggeredBy: 'u1', logId: 'log-1' },
+    };
+    (runScrapeForJob as jest.Mock).mockResolvedValue(undefined);
+    await mockWorkerInstance.processor(job);
+    expect(runScrapeForJob).toHaveBeenCalledWith('cfg-1', 'log-1');
+    expect(runScrape).not.toHaveBeenCalled();
   });
 
   it('throws on unknown job name', async () => {

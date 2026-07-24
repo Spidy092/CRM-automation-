@@ -202,11 +202,70 @@ export function useCancelBooking() {
   });
 }
 
+export interface CreateInternalBookingInput {
+  leadId?: string;
+  bookingUrlId?: string;
+  bookerName: string;
+  bookerEmail: string;
+  bookerPhone?: string;
+  startsAt: string;
+  notes?: string;
+  forceOverride?: boolean;
+}
+
+export function useCreateInternalBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateInternalBookingInput) =>
+      apiClient.post<ApiResponse<Booking>>('/scheduling/bookings', data).then((r) => r.data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [...SCHED_KEY, 'bookings'] }); },
+  });
+}
+
 // Round Robin
 
 export function useRoundRobinUser() {
   return useQuery({
     queryKey: [...SCHED_KEY, 'round-robin'],
     queryFn: () => apiClient.get<ApiResponse<{ userId: string | null }>>('/scheduling/round-robin').then((r) => r.data),
+  });
+}
+
+// Date Overrides
+
+export interface UserDateOverride {
+  id: string;
+  user_id: string;
+  override_date: string;
+  is_blocked: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function useDateOverrides() {
+  return useQuery({
+    queryKey: [...SCHED_KEY, 'overrides'],
+    queryFn: () => apiClient.get<ApiResponse<UserDateOverride[]>>('/scheduling/overrides').then((r) => r.data),
+  });
+}
+
+export function useSetDateOverride() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { overrideDate: string; isBlocked: boolean; startTime?: string; endTime?: string; reason?: string }) =>
+      apiClient.post<ApiResponse<UserDateOverride>>('/scheduling/overrides', data).then((r) => r.data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [...SCHED_KEY, 'overrides'] }); },
+  });
+}
+
+export function useDeleteDateOverride() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (overrideId: string) =>
+      apiClient.delete<ApiResponse<{ success: boolean }>>(`/scheduling/overrides/${overrideId}`).then((r) => r.data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [...SCHED_KEY, 'overrides'] }); },
   });
 }

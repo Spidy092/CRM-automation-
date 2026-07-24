@@ -232,18 +232,24 @@ describe('moveLead', () => {
     expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'lost');
   });
 
-  it('reopens a won lead moved back into a non-terminal stage', async () => {
+  it('rejects moving a won lead back into a non-terminal stage (H1)', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseLead, status: 'won' });
     (findStageById as jest.Mock).mockResolvedValue(baseStage);
-    await moveLead('lead-1', 'stage-1', actor);
-    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'active');
+    await expect(moveLead('lead-1', 'stage-1', actor)).rejects.toThrow(
+      'Cannot move a closed (won/lost/opted_out) lead to an active stage',
+    );
   });
 
-  it('does not touch outcome when already in the matching status', async () => {
-    (findLeadById as jest.Mock).mockResolvedValue({ ...baseLead, status: 'won' });
-    (findStageById as jest.Mock).mockResolvedValue({ ...baseStage, is_terminal_won: true });
-    await moveLead('lead-1', 'stage-1', actor);
-    expect(updateLeadOutcome).not.toHaveBeenCalled();
+  it('rejects moving a lead to a stage in a different pipeline (H3)', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseLead, pipeline_stage_id: 'stage-old' });
+    (findStageById as jest.Mock).mockImplementation(async (id: string) => {
+      if (id === 'stage-old') return { ...baseStage, id: 'stage-old', pipeline_id: 'pipe-old' };
+      if (id === 'stage-new') return { ...baseStage, id: 'stage-new', pipeline_id: 'pipe-new' };
+      return null;
+    });
+    await expect(moveLead('lead-1', 'stage-new', actor)).rejects.toThrow(
+      'Target stage belongs to a different pipeline than the lead’s current pipeline',
+    );
   });
 });
 

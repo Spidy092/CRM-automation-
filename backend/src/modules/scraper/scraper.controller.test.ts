@@ -6,6 +6,7 @@ import {
   retryFailedHandler,
   getStatsSummaryHandler,
   discoverPagesHandler,
+  triggerScrapeHandler,
 } from './scraper.controller';
 import * as service from './scraper.service';
 
@@ -48,6 +49,36 @@ describe('Scraper Controller', () => {
       expect(res.json).toHaveBeenCalledWith({
         success: true,
         data: { id: '1', name: 'Test' },
+      });
+    });
+  });
+
+  describe('triggerScrapeHandler', () => {
+    it('enqueues the run via queueScrapeRun and returns 202 with the pending result', async () => {
+      req.params = { configId: 'cfg-1' } as any;
+      (service.queueScrapeRun as jest.Mock).mockResolvedValue({
+        logId: 'log-1',
+        recordsFound: 0,
+        recordsImported: 0,
+        recordsDuplicate: 0,
+        recordsFailed: 0,
+        status: 'running',
+      });
+
+      await triggerScrapeHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.queueScrapeRun).toHaveBeenCalledWith('cfg-1', { id: '1', role: 'admin', ipAddress: null });
+      expect(res.status).toHaveBeenCalledWith(202);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data: {
+          logId: 'log-1',
+          recordsFound: 0,
+          recordsImported: 0,
+          recordsDuplicate: 0,
+          recordsFailed: 0,
+          status: 'running',
+        },
       });
     });
   });

@@ -9,6 +9,14 @@
 **/coverage/
 *.lcov
 
+# Archives / bundles
+*.tar.gz
+*.tgz
+*.zip
+
+# Vendored SDKs
+google-cloud-sdk/
+
 # Environment & secrets
 .env
 .env.*

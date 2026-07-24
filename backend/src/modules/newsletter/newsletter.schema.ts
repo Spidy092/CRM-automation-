@@ -41,6 +41,26 @@ export const subscriberIdParamSchema = z.object({
   id: z.string().uuid(),
 });
 
+export const broadcastBodySchema = z.object({
+  subject: z.string().min(1, 'subject is required').max(255),
+  htmlBody: z.string().min(1, 'htmlBody is required'),
+});
+
+export const automatedDigestToggleSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export const updateDigestConfigSchema = z.object({
+  topic: z.string().min(1, 'topic is required').max(200),
+  tone: z.enum(['professional', 'casual', 'motivational', 'technical']),
+  customPrompt: z.string().max(1000).optional().default(''),
+  targetAudience: z.string().max(200).optional().default(''),
+});
+
 export type SubscribeBody = z.infer<typeof subscribeSchema>;
 export type UpdatePreferencesBody = z.infer<typeof updatePreferencesBodySchema>;
 export type ListSubscribersQuery = z.infer<typeof listSubscribersQuerySchema>;
+export type BroadcastBody = z.infer<typeof broadcastBodySchema>;
+export type AutomatedDigestToggleBody = z.infer<typeof automatedDigestToggleSchema>;
+export type UpdateDigestConfigBody = z.infer<typeof updateDigestConfigSchema>;
+

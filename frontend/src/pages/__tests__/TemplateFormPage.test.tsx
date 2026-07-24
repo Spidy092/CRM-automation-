@@ -68,10 +68,18 @@ vi.mock('@/api/templates', () => ({
     mutateAsync: mockUploadMutateAsync,
     isPending: false,
   }),
+  useAttachTemplateFromLibrary: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
   useDeleteTemplateAttachment: vi.fn().mockReturnValue({
     mutateAsync: mockDeleteMutateAsync,
     isPending: false,
   }),
+}));
+
+vi.mock('@/api/files', () => ({
+  useFiles: vi.fn().mockReturnValue({ data: [], isLoading: false }),
 }));
 
 describe('TemplateFormPage', () => {

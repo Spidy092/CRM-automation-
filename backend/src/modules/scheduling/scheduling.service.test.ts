@@ -14,6 +14,10 @@ jest.mock('./scheduling.repository', () => ({
   updateBookingStatus: jest.fn(),
   getAllBookingUrlUsers: jest.fn(),
   getLastBookedUser: jest.fn(),
+  findDateOverridesByUser: jest.fn(),
+  findDateOverrideByUserAndDate: jest.fn(),
+  upsertDateOverride: jest.fn(),
+  deleteDateOverride: jest.fn(),
 }));
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
@@ -34,6 +38,7 @@ import {
   updateBookingUrlById,
   listBookings,
   createBooking,
+  createInternalBooking,
   cancelBooking,
   getRoundRobinUser,
 } from './scheduling.service';
@@ -62,16 +67,41 @@ describe('scheduling.service', () => {
       const res = await setAvailability('u1', [{ dayOfWeek: 1, startTime: '09:00', endTime: '17:00', slotDurationMin: 30, isActive: true }], 'admin-1');
       expect(res).toHaveLength(1);
     });
+
+    it('throws AppError 400 when start time is after or equal to end time', async () => {
+      await expect(
+        setAvailability('u1', [{ dayOfWeek: 1, startTime: '17:00', endTime: '09:00', slotDurationMin: 30, isActive: true }], 'admin-1'),
+      ).rejects.toMatchObject({ statusCode: 400 });
+    });
   });
 
   describe('getAvailableSlots', () => {
     it('returns empty slots when no availability', async () => {
+      mockedRepo.findDateOverrideByUserAndDate.mockResolvedValue(null);
       mockedRepo.findAvailabilityByUserAndDay.mockResolvedValue([]);
       const res = await getAvailableSlots('u1', '2026-07-10');
       expect(res.slots).toHaveLength(0);
     });
 
+    it('returns empty slots when date is blocked by date override', async () => {
+      mockedRepo.findDateOverrideByUserAndDate.mockResolvedValue({
+        id: 'ov-1',
+        user_id: 'u1',
+        override_date: '2026-07-10',
+        is_blocked: true,
+        start_time: null,
+        end_time: null,
+        reason: 'Vacation',
+        created_at: '',
+        updated_at: '',
+      });
+      const res = await getAvailableSlots('u1', '2026-07-10');
+      expect(res.slots).toHaveLength(0);
+    });
+
     it('generates slots and marks conflicts unavailable', async () => {
+      mockedRepo.findDateOverrideByUserAndDate.mockResolvedValue(null);
+      mockedRepo.findBookingUrlsByUser.mockResolvedValue([]);
       mockedRepo.findAvailabilityByUserAndDay.mockResolvedValue([
         { id: 'a1', user_id: 'u1', day_of_week: 5, start_time: '09:00', end_time: '09:30', slot_duration_min: 30, is_active: true, created_at: '2026-01-01', updated_at: '2026-01-01' },
       ]);
@@ -122,7 +152,7 @@ describe('scheduling.service', () => {
 
     it('creates booking with google calendar event', async () => {
       const future = new Date(Date.now() + 86400000).toISOString();
-      mockedRepo.findBookingUrlBySlug.mockResolvedValue({ id: 'url-1', user_id: 'u1', max_advance_days: 30, title: 'Test' } as any);
+      mockedRepo.findBookingUrlBySlug.mockResolvedValue({ id: 'url-1', user_id: 'u1', max_advance_days: 30, title: 'Test', is_active: true } as any);
       mockedRepo.findConflictingBookings.mockResolvedValue([]);
       mockedCreateEvent.mockResolvedValue({ ok: true, eventId: 'evt-1', htmlLink: 'http://meet' } as any);
       mockedRepo.insertBooking.mockResolvedValue({ id: 'book-1', starts_at: future } as any);
@@ -133,7 +163,7 @@ describe('scheduling.service', () => {
 
     it('throws 409 when slot conflicts', async () => {
       const future = new Date(Date.now() + 86400000).toISOString();
-      mockedRepo.findBookingUrlBySlug.mockResolvedValue({ id: 'url-1', user_id: 'u1', max_advance_days: 30 } as any);
+      mockedRepo.findBookingUrlBySlug.mockResolvedValue({ id: 'url-1', user_id: 'u1', max_advance_days: 30, is_active: true } as any);
       mockedRepo.findConflictingBookings.mockResolvedValue([{ id: 'conflict' }] as any);
       await expect(createBooking('slug', { startsAt: future, bookerName: 'A', bookerEmail: 'a@x.com' })).rejects.toMatchObject({ statusCode: 409 });
     });
@@ -143,6 +173,28 @@ describe('scheduling.service', () => {
       mockedRepo.updateBookingStatus.mockResolvedValue({ id: 'book-1', status: 'cancelled' } as any);
       const res = await cancelBooking('book-1', 'u1');
       expect(res.status).toBe('cancelled');
+    });
+
+    it('creates internal booking on behalf of lead with calendar invite', async () => {
+      const future = new Date(Date.now() + 86400000).toISOString();
+      mockedRepo.findConflictingBookings.mockResolvedValue([]);
+      mockedRepo.findDateOverrideByUserAndDate.mockResolvedValue(null);
+      mockedRepo.findBookingUrlsByUser.mockResolvedValue([{ id: 'url-1', is_active: true }] as any);
+      mockedCreateEvent.mockResolvedValue({ ok: true, eventId: 'evt-internal', htmlLink: 'http://meet' } as any);
+      mockedRepo.insertBooking.mockResolvedValue({ id: 'book-internal', starts_at: future } as any);
+
+      const res = await createInternalBooking('u1', {
+        bookerName: 'Lead Client',
+        bookerEmail: 'client@company.com',
+        startsAt: future,
+        notes: 'Sales Call',
+      });
+      expect(res.id).toBe('book-internal');
+      expect(mockedCreateEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attendees: ['client@company.com'],
+        }),
+      );
     });
   });
 

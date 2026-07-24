@@ -38,6 +38,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Users,
+  Tag,
 } from 'lucide-react';
 
 // ── Wizard steps ─────────────────────────────────────────────────────────────
@@ -201,6 +202,8 @@ export function CampaignFormPage() {
   const [targetCountries, setTargetCountries] = useState('');
   const [pipelineId, setPipelineId] = useState('');
   const [triggerStageId, setTriggerStageId] = useState<string>('');
+  const [triggerSource, setTriggerSource] = useState('');
+  const [triggerTags, setTriggerTags] = useState('');
   const [sequenceId, setSequenceId] = useState('');
   const [aiPersonalizationEnabled, setAiPersonalizationEnabled] = useState(false);
   const [showNewSequence, setShowNewSequence] = useState(false);
@@ -233,6 +236,8 @@ export function CampaignFormPage() {
       setTargetCountries(existingCampaign.target_countries.join(', '));
       setPipelineId(existingCampaign.pipeline_id || '');
       setTriggerStageId(existingCampaign.trigger_stage_id || '');
+      setTriggerSource((existingCampaign.trigger_source ?? []).join(', '));
+      setTriggerTags((existingCampaign.trigger_tags ?? []).join(', '));
       setSequenceId(existingCampaign.sequence_id || '');
       setAiPersonalizationEnabled(existingCampaign.ai_personalization_enabled);
       setSendWindowEnabled(existingCampaign.send_window_enabled ?? false);
@@ -269,6 +274,12 @@ export function CampaignFormPage() {
       : [],
     pipeline_id: pipelineId || undefined,
     trigger_stage_id: triggerStageId || null,
+    trigger_source: triggerSource
+      ? triggerSource.split(',').map((s) => s.trim()).filter(Boolean)
+      : null,
+    trigger_tags: triggerTags
+      ? triggerTags.split(',').map((s) => s.trim()).filter(Boolean)
+      : null,
     sequence_id: sequenceId || undefined,
     ai_personalization_enabled: aiPersonalizationEnabled,
     send_window_enabled: sendWindowEnabled,
@@ -418,6 +429,7 @@ export function CampaignFormPage() {
 
       {/* ── Step 2: Pipeline trigger ───────────────────────────────────────── */}
       {step === 1 && (
+        <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -488,6 +500,47 @@ export function CampaignFormPage() {
             )}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Tag className="h-5 w-5 text-slate-500" />
+              Source &amp; Tag Triggers
+            </CardTitle>
+            <CardDescription>
+              Optional — auto-enroll a lead the moment it's created, if its source or tags match.
+              Independent of the pipeline trigger above; a lead can match either.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="trigger_source">Lead Source (comma-separated)</Label>
+              <Input
+                id="trigger_source"
+                value={triggerSource}
+                onChange={(e) => setTriggerSource(e.target.value)}
+                placeholder="e.g., google_business, facebook"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="trigger_tags">Lead Tags (comma-separated, any match)</Label>
+              <Input
+                id="trigger_tags"
+                value={triggerTags}
+                onChange={(e) => setTriggerTags(e.target.value)}
+                placeholder="e.g., vip, hot-lead"
+              />
+            </div>
+            {!triggerSource && !triggerTags && (
+              <p className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <Info className="h-3.5 w-3.5 shrink-0" />
+                Without a source or tag trigger, new leads only reach this campaign via the
+                pipeline trigger above or manual addition.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        </div>
       )}
 
       {/* ── Step 3: Sequence ───────────────────────────────────────────────── */}

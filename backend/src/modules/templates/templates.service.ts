@@ -23,6 +23,7 @@ import {
   TemplateListFilters,
   TemplateResponse,
 } from './templates.types';
+import { getFileRow } from '../files/files.service';
 
 // ── Attachments ──────────────────────────────────────────────────────────────
 
@@ -202,15 +203,18 @@ export async function removeTemplate(id: string, actor: TemplateActor): Promise<
   await deleteTemplate(id);
 
   await Promise.all(
-    (before.attachments ?? []).map((a) =>
-      unlink(a.storagePath).catch((err) =>
-        logger.warn('failed to delete template attachment file', {
-          templateId: id,
-          attachmentId: a.id,
-          error: (err as Error).message,
-        }),
+    (before.attachments ?? [])
+      // Library-referenced attachments don't own their disk file — never unlink those.
+      .filter((a) => !a.libraryFileId)
+      .map((a) =>
+        unlink(a.storagePath).catch((err) =>
+          logger.warn('failed to delete template attachment file', {
+            templateId: id,
+            attachmentId: a.id,
+            error: (err as Error).message,
+          }),
+        ),
       ),
-    ),
   );
 
   await writeAuditLog({
@@ -277,6 +281,51 @@ export async function addTemplateAttachment(
   return toResponse(row);
 }
 
+/** Attach a shared Files-library entry to a template by reference (no re-upload). */
+export async function addTemplateAttachmentFromLibrary(
+  id: string,
+  fileId: string,
+  actor: TemplateActor,
+): Promise<TemplateResponse> {
+  const before = await findTemplateById(id);
+  if (!before) throw new AppError('Template not found', 404);
+
+  if (before.approval_status === 'approved' && actor.role !== 'admin') {
+    throw new AppError('Approved templates may only be edited by admin', 403);
+  }
+  if ((before.attachments ?? []).length >= MAX_ATTACHMENTS_PER_TEMPLATE) {
+    throw new AppError(
+      `A template may have at most ${MAX_ATTACHMENTS_PER_TEMPLATE} attachments`,
+      400,
+    );
+  }
+
+  const libraryFile = await getFileRow(fileId);
+
+  const attachment: TemplateAttachment = {
+    id: randomUUID(),
+    filename: libraryFile.filename,
+    mimeType: libraryFile.mime_type,
+    sizeBytes: libraryFile.size_bytes,
+    url: libraryFile.url,
+    storagePath: libraryFile.storage_path,
+    libraryFileId: libraryFile.id,
+  };
+
+  const row = await appendTemplateAttachment(id, attachment);
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'template.attachment_added_from_library',
+    entityType: 'template',
+    entityId: id,
+    newValue: { filename: attachment.filename, libraryFileId: libraryFile.id },
+    ipAddress: actor.ipAddress ?? null,
+  });
+
+  return toResponse(row);
+}
+
 export async function removeTemplateAttachment(
   id: string,
   attachmentId: string,
@@ -294,13 +343,16 @@ export async function removeTemplateAttachment(
 
   const row = await removeTemplateAttachmentRepo(id, attachmentId);
 
-  await unlink(existing.storagePath).catch((err) =>
-    logger.warn('failed to delete template attachment file', {
-      templateId: id,
-      attachmentId,
-      error: (err as Error).message,
-    }),
-  );
+  // Library-referenced attachments don't own their disk file — never unlink those.
+  if (!existing.libraryFileId) {
+    await unlink(existing.storagePath).catch((err) =>
+      logger.warn('failed to delete template attachment file', {
+        templateId: id,
+        attachmentId,
+        error: (err as Error).message,
+      }),
+    );
+  }
 
   await writeAuditLog({
     userId: actor.id,

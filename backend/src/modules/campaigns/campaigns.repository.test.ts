@@ -12,6 +12,7 @@ import {
   removeLeadFromCampaign,
   findCampaignLeads,
   getCampaignStats,
+  findActiveCampaignsBySourceOrTags,
 } from './campaigns.repository';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -90,6 +91,8 @@ describe('campaigns.repository', () => {
           'seq-1',
           'pipe-1',
           null,
+          null,
+          null,
           false,
           'guarded',
           false,
@@ -119,6 +122,8 @@ describe('campaigns.repository', () => {
         'formal',
         [],
         [],
+        null,
+        null,
         null,
         null,
         null,
@@ -153,6 +158,20 @@ describe('campaigns.repository', () => {
       await expect(updateCampaign('missing', { name: 'x' })).rejects.toMatchObject({
         statusCode: 404,
       });
+    });
+
+    it('updates trigger_source and trigger_tags when present in payload', async () => {
+      const row = { id: 'c1', trigger_source: ['facebook'], trigger_tags: ['vip'] };
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([row]));
+      const result = await updateCampaign('c1', {
+        trigger_source: ['facebook'],
+        trigger_tags: ['vip'],
+      });
+      expect(result).toEqual(row);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('trigger_source = $1'),
+        [['facebook'], ['vip'], 'c1'],
+      );
     });
   });
 
@@ -302,6 +321,19 @@ describe('campaigns.repository', () => {
         .mockResolvedValueOnce(mockQueryResult([]));
       const stats = await getCampaignStats('c1');
       expect(stats.total_leads).toBe(0);
+    });
+  });
+
+  describe('findActiveCampaignsBySourceOrTags', () => {
+    it('queries with source and tags array-overlap params', async () => {
+      const rows = [{ id: 'c1', trigger_source: ['facebook'] }];
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows));
+      const result = await findActiveCampaignsBySourceOrTags('facebook', ['vip', 'hot']);
+      expect(result).toEqual(rows);
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('trigger_source && ARRAY'), [
+        'facebook',
+        ['vip', 'hot'],
+      ]);
     });
   });
 });

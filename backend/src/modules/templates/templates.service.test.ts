@@ -6,6 +6,7 @@ import {
   approveTemplate,
   removeTemplate,
   addTemplateAttachment,
+  addTemplateAttachmentFromLibrary,
   removeTemplateAttachment,
 } from './templates.service';
 import { TemplateRow } from './templates.types';
@@ -27,6 +28,7 @@ jest.mock('fs/promises', () => ({
   writeFile: jest.fn().mockResolvedValue(undefined),
   mkdir: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../files/files.service', () => ({ getFileRow: jest.fn() }));
 
 import {
   findTemplates,
@@ -40,6 +42,7 @@ import {
 } from './templates.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { unlink, writeFile } from 'fs/promises';
+import { getFileRow } from '../files/files.service';
 
 const actor = { id: 'u1', role: 'admin', ipAddress: '127.0.0.1' };
 
@@ -230,6 +233,27 @@ describe('removeTemplate', () => {
     await removeTemplate(withAttachments.id, actor);
     expect(unlink).toHaveBeenCalledWith('/srv/uploads/templates/a1.png');
   });
+
+  it('never unlinks a library-referenced attachment file', async () => {
+    const withLibraryAttachment: TemplateRow = {
+      ...baseRow,
+      attachments: [
+        {
+          id: 'a1',
+          filename: 'brochure.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4096,
+          url: 'http://localhost:3000/uploads/files/lib-1.pdf',
+          storagePath: '/srv/uploads/files/lib-1.pdf',
+          libraryFileId: 'lib-1',
+        },
+      ],
+    };
+    (findTemplateById as jest.Mock).mockResolvedValue(withLibraryAttachment);
+    (deleteTemplate as jest.Mock).mockResolvedValue(undefined);
+    await removeTemplate(withLibraryAttachment.id, actor);
+    expect(unlink).not.toHaveBeenCalled();
+  });
 });
 
 describe('addTemplateAttachment', () => {
@@ -310,6 +334,90 @@ describe('addTemplateAttachment', () => {
     ]);
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'template.attachment_added' }),
+    );
+  });
+});
+
+describe('addTemplateAttachmentFromLibrary', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const libraryFile = {
+    id: 'lib-1',
+    filename: 'brochure.pdf',
+    mime_type: 'application/pdf',
+    size_bytes: 4096,
+    storage_path: '/x/uploads/files/lib-1.pdf',
+    url: 'http://localhost:3000/uploads/files/lib-1.pdf',
+    tags: [],
+    created_by: 'u1',
+    created_at: '2026-07-01T00:00:00Z',
+    updated_at: '2026-07-01T00:00:00Z',
+  };
+
+  it('throws 404 when template missing', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(null);
+    await expect(
+      addTemplateAttachmentFromLibrary('missing', 'lib-1', actor),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('rejects edits to an approved template from a non-admin', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue({ ...baseRow, approval_status: 'approved' });
+    await expect(
+      addTemplateAttachmentFromLibrary(baseRow.id, 'lib-1', { ...actor, role: 'marketing' }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects once the per-template attachment limit is reached', async () => {
+    const full: TemplateRow = {
+      ...baseRow,
+      attachments: [1, 2, 3].map((n) => ({
+        id: `a${n}`,
+        filename: `f${n}.png`,
+        mimeType: 'image/png',
+        sizeBytes: 10,
+        url: `http://x/${n}.png`,
+        storagePath: `/x/${n}.png`,
+      })),
+    };
+    (findTemplateById as jest.Mock).mockResolvedValue(full);
+    await expect(
+      addTemplateAttachmentFromLibrary(full.id, 'lib-1', actor),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('appends a reference attachment carrying the library storagePath, then audits', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(baseRow);
+    (getFileRow as jest.Mock).mockResolvedValue(libraryFile);
+    const updatedRow: TemplateRow = {
+      ...baseRow,
+      attachments: [
+        {
+          id: 'new-id',
+          filename: 'brochure.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4096,
+          url: libraryFile.url,
+          storagePath: libraryFile.storage_path,
+          libraryFileId: 'lib-1',
+        },
+      ],
+    };
+    (appendTemplateAttachment as jest.Mock).mockResolvedValue(updatedRow);
+
+    const result = await addTemplateAttachmentFromLibrary(baseRow.id, 'lib-1', actor);
+
+    expect(appendTemplateAttachment).toHaveBeenCalledWith(
+      baseRow.id,
+      expect.objectContaining({
+        filename: 'brochure.pdf',
+        libraryFileId: 'lib-1',
+        storagePath: libraryFile.storage_path,
+      }),
+    );
+    expect(result.attachments[0]).toMatchObject({ filename: 'brochure.pdf', libraryFileId: 'lib-1' });
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'template.attachment_added_from_library' }),
     );
   });
 });

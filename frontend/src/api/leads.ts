@@ -15,6 +15,7 @@ interface LeadFilters {
   assigned_to?: string;
   pipeline_id?: string;
   tags?: string;
+  exclude_tags?: string;
   search?: string;
   limit?: number;
   cursor?: string;
@@ -26,7 +27,7 @@ interface LeadFilters {
 
 interface LeadsPageResult {
   items: Lead[];
-  meta: { limit: number; hasMore: boolean; nextCursor?: string };
+  meta: { limit: number; hasMore: boolean; nextCursor?: string; total?: number };
 }
 
 function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams {
@@ -37,11 +38,13 @@ function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams
   if (filters.assigned_to) params.append('assigned_to', filters.assigned_to);
   if (filters.pipeline_id) params.append('pipeline_id', filters.pipeline_id);
   if (filters.tags) params.append('tags', filters.tags);
+  if (filters.exclude_tags) params.append('exclude_tags', filters.exclude_tags);
   if (filters.search) params.append('search', filters.search);
   if (filters.limit) params.append('limit', filters.limit.toString());
   if (filters.created_after) params.append('created_after', filters.created_after);
   if (filters.unclassified) params.append('unclassified', 'true');
-  if (cursor) params.append('cursor', cursor);
+  const actualCursor = cursor || filters.cursor;
+  if (actualCursor) params.append('cursor', actualCursor);
   return params;
 }
 
@@ -72,15 +75,7 @@ export function useLeads(filters: LeadFilters = {}) {
   return useQuery({
     queryKey: ['leads', filters],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (filters.status) params.append('status', filters.status);
-      if (filters.classification) params.append('classification', filters.classification);
-      if (filters.source_platform) params.append('source_platform', filters.source_platform);
-      if (filters.assigned_to) params.append('assigned_to', filters.assigned_to);
-      if (filters.pipeline_id) params.append('pipeline_id', filters.pipeline_id);
-      if (filters.search) params.append('search', filters.search);
-      if (filters.limit) params.append('limit', filters.limit.toString());
-      if (filters.cursor) params.append('cursor', filters.cursor);
+      const params = buildLeadParams(filters, filters.cursor);
 
       const response = await apiClient.get<ApiResponse<Lead[]>>('/leads', { params });
       const meta = response.data.meta as { limit: number; hasMore: boolean; nextCursor?: string } | undefined;
@@ -222,16 +217,18 @@ interface ActivitiesPageResult {
 export function useLeadActivities(leadId: string, filters: ActivityFilters = {}) {
   return useQuery({
     queryKey: ['leads', leadId, 'activities', filters],
-    queryFn: async () => {
+    queryFn: async (): Promise<ActivitiesPageResult> => {
       const params = new URLSearchParams();
       if (filters.type) params.append('type', filters.type);
       if (filters.limit !== undefined) params.append('limit', filters.limit.toString());
       if (filters.offset !== undefined) params.append('offset', filters.offset.toString());
-      const response = await apiClient.get<ApiResponse<ActivitiesPageResult>>(
+      const response = await apiClient.get<ApiResponse<ActivityWithUser[]>>(
         `/leads/${leadId}/activities`,
         { params },
       );
-      return response.data.data;
+      const items = response.data.data ?? [];
+      const meta = response.data.meta as ActivitiesPageResult['meta'] | undefined;
+      return { items, meta: meta ?? { total: items.length, limit: filters.limit ?? items.length, offset: filters.offset ?? 0 } };
     },
     enabled: !!leadId,
   });
@@ -261,9 +258,11 @@ export function useBulkUpdateLeads() {
 
   return useMutation({
     mutationFn: async ({ ids, patch }: { ids: string[]; patch: Partial<import('@/types').LeadInput> }) => {
-      await Promise.all(
-        ids.map((id) => apiClient.put<ApiResponse<Lead>>(`/leads/${id}`, patch)),
+      const response = await apiClient.post<ApiResponse<{ updated: number }>>(
+        '/leads/bulk-update',
+        { ids, patch },
       );
+      return response.data.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -276,9 +275,11 @@ export function useBulkPauseLeads() {
 
   return useMutation({
     mutationFn: async ({ ids, paused }: { ids: string[]; paused: boolean }) => {
-      await Promise.all(
-        ids.map((id) => apiClient.post<ApiResponse<Lead>>(`/leads/${id}/pause`, { paused })),
+      const response = await apiClient.post<ApiResponse<{ updated: number; cancelledJobs?: number }>>(
+        '/leads/bulk-pause',
+        { ids, paused },
       );
+      return response.data.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });

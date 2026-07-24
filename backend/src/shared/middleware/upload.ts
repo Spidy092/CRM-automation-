@@ -28,3 +28,13 @@ export const templateAttachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: ATTACHMENT_MAX_BYTES },
 });
+
+/**
+ * In-memory upload for the standalone Files library — reusable files any
+ * message/sequence step can reference. Same size limit and in-memory
+ * rationale as templateAttachmentUpload.
+ */
+export const fileLibraryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ATTACHMENT_MAX_BYTES },
+});

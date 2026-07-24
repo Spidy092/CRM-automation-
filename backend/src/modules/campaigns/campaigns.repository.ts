@@ -52,6 +52,25 @@ export async function findActiveCampaignsByPipelineNoStage(
   return result.rows;
 }
 
+/**
+ * Campaigns whose trigger_source or trigger_tags overlap the given lead's
+ * source/tags — auto-enrollment on lead creation.
+ */
+export async function findActiveCampaignsBySourceOrTags(
+  source: string,
+  tags: string[],
+): Promise<Campaign[]> {
+  const result = await pool.query<Campaign>(
+    `SELECT * FROM campaigns
+     WHERE status = 'active'
+       AND sequence_id IS NOT NULL
+       AND deleted_at IS NULL
+       AND (trigger_source && ARRAY[$1]::text[] OR trigger_tags && $2::text[])`,
+    [source, tags],
+  );
+  return result.rows;
+}
+
 export async function findCampaignById(id: string): Promise<Campaign | null> {
   const result = await pool.query<Campaign>(
     'SELECT * FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
@@ -69,6 +88,8 @@ export async function insertCampaign(
     sequence_id?: string;
     pipeline_id?: string;
     trigger_stage_id?: string | null;
+    trigger_source?: string[] | null;
+    trigger_tags?: string[] | null;
     ai_personalization_enabled?: boolean;
     autonomy_level?: string;
     ab_test_enabled?: boolean;
@@ -90,12 +111,12 @@ export async function insertCampaign(
   // violates campaigns_autonomy_level_check. Default to the intended 'guarded'.
   const result = await pool.query<Campaign>(
     `INSERT INTO campaigns (name, tone, target_industries, target_countries, sequence_id, pipeline_id,
-       trigger_stage_id, ai_personalization_enabled, autonomy_level,
+       trigger_stage_id, trigger_source, trigger_tags, ai_personalization_enabled, autonomy_level,
        ab_test_enabled, ab_test_metric, ab_test_min_samples, ab_test_confidence, ab_test_auto_promote,
        send_window_enabled, send_window_start_hour, send_window_end_hour, send_window_days,
        send_window_timezone, daily_send_limit,
        created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING *`,
     [
       data.name,
       data.tone,
@@ -104,6 +125,8 @@ export async function insertCampaign(
       data.sequence_id || null,
       data.pipeline_id || null,
       data.trigger_stage_id ?? null,
+      data.trigger_source ?? null,
+      data.trigger_tags ?? null,
       data.ai_personalization_enabled ?? false,
       data.autonomy_level ?? 'guarded',
       data.ab_test_enabled ?? false,
@@ -133,6 +156,8 @@ export async function updateCampaign(
     sequence_id?: string;
     pipeline_id?: string;
     trigger_stage_id?: string | null;
+    trigger_source?: string[] | null;
+    trigger_tags?: string[] | null;
     ai_personalization_enabled?: boolean;
     ab_test_enabled?: boolean;
     ab_test_metric?: string;
@@ -178,6 +203,14 @@ export async function updateCampaign(
   if ('trigger_stage_id' in data) {
     fields.push(`trigger_stage_id = $${paramIndex++}`);
     values.push(data.trigger_stage_id ?? null);
+  }
+  if ('trigger_source' in data) {
+    fields.push(`trigger_source = $${paramIndex++}`);
+    values.push(data.trigger_source ?? null);
+  }
+  if ('trigger_tags' in data) {
+    fields.push(`trigger_tags = $${paramIndex++}`);
+    values.push(data.trigger_tags ?? null);
   }
   if (data.ai_personalization_enabled !== undefined) {
     fields.push(`ai_personalization_enabled = $${paramIndex++}`);

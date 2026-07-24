@@ -8,13 +8,14 @@ import {
 } from './activities.types';
 
 const ACTIVITY_COLS = 'id, lead_id, user_id, type, metadata, created_at';
+const ACTIVITY_COLS_ALIASED = 'a.id, a.lead_id, a.user_id, a.type, a.metadata, a.created_at';
 
 export async function insertActivity(input: CreateActivityInput): Promise<Activity> {
   const row = await queryOne<Activity>(
     `INSERT INTO activities (lead_id, user_id, type, metadata)
-     VALUES ($1, $2, $3, COALESCE($4, '{}'))
+     VALUES ($1, $2, $3, COALESCE($4::jsonb, '{}'::jsonb))
      RETURNING ${ACTIVITY_COLS}`,
-    [input.lead_id, input.user_id, input.type, input.metadata ?? {}],
+    [input.lead_id, input.user_id, input.type, input.metadata ? JSON.stringify(input.metadata) : null],
   );
   if (!row) throw new Error('Failed to insert activity');
   return row;
@@ -67,7 +68,7 @@ export async function findActivitiesByLeadId(
   const total = Number(countRow?.total ?? '0');
 
   const items = await query<ActivityWithUser>(
-    `SELECT ${ACTIVITY_COLS},
+    `SELECT ${ACTIVITY_COLS_ALIASED},
             u.name AS user_name,
             u.email AS user_email
        FROM activities a

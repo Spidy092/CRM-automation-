@@ -85,7 +85,30 @@ export interface CreateBookingInput {
   leadId?: string;
 }
 
+export interface CreateInternalBookingInput {
+  leadId?: string;
+  bookingUrlId?: string;
+  bookerName: string;
+  bookerEmail: string;
+  bookerPhone?: string;
+  startsAt: string;
+  notes?: string;
+  forceOverride?: boolean;
+}
+
 export interface RoundRobinConfig {
   enabled: boolean;
   method: 'round_robin' | 'least_recent' | 'random';
+}
+
+export interface UserDateOverride {
+  id: string;
+  user_id: string;
+  override_date: string; // "YYYY-MM-DD"
+  is_blocked: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteLeads, useDeleteLead, usePauseLead, useBulkPauseLeads, useBulkClassifyLeads } from '@/api/leads';
 import { useCampaigns, useAddLeadsToCampaign } from '@/api/campaigns';
 import { usePipelines, useBulkMoveLead } from '@/api/pipelines';
@@ -9,10 +9,11 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
+import { statusTones } from '@/lib/constants';
 import type { Lead, LeadStatus } from '@/types';
 import {
   Plus,
@@ -22,6 +23,7 @@ import {
   Trash2,
   Pause,
   Play,
+  Lock,
   InboxIcon,
   ExternalLink,
   X,
@@ -30,6 +32,7 @@ import {
   MessageSquareMore,
   Tag,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 
 /** Returns an ISO-8601 UTC string for N days ago (start of that day). */
@@ -40,24 +43,39 @@ function daysAgoIso(days: number): string {
   return d.toISOString();
 }
 
-const statusTones: Record<LeadStatus, StatusTone> = {
-  active: 'green',
-  paused: 'amber',
-  won: 'blue',
-  lost: 'red',
-  opted_out: 'gray',
-};
-
 export function LeadsPage() {
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [classificationFilter, setClassificationFilter] = useState<string>('');
-  const [dateRange, setDateRange] = useState<'' | 'today' | '7d' | '30d'>('');
-  const [pipelineFilter, setPipelineFilter] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'all' | 'uncontacted' | 'contacted' | 'hot' | 'replied' | 'new'>('all');
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const activeTab = (searchParams.get('tab') as 'all' | 'uncontacted' | 'contacted' | 'hot' | 'replied' | 'new') || 'all';
+  const statusFilter = searchParams.get('status') || '';
+  const classificationFilter = searchParams.get('classification') || '';
+  const dateRange = (searchParams.get('dateRange') as '' | 'today' | '7d' | '30d') || '';
+  const pipelineFilter = searchParams.get('pipeline') || '';
+  const search = searchParams.get('q') || '';
+
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkClassification, setBulkClassification] = useState<'hot' | 'warm' | 'cold' | ''>('');
+
+  const updateParam = (key: string, value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    }, { replace: true });
+  };
+
+  const setSearch = (val: string) => updateParam('q', val);
+  const setStatusFilter = (val: string) => updateParam('status', val);
+  const setClassificationFilter = (val: string) => updateParam('classification', val);
+  const setDateRange = (val: '' | 'today' | '7d' | '30d') => updateParam('dateRange', val);
+  const setPipelineFilter = (val: string) => updateParam('pipeline', val);
+  const setActiveTab = (val: string) => updateParam('tab', val === 'all' ? '' : val);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -79,12 +97,15 @@ export function LeadsPage() {
     tags: activeTab === 'contacted' ? 'contacted'
          : activeTab === 'replied' ? 'replied'
          : undefined,
+    exclude_tags: activeTab === 'uncontacted' ? 'contacted' : undefined,
     created_after: createdAfter,
     unclassified: activeTab === 'new' ? true : undefined,
     pipeline_id: pipelineFilter || undefined,
   };
 
-  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
+  const [leadToDelete, setLeadToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching, refetch } =
     useInfiniteLeads(apiFilters);
   const deleteLead = useDeleteLead();
   const pauseLead = usePauseLead();
@@ -99,10 +120,8 @@ export function LeadsPage() {
   const { showToast } = useToast();
 
   const leads = data?.pages.flatMap((p) => p.items) ?? [];
-  // For 'uncontacted' tab, filter client-side: leads with no 'contacted' tag
-  const filteredLeads = activeTab === 'uncontacted'
-    ? leads.filter((l) => !l.tags?.includes('contacted'))
-    : leads;
+  const totalServerLeads = data?.pages[0]?.meta?.total ?? leads.length;
+  const filteredLeads = leads;
   const allSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selected.has(l.id));
 
   function getPipelineInfo(stageId: string | null) {
@@ -131,19 +150,20 @@ export function LeadsPage() {
     });
   }
 
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this lead?')) {
-      try {
-        await deleteLead.mutateAsync(id);
-        showToast('Lead deleted successfully.', 'success');
-        setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
-      } catch {
-        showToast('Failed to delete lead. Please try again.', 'error');
-      }
+  const confirmDeleteLead = async () => {
+    if (!leadToDelete) return;
+    try {
+      await deleteLead.mutateAsync(leadToDelete.id);
+      showToast('Lead deleted successfully.', 'success');
+      setSelected((prev) => { const n = new Set(prev); n.delete(leadToDelete.id); return n; });
+      setLeadToDelete(null);
+    } catch {
+      showToast('Failed to delete lead. Please try again.', 'error');
     }
   };
 
   const handlePause = async (id: string, currentStatus: LeadStatus) => {
+    if (currentStatus !== 'active' && currentStatus !== 'paused') return;
     const willPause = currentStatus === 'active';
     try {
       await pauseLead.mutateAsync({ id, paused: willPause });
@@ -156,8 +176,14 @@ export function LeadsPage() {
   const handleBulkPause = async (paused: boolean) => {
     const ids = Array.from(selected);
     try {
-      await bulkPause.mutateAsync({ ids, paused });
-      showToast(paused ? `${ids.length} leads paused.` : `${ids.length} leads resumed.`, 'success');
+      const res = await bulkPause.mutateAsync({ ids, paused });
+      if (paused) {
+        const jobsCount = res?.cancelledJobs ?? 0;
+        const jobsMsg = jobsCount > 0 ? ` (${jobsCount} outreach job${jobsCount === 1 ? '' : 's'} cancelled)` : '';
+        showToast(`${ids.length} leads paused${jobsMsg}.`, 'success');
+      } else {
+        showToast(`${ids.length} leads resumed.`, 'success');
+      }
       setSelected(new Set());
     } catch {
       showToast('Bulk action failed.', 'error');
@@ -180,6 +206,21 @@ export function LeadsPage() {
   const handleMoveToPipeline = async () => {
     if (!selectedPipelineStage) return;
     const ids = Array.from(selected);
+    const selectedLeads = leads.filter((l) => selected.has(l.id));
+
+    const targetPipelineId = pipelines?.find((p) => p.stages?.some((s) => s.id === selectedPipelineStage))?.id;
+    if (targetPipelineId) {
+      const hasConflictingPipeline = selectedLeads.some((l) => {
+        if (!l.pipeline_stage_id) return false;
+        const currentPipelineId = pipelines?.find((p) => p.stages?.some((s) => s.id === l.pipeline_stage_id))?.id;
+        return currentPipelineId && currentPipelineId !== targetPipelineId;
+      });
+      if (hasConflictingPipeline) {
+        showToast('Selected leads contain leads from a different pipeline. Please select leads from the same pipeline or unassigned leads.', 'error');
+        return;
+      }
+    }
+
     try {
       await bulkMoveLead.mutateAsync({ stageId: selectedPipelineStage, leadIds: ids });
       showToast(`${ids.length} leads moved to pipeline stage.`, 'success');
@@ -210,10 +251,10 @@ export function LeadsPage() {
         title="Leads"
         description="Find, qualify, pause, and update prospects before they move into campaigns or pipeline stages."
         metrics={[
-          { label: 'Visible leads', value: leads.length },
-          { label: 'Active', value: leads.filter((lead) => lead.status === 'active').length, tone: 'success' },
-          { label: 'Paused', value: leads.filter((lead) => lead.status === 'paused').length, tone: 'warning' },
-          { label: 'Won', value: leads.filter((lead) => lead.status === 'won').length, tone: 'success' },
+          { label: 'Total leads', value: totalServerLeads },
+          { label: 'Loaded on page', value: leads.length },
+          { label: 'Loaded active', value: leads.filter((lead) => lead.status === 'active').length, tone: 'success' },
+          { label: 'Loaded paused', value: leads.filter((lead) => lead.status === 'paused').length, tone: 'warning' },
         ]}
         actions={
           <>
@@ -332,10 +373,10 @@ export function LeadsPage() {
               {/* Pause / Resume */}
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => handleBulkPause(true)} disabled={bulkPause.isPending}>
-                  <Pause className="mr-1.5 h-3.5 w-3.5" /> Pause all
+                  {bulkPause.isPending ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Pause className="mr-1.5 h-3.5 w-3.5" />} Pause all
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => handleBulkPause(false)} disabled={bulkPause.isPending}>
-                  <Play className="mr-1.5 h-3.5 w-3.5" /> Resume all
+                  {bulkPause.isPending ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />} Resume all
                 </Button>
               </div>
 
@@ -360,6 +401,7 @@ export function LeadsPage() {
                   disabled={!bulkClassification || bulkClassify.isPending}
                   onClick={handleBulkClassify}
                 >
+                  {bulkClassify.isPending && <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />}
                   Apply
                 </Button>
               </div>
@@ -377,6 +419,7 @@ export function LeadsPage() {
                   ))}
                 </select>
                 <Button variant="default" size="sm" className="h-8" disabled={!selectedCampaign || addLeadsToCampaign.isPending} onClick={handleAddToCampaign}>
+                  {addLeadsToCampaign.isPending && <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />}
                   Add
                 </Button>
               </div>
@@ -398,6 +441,7 @@ export function LeadsPage() {
                   ))}
                 </select>
                 <Button variant="default" size="sm" className="h-8" disabled={!selectedPipelineStage || bulkMoveLead.isPending} onClick={handleMoveToPipeline}>
+                  {bulkMoveLead.isPending && <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />}
                   Move
                 </Button>
               </div>
@@ -411,15 +455,15 @@ export function LeadsPage() {
 
         <CardContent>
           {/* ── Loading state ── */}
-          {isLoading && <LoadingTable />}
+          {(isLoading || (isFetching && filteredLeads.length === 0)) && <LoadingTable />}
 
           {/* ── Error state ── */}
-          {!isLoading && error && (
-            <ErrorState message={error.message} onRetry={() => window.location.reload()} />
+          {!isLoading && !isFetching && error && (
+            <ErrorState message={error.message} onRetry={() => refetch()} />
           )}
 
           {/* ── Empty state ── */}
-          {!isLoading && !error && filteredLeads.length === 0 && (
+          {!isLoading && !isFetching && !error && filteredLeads.length === 0 && (
             <EmptyState
               icon={<InboxIcon className="h-6 w-6" />}
               title="No leads found"
@@ -465,7 +509,15 @@ export function LeadsPage() {
                   {filteredLeads.map((lead: Lead) => (
                     <tr
                       key={lead.id}
-                      className={`border-b transition-colors hover:bg-slate-50 ${selected.has(lead.id) ? 'bg-blue-50/60' : ''}`}
+                      tabIndex={0}
+                      role="row"
+                      className={`border-b transition-colors hover:bg-slate-50 focus:bg-slate-100 focus:outline-none ${selected.has(lead.id) ? 'bg-blue-50/60' : ''}`}
+                      onKeyDown={(e) => {
+                        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          navigate(`/leads/${lead.id}`);
+                        }
+                      }}
                     >
                       <td className="py-3 pr-3">
                         <input
@@ -516,19 +568,21 @@ export function LeadsPage() {
                           : lead.classification === 'cold' ? 'bg-blue-100 text-blue-600'
                           : 'bg-slate-100 text-slate-500'
                         }`}>
-                          {lead.classification === 'hot' ? '🔥' : lead.classification === 'warm' ? '🌡️' : lead.classification === 'cold' ? '❄️' : ''}
-                          {lead.lead_score}
+                          {lead.classification === 'hot' ? '🔥' : lead.classification === 'warm' ? '🌡️' : lead.classification === 'cold' ? '❄️' : '⚪'}
+                          {lead.lead_score ?? '—'}
                         </span>
                       </td>
                       <td className="py-3">
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex flex-wrap gap-1" title={lead.tags?.join(', ')}>
                           {lead.tags?.slice(0, 3).map((tag) => (
                             <span key={tag} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">
                               {tag}
                             </span>
                           ))}
                           {(lead.tags?.length ?? 0) > 3 && (
-                            <span className="text-[10px] text-slate-400">+{(lead.tags?.length ?? 0) - 3}</span>
+                            <span className="text-[10px] text-slate-400 cursor-help" title={lead.tags?.slice(3).join(', ')}>
+                              +{(lead.tags?.length ?? 0) - 3}
+                            </span>
                           )}
                         </div>
                       </td>
@@ -547,20 +601,29 @@ export function LeadsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            title={lead.status === 'active' ? 'Pause' : 'Resume'}
+                            title={
+                              lead.status === 'active'
+                                ? 'Pause'
+                                : lead.status === 'paused'
+                                ? 'Resume'
+                                : 'Status locked (closed lead)'
+                            }
                             onClick={() => handlePause(lead.id, lead.status)}
+                            disabled={pauseLead.isPending || (lead.status !== 'active' && lead.status !== 'paused')}
                           >
                             {lead.status === 'active' ? (
                               <Pause className="h-4 w-4" />
-                            ) : (
+                            ) : lead.status === 'paused' ? (
                               <Play className="h-4 w-4" />
+                            ) : (
+                              <Lock className="h-4 w-4 text-slate-300" />
                             )}
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
                             title="Delete"
-                            onClick={() => handleDelete(lead.id)}
+                            onClick={() => setLeadToDelete({ id: lead.id, name: lead.business_name })}
                           >
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>
@@ -586,6 +649,25 @@ export function LeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      {leadToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fade-in">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900">Delete Lead</h2>
+            <p className="text-sm text-slate-600">
+              Are you sure you want to delete <span className="font-semibold text-slate-800">{leadToDelete.name}</span>? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
+              <Button variant="outline" size="sm" onClick={() => setLeadToDelete(null)} disabled={deleteLead.isPending}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={confirmDeleteLead} disabled={deleteLead.isPending}>
+                {deleteLead.isPending ? 'Deleting...' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

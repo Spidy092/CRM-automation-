@@ -36,7 +36,8 @@ export interface DispatchAttachment {
 
 export interface DispatchInput {
   leadId: string;
-  campaignId: string;
+  /** Null for ad-hoc single-lead sends that aren't tied to a campaign. */
+  campaignId: string | null;
   channel: 'whatsapp' | 'email' | 'sms' | 'phone_call';
   templateId: string;
   /** Rendered message body. For SMS/WhatsApp this is the text body; for email

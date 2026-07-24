@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { ContentTabs } from '@/components/ContentTabs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
@@ -286,6 +287,7 @@ export function OutreachSequencesPage() {
 
   return (
     <div className="space-y-6">
+      <ContentTabs />
       <PageHeader
         eyebrow="Outreach automation"
         title="Outreach Sequences"

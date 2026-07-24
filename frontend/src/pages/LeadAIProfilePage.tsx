@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { ArrowLeft, Brain, Sparkles, Target, MessageSquare, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Brain, Sparkles, Target, MessageSquare, RefreshCw, AlertCircle } from 'lucide-react';
 
 const intentTones: Record<BuyingIntent, StatusTone> = {
   high: 'green',
@@ -45,10 +45,22 @@ const actionLabels: Record<NextBestAction, string> = {
 
 export function LeadAIProfilePage() {
   const { id } = useParams<{ id: string }>();
-  const leadId = id!;
+  const leadId = id ?? '';
   const { data: profile, isLoading, error } = useLeadAiProfile(leadId);
   const { data: decisions = [] } = useLeadDecisions(leadId);
   const triggerResearch = useTriggerLeadResearch(leadId);
+
+  if (!id) {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-6 py-10 text-center">
+        <AlertCircle className="h-8 w-8 text-red-400" />
+        <p className="font-semibold text-red-700">Invalid Lead ID</p>
+        <Button variant="outline" size="sm" asChild>
+          <Link to="/leads">Back to Leads</Link>
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -65,8 +77,8 @@ export function LeadAIProfilePage() {
                 onClick={() => triggerResearch.mutate()}
                 disabled={triggerResearch.isPending || profile.enrichment_status === 'running'}
               >
-                <RefreshCw className={`mr-2 h-4 w-4 ${triggerResearch.isPending ? 'animate-spin' : ''}`} />
-                Re-run research
+                <RefreshCw className={`mr-2 h-4 w-4 ${triggerResearch.isPending || profile.enrichment_status === 'running' ? 'animate-spin' : ''}`} />
+                {profile.enrichment_status === 'running' ? 'Research running…' : triggerResearch.isPending ? 'Starting research…' : 'Re-run research'}
               </Button>
             )}
             <Button variant="outline" size="sm" asChild>
@@ -189,7 +201,18 @@ export function LeadAIProfilePage() {
             </CardHeader>
             <CardContent>
               {decisions.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-500">No AI decisions logged for this lead.</p>
+                <div className="flex flex-col items-center gap-3 py-6 text-center">
+                  <p className="text-sm text-slate-500">No AI decisions logged for this lead yet.</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => triggerResearch.mutate()}
+                    disabled={triggerResearch.isPending || profile.enrichment_status === 'running'}
+                  >
+                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${triggerResearch.isPending || profile.enrichment_status === 'running' ? 'animate-spin' : ''}`} />
+                    Run AI research to generate decisions
+                  </Button>
+                </div>
               ) : (
                 <ul className="space-y-3">
                   {decisions.map((d) => (

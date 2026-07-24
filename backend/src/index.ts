@@ -29,6 +29,9 @@ import { assignmentsRoutes } from './modules/assignments/assignments.routes';
 import { scoringRoutes } from './modules/scoring/scoring.routes';
 import { integrationsRoutes } from './modules/integrations/integrations.routes';
 import { templatesRoutes } from './modules/templates/templates.routes';
+import { filesRoutes } from './modules/files/files.routes';
+import { messagesRoutes } from './modules/messages/messages.routes';
+import { pagesRoutes } from './modules/pages/pages.routes';
 import { outreachRoutes } from './modules/outreach/outreach.routes';
 import { reportsRoutes } from './modules/reports/reports.routes';
 import { teamMetricsRoutes } from './modules/team-metrics';
@@ -43,6 +46,13 @@ import aiReplyRoutes from './modules/ai-reply/ai-reply.routes';
 import agentRoutes from './modules/agent/agent.routes';
 import chatRoutes from './modules/chat/chat.routes';
 import { mcpRoutes } from './modules/mcp/mcp.routes';
+import {
+  oauthMetadata,
+  oauthAuthorize,
+  oauthAuthorizeSubmit,
+  oauthToken,
+  oauthRegister,
+} from './modules/mcp/mcp.oauth';
 import { planRoutes } from './modules/agent-planner';
 import { initNotificationSubscriber } from './modules/notifications/notifications.emitter';
 import { trackingRoutes } from './modules/tracking/tracking.routes';
@@ -102,6 +112,15 @@ app.use(
 // ── HTTP Request Metrics ──────────────────────────────────────────────────────
 app.use(httpMetricsMiddleware);
 
+// ── OAuth 2.0 Server (for Claude Web MCP Connector) ──────────────────────────
+// These routes are public — no auth middleware. The token endpoint exchanges a
+// short-lived code for the user's CRM API key (issued on the authorize page).
+app.get('/.well-known/oauth-authorization-server', oauthMetadata);
+app.post('/oauth/register', oauthRegister);
+app.get('/oauth/authorize', oauthAuthorize);
+app.post('/oauth/authorize', oauthAuthorizeSubmit);
+app.post('/oauth/token', oauthToken);
+
 // ── Health Check (no auth, no rate limit) ─────────────────────────────────────
 app.get('/health', (_req, res) => {
   void (async (): Promise<void> => {
@@ -154,6 +173,9 @@ app.use('/api/v1/assignments', assignmentsRoutes);
 app.use('/api/v1/scoring', scoringRoutes);
 app.use('/api/v1/integrations', authenticatedLimiter, integrationsRoutes);
 app.use('/api/v1/templates', authenticatedLimiter, templatesRoutes);
+app.use('/api/v1/files', authenticatedLimiter, filesRoutes);
+app.use('/api/v1/messages', authenticatedLimiter, messagesRoutes);
+app.use('/api/v1/pages', pagesRoutes);
 app.use('/api/v1/outreach', authenticatedLimiter, outreachRoutes);
 app.use('/api/v1/reports', reportsRoutes);
 app.use('/api/v1/team', teamMetricsRoutes);
@@ -186,7 +208,7 @@ app.use(errorHandler);
 
 initNotificationSubscriber();
 
-app.listen(PORT, () => {
+app.listen(Number(PORT), '0.0.0.0', () => {
   logger.info(`CRM API server listening on port ${PORT}`, { env: process.env.NODE_ENV });
 });
 

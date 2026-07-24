@@ -61,6 +61,7 @@ const leadFixture = (): LeadRow => ({
   deal_value: null,
   won_at: null,
   lost_at: null,
+  next_follow_up_at: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   deleted_at: null,
@@ -139,6 +140,32 @@ describe('personalizeMessage', () => {
 
     expect(result.message).toContain('Acme Corp');
     expect(result.message).not.toContain('{unknown_var}');
+  });
+
+  test('substitutes double-brace contact variables in fallback', async () => {
+    mockRedisGet.mockResolvedValue(null);
+
+    const tpl: TemplateRow = {
+      ...templateFixture(),
+      body: 'Hi {{client_name}}, thanks for your interest, {{first_name}}!',
+    };
+
+    const result = await personalizeMessage(leadFixture(), tpl, { enabled: false });
+
+    expect(result.message).toBe('Hi Alice, thanks for your interest, Alice!');
+  });
+
+  test('strips unmatched double-brace placeholders without leaving a stray brace', async () => {
+    mockRedisGet.mockResolvedValue(null);
+
+    const tpl: TemplateRow = {
+      ...templateFixture(),
+      body: 'Hi {{unknown_var}}, welcome!',
+    };
+
+    const result = await personalizeMessage(leadFixture(), tpl, { enabled: false });
+
+    expect(result.message).toBe('Hi , welcome!');
   });
 
   test('caches OpenAI result for 7 days', async () => {

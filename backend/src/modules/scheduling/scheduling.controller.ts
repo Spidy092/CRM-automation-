@@ -7,9 +7,12 @@ import {
   createBookingUrlSchema,
   updateBookingUrlSchema,
   createBookingSchema,
+  createInternalBookingSchema,
   bookingUrlSlugParamSchema,
   bookingIdParamSchema,
   availabilityQuerySchema,
+  createDateOverrideSchema,
+  overrideIdParamSchema,
 } from './scheduling.schema';
 
 // ── Availability ─────────────────────────────────────────────────────────
@@ -155,7 +158,7 @@ export async function getPublicAvailableSlotsHandler(
     const { date } = availabilityQuerySchema.parse(req.query);
 
     const url = await schedulingService.getBookingUrlBySlug(slug);
-    const slots = await schedulingService.getAvailableSlots(url.user_id, date);
+    const slots = await schedulingService.getAvailableSlots(url.user_id, date, slug);
     sendSuccess(res, slots);
   } catch (err) {
     next(err);
@@ -193,6 +196,21 @@ export async function listBookingsHandler(
   }
 }
 
+export async function createInternalBookingHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as any).user.id;
+    const body = createInternalBookingSchema.parse(req.body);
+    const booking = await schedulingService.createInternalBooking(userId, body);
+    sendSuccess(res, booking, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function cancelBookingHandler(
   req: Request,
   res: Response,
@@ -218,6 +236,52 @@ export async function getRoundRobinUserHandler(
   try {
     const userId = await schedulingService.getRoundRobinUser();
     sendSuccess(res, { userId });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── Date Overrides ───────────────────────────────────────────────────────
+
+export async function listDateOverridesHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as any).user.id;
+    const overrides = await schedulingService.listDateOverrides(userId);
+    sendSuccess(res, overrides);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function setDateOverrideHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as any).user.id;
+    const body = createDateOverrideSchema.parse(req.body);
+    const override = await schedulingService.setDateOverride(userId, body, userId);
+    sendSuccess(res, override, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteDateOverrideHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as any).user.id;
+    const { overrideId } = overrideIdParamSchema.parse(req.params);
+    await schedulingService.removeDateOverride(overrideId, userId);
+    sendSuccess(res, { success: true });
   } catch (err) {
     next(err);
   }

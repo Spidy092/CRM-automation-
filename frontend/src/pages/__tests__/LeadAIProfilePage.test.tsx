@@ -12,6 +12,14 @@ vi.mock('@/api/aiIntelligence', () => ({
   useTriggerLeadResearch: () => mockUseTriggerResearch(),
 }));
 
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useParams: () => ({ id: 'lead-1' }),
+  };
+});
+
 const fakeProfile = {
   id: 'p1',
   lead_id: 'lead-1',

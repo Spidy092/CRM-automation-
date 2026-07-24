@@ -99,6 +99,17 @@ export const listTasksQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional(),
 });
 
+/**
+ * Ad-hoc single-lead send, decoupled from any campaign/sequence — the
+ * "quick response" action on the lead detail page. Unlike `manualSendSchema`
+ * this never re-triggers a sequence step; it fires once and logs a
+ * campaign_id-less outreach_logs row.
+ */
+export const quickSendSchema = z.object({
+  channel: channelEnum,
+  templateId: z.string().uuid(),
+});
+
 export const manualSendSchema = z.object({
   leadId: z.string().uuid(),
   campaignId: z.string().uuid(),
@@ -132,4 +143,5 @@ export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 export type ManualSendInput = z.infer<typeof manualSendSchema>;
+export type QuickSendInput = z.infer<typeof quickSendSchema>;
 export type LaunchCampaignInput = z.infer<typeof launchCampaignSchema>;

@@ -43,6 +43,7 @@ jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findActiveCampaignsByPipeline: jest.fn(),
   findActiveCampaignsByStage: jest.fn(),
   findActiveCampaignsByPipelineNoStage: jest.fn(),
+  findActiveCampaignsBySourceOrTags: jest.fn(),
   addLeadsToCampaign: jest.fn(),
 }));
 
@@ -75,11 +76,17 @@ jest.mock('../shared/utils/logger', () => ({
   },
 }));
 
-import { handleStageMoved, handleLeadEvent, startEventsWorker } from './events.worker';
+import {
+  handleStageMoved,
+  handleLeadEvent,
+  handleLeadCreatedTrigger,
+  startEventsWorker,
+} from './events.worker';
 import {
   findActiveCampaignsByPipeline,
   findActiveCampaignsByStage,
   findActiveCampaignsByPipelineNoStage,
+  findActiveCampaignsBySourceOrTags,
   addLeadsToCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import { findSequenceById, findNextBestActionByLeadId } from '../modules/outreach/outreach.repository';
@@ -100,6 +107,7 @@ import { logger } from '../shared/utils/logger';
 const mockFindActiveCampaignsByPipeline = findActiveCampaignsByPipeline as jest.Mock;
 const mockFindActiveCampaignsByStage = findActiveCampaignsByStage as jest.Mock;
 const mockFindActiveCampaignsByPipelineNoStage = findActiveCampaignsByPipelineNoStage as jest.Mock;
+const mockFindActiveCampaignsBySourceOrTags = findActiveCampaignsBySourceOrTags as jest.Mock;
 const mockAddLeadsToCampaign = addLeadsToCampaign as jest.Mock;
 const mockFindSequenceById = findSequenceById as jest.Mock;
 const mockFindNextBestActionByLeadId = findNextBestActionByLeadId as jest.Mock;
@@ -149,6 +157,7 @@ beforeEach(() => {
   mockFindActiveCampaignsByPipeline.mockResolvedValue([]);
   mockFindActiveCampaignsByStage.mockResolvedValue([baseCampaign]);
   mockFindActiveCampaignsByPipelineNoStage.mockResolvedValue([]);
+  mockFindActiveCampaignsBySourceOrTags.mockResolvedValue([]);
   mockFindSequenceById.mockResolvedValue(baseSequence);
   mockFindNextBestActionByLeadId.mockResolvedValue(null);
   mockFindLeadById.mockResolvedValue(null);
@@ -353,6 +362,50 @@ describe('handleStageMoved', () => {
     expect(logger.warn).toHaveBeenCalledWith(
       'campaign sequence has no steps, skipping enrollment',
       expect.any(Object),
+    );
+  });
+});
+
+describe('handleLeadCreatedTrigger', () => {
+  it('does nothing when the lead cannot be found', async () => {
+    mockFindLeadById.mockResolvedValue(null);
+    await handleLeadCreatedTrigger('lead1');
+    expect(mockFindActiveCampaignsBySourceOrTags).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when no campaign matches source/tags', async () => {
+    mockFindLeadById.mockResolvedValue({
+      id: 'lead1',
+      business_name: 'Acme',
+      source_platform: 'google_business',
+      tags: [],
+      assigned_to: null,
+    });
+    mockFindActiveCampaignsBySourceOrTags.mockResolvedValue([]);
+    await handleLeadCreatedTrigger('lead1');
+    expect(mockFindActiveCampaignsBySourceOrTags).toHaveBeenCalledWith('google_business', []);
+    expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
+  });
+
+  it('enrolls lead and dispatches first step when a campaign matches source/tags', async () => {
+    mockFindLeadById.mockResolvedValue({
+      id: 'lead1',
+      business_name: 'Acme',
+      source_platform: 'facebook',
+      tags: ['vip'],
+      assigned_to: 'rep1',
+    });
+    mockFindActiveCampaignsBySourceOrTags.mockResolvedValue([baseCampaign]);
+
+    await handleLeadCreatedTrigger('lead1');
+
+    expect(mockAddLeadsToCampaign).toHaveBeenCalledWith('camp1', ['lead1']);
+    expect(mockEnqueueOutreachDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ leadId: 'lead1', campaignId: 'camp1', stepNumber: 1 }),
+    );
+    expect(mockPushToUser).toHaveBeenCalledWith(
+      'rep1',
+      expect.objectContaining({ type: 'campaign_enrolled' }),
     );
   });
 });

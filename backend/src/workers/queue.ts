@@ -67,6 +67,11 @@ export const AI_INBOX_QUEUE = 'ai-inbox';
 // AI Sales Operator events (Phase 2)
 export const AI_EVENTS_QUEUE = 'ai-events';
 
+// Newsletter (Broadcast & Cron)
+export const NEWSLETTER_BROADCAST = 'newsletter:broadcast';
+export const NEWSLETTER_AUTOMATED_DIGEST = 'newsletter:automated-digest';
+export const NEWSLETTER_QUEUE = 'newsletter';
+
 // AI Next-Best-Action decisions (Phase 2 — Sprint 6)
 export const AI_DECISION_LEAD = 'ai:next-action';
 export const AI_DECISION_QUEUE = 'ai-decisions';
@@ -207,6 +212,16 @@ export const outreachQueue = new Queue(OUTREACH_QUEUE, {
   },
 });
 
+export const newsletterQueue = new Queue(NEWSLETTER_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2_000 },
+    removeOnComplete: { count: 1_000, age: 24 * 60 * 60 },
+    removeOnFail: { count: 500, age: 7 * 24 * 60 * 60 },
+  },
+});
+
 // ── Job payload types ──────────────────────────────────────────────────────
 
 export interface ScoringCalculateLeadJob {
@@ -266,6 +281,10 @@ export interface OutreachFollowUpJob {
 export interface ScraperRunJob {
   configId: string;
   triggeredBy: string;
+  /** Pre-created log row to write results into. Absent for scheduled
+   *  (cron-triggered) runs, which create their own log row when the job
+   *  actually executes. */
+  logId?: string;
 }
 
 // ── Phase 2 AI Job Payloads ───────────────────────────────────────────────
@@ -365,7 +384,22 @@ export type JobData =
   | { name: typeof OUTREACH_STOP_CHECK; data: OutreachStopCheckJob }
   | { name: typeof OUTREACH_SEND_AI_REPLY; data: OutreachSendAiReplyJob }
   | { name: typeof REPORT_EXPORT; data: ReportExportJob }
-  | { name: typeof SCRAPER_RUN; data: ScraperRunJob };
+  | { name: typeof SCRAPER_RUN; data: ScraperRunJob }
+  | { name: typeof NEWSLETTER_BROADCAST; data: NewsletterBroadcastJob }
+  | { name: typeof NEWSLETTER_AUTOMATED_DIGEST; data: NewsletterAutomatedDigestJob };
+
+export interface NewsletterBroadcastJob {
+  subject: string;
+  htmlBody: string;
+}
+
+export interface NewsletterAutomatedDigestJob {
+  // Empty or configurable rules for digest creation
+}
+
+export async function enqueueScoringCalculate(leadId: string): Promise<void> {
+  await scoringQueue.add(SCORING_CALCULATE_LEAD, { leadId });
+}
 
 /**
  * Enqueue a round-robin assignment for a lead. Idempotent: callers should not
@@ -459,6 +493,27 @@ export async function enqueueOutreachStopCheck(payload: OutreachStopCheckJob): P
   await outreachQueue.add(OUTREACH_STOP_CHECK, payload, {
     jobId: outreachJobId('stop-check', payload),
   });
+}
+
+export async function enqueueNewsletterBroadcast(payload: NewsletterBroadcastJob): Promise<void> {
+  await newsletterQueue.add(NEWSLETTER_BROADCAST, payload);
+}
+
+export async function toggleNewsletterAutomatedDigest(enabled: boolean): Promise<void> {
+  if (enabled) {
+    await newsletterQueue.add(
+      NEWSLETTER_AUTOMATED_DIGEST,
+      {},
+      { repeat: { pattern: '0 9 * * 5' } } // Every Friday at 9 AM
+    );
+  } else {
+    const repeatableJobs = await newsletterQueue.getRepeatableJobs();
+    for (const job of repeatableJobs) {
+      if (job.name === NEWSLETTER_AUTOMATED_DIGEST) {
+        await newsletterQueue.removeRepeatableByKey(job.key);
+      }
+    }
+  }
 }
 
 export async function cancelPendingOutreachJobs(filter: {

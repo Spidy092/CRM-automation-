@@ -31,6 +31,12 @@ export async function setAvailability(
   }>,
   actorId: string,
 ): Promise<Availability[]> {
+  for (const slot of slots) {
+    if (slot.isActive && slot.startTime >= slot.endTime) {
+      throw new AppError('Start time must be before end time', 400);
+    }
+  }
+
   await repo.upsertAvailability(userId, slots);
 
   await writeAuditLog({
@@ -47,19 +53,76 @@ export async function setAvailability(
 
 // ── Available Slots ──────────────────────────────────────────────────────
 
-export async function getAvailableSlots(userId: string, date: string): Promise<DateAvailability> {
+export async function getAvailableSlots(
+  userId: string,
+  date: string,
+  slug?: string,
+): Promise<DateAvailability> {
+  // Fetch specific booking URL if slug provided
+  let bookingUrl: BookingUrl | null = null;
+  if (slug) {
+    bookingUrl = await repo.findBookingUrlBySlug(slug);
+    if (!bookingUrl || !bookingUrl.is_active) {
+      throw new AppError('Booking page not found or inactive', 404);
+    }
+  }
+
+  // Check date override (holidays/vacations)
+  const dateOverride = await repo.findDateOverrideByUserAndDate(userId, date);
+  if (dateOverride?.is_blocked) {
+    return { date, slots: [] };
+  }
+
   const dateObj = new Date(date + 'T00:00:00Z');
   const dayOfWeek = dateObj.getUTCDay();
 
-  const availability = await repo.findAvailabilityByUserAndDay(userId, dayOfWeek);
+  // Validate max advance days if bookingUrl exists
+  const maxAdvanceDays = bookingUrl?.max_advance_days ?? 30;
+  const maxAllowedDate = new Date();
+  maxAllowedDate.setDate(maxAllowedDate.getDate() + maxAdvanceDays);
+  if (dateObj > maxAllowedDate) {
+    return { date, slots: [] };
+  }
+
+  let availability = await repo.findAvailabilityByUserAndDay(userId, dayOfWeek);
+
+  // Apply custom time window override if set
+  if (dateOverride && !dateOverride.is_blocked && dateOverride.start_time && dateOverride.end_time) {
+    availability = [
+      {
+        id: 'override',
+        user_id: userId,
+        day_of_week: dayOfWeek,
+        start_time: dateOverride.start_time,
+        end_time: dateOverride.end_time,
+        slot_duration_min: 30,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+  }
+
   if (availability.length === 0) {
     return { date, slots: [] };
   }
+
+  // Fetch booking URL for buffer settings if not passed via slug
+  if (!bookingUrl) {
+    const urls = await repo.findBookingUrlsByUser(userId);
+    bookingUrl = urls.find((u) => u.is_active) ?? null;
+  }
+  const bufferBeforeMs = (bookingUrl?.buffer_before_min ?? 0) * 60 * 1000;
+  const bufferAfterMs = (bookingUrl?.buffer_after_min ?? 0) * 60 * 1000;
 
   // Get existing bookings for this date
   const startOfDay = date + 'T00:00:00Z';
   const endOfDay = date + 'T23:59:59Z';
   const existingBookings = await repo.findBookingsByUserAndDateRange(userId, startOfDay, endOfDay);
+
+  const now = new Date();
+  // Minimum advance notice (e.g. at least 2 hours notice)
+  const minNoticeThreshold = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
   // Generate time slots
   const slots: TimeSlot[] = [];
@@ -81,15 +144,20 @@ export async function getAvailableSlots(userId: string, date: string): Promise<D
       const slotStartISO = slotStart.toISOString();
       const slotEndISO = slotEnd.toISOString();
 
-      // Check for conflicts
-      const hasConflict = existingBookings.some(
-        (b) => new Date(b.starts_at) < slotEnd && new Date(b.ends_at) > slotStart,
-      );
+      // Check if slot starts before minimum notice threshold
+      const isTooSoon = slotStart < minNoticeThreshold;
+
+      // Check for conflicts including buffer windows
+      const hasConflict = existingBookings.some((b) => {
+        const bStartWithBuffer = new Date(new Date(b.starts_at).getTime() - bufferBeforeMs);
+        const bEndWithBuffer = new Date(new Date(b.ends_at).getTime() + bufferAfterMs);
+        return bStartWithBuffer < slotEnd && bEndWithBuffer > slotStart;
+      });
 
       slots.push({
         start: slotStartISO,
         end: slotEndISO,
-        available: !hasConflict,
+        available: !isTooSoon && !hasConflict,
       });
 
       currentMinutes += avail.slot_duration_min;
@@ -97,6 +165,46 @@ export async function getAvailableSlots(userId: string, date: string): Promise<D
   }
 
   return { date, slots };
+}
+
+// ── Date Overrides ───────────────────────────────────────────────────────
+
+export async function listDateOverrides(userId: string) {
+  return repo.findDateOverridesByUser(userId);
+}
+
+export async function setDateOverride(
+  userId: string,
+  input: {
+    overrideDate: string;
+    isBlocked: boolean;
+    startTime?: string;
+    endTime?: string;
+    reason?: string;
+  },
+  actorId: string,
+) {
+  const override = await repo.upsertDateOverride(userId, input);
+  await writeAuditLog({
+    userId: actorId,
+    action: 'scheduling.date_override.updated',
+    entityType: 'user',
+    entityId: userId,
+    newValue: { date: input.overrideDate, isBlocked: input.isBlocked },
+    ipAddress: null,
+  });
+  return override;
+}
+
+export async function removeDateOverride(overrideId: string, userId: string) {
+  await repo.deleteDateOverride(overrideId, userId);
+  await writeAuditLog({
+    userId,
+    action: 'scheduling.date_override.deleted',
+    entityType: 'user_date_override',
+    entityId: overrideId,
+    ipAddress: null,
+  });
 }
 
 // ── Booking URLs ─────────────────────────────────────────────────────────
@@ -107,7 +215,7 @@ export async function listBookingUrls(userId: string): Promise<BookingUrl[]> {
 
 export async function getBookingUrlBySlug(slug: string): Promise<BookingUrl> {
   const url = await repo.findBookingUrlBySlug(slug);
-  if (!url) throw new AppError('Booking page not found', 404);
+  if (!url || !url.is_active) throw new AppError('Booking page not found or inactive', 404);
   return url;
 }
 
@@ -189,7 +297,7 @@ export async function listBookings(userId: string): Promise<Booking[]> {
 
 export async function createBooking(slug: string, input: CreateBookingInput): Promise<Booking> {
   const bookingUrl = await repo.findBookingUrlBySlug(slug);
-  if (!bookingUrl) throw new AppError('Booking page not found', 404);
+  if (!bookingUrl || !bookingUrl.is_active) throw new AppError('Booking page not found or inactive', 404);
 
   // Validate slot is in the future
   const startsAt = new Date(input.startsAt);
@@ -202,6 +310,13 @@ export async function createBooking(slug: string, input: CreateBookingInput): Pr
   maxDate.setDate(maxDate.getDate() + bookingUrl.max_advance_days);
   if (startsAt > maxDate) {
     throw new AppError(`Cannot book more than ${bookingUrl.max_advance_days} days in advance`, 400);
+  }
+
+  // Check date override (holidays / vacations)
+  const dateStr = startsAt.toISOString().slice(0, 10);
+  const dateOverride = await repo.findDateOverrideByUserAndDate(bookingUrl.user_id, dateStr);
+  if (dateOverride?.is_blocked) {
+    throw new AppError('This date is not available for booking', 409);
   }
 
   // Calculate end time (30 min default)
@@ -312,6 +427,113 @@ export async function cancelBooking(bookingId: string, actorId: string): Promise
   });
 
   return updated;
+}
+
+export async function createInternalBooking(
+  userId: string,
+  input: {
+    leadId?: string;
+    bookingUrlId?: string;
+    bookerName: string;
+    bookerEmail: string;
+    bookerPhone?: string;
+    startsAt: string;
+    notes?: string;
+    forceOverride?: boolean;
+  },
+): Promise<Booking> {
+  const startsAt = new Date(input.startsAt);
+  if (startsAt <= new Date()) {
+    throw new AppError('Booking time must be in the future', 400);
+  }
+
+  const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
+
+  // Check double booking conflicts
+  const conflicts = await repo.findConflictingBookings(
+    userId,
+    startsAt.toISOString(),
+    endsAt.toISOString(),
+  );
+  if (conflicts.length > 0) {
+    throw new AppError('You already have a conflicting meeting at this time slot', 409);
+  }
+
+  // If not force overriding, check date blockouts
+  if (!input.forceOverride) {
+    const dateStr = startsAt.toISOString().slice(0, 10);
+    const dateOverride = await repo.findDateOverrideByUserAndDate(userId, dateStr);
+    if (dateOverride?.is_blocked) {
+      throw new AppError(
+        'This date is marked as blocked/holiday. Check "Force schedule outside standard availability" to override.',
+        409,
+      );
+    }
+  }
+
+  // Find or fallback booking URL
+  let bookingUrlId = input.bookingUrlId;
+  if (!bookingUrlId) {
+    const urls = await repo.findBookingUrlsByUser(userId);
+    const activeUrl = urls.find((u) => u.is_active);
+    if (!activeUrl) {
+      throw new AppError('Please create a Booking Page first before scheduling meetings', 400);
+    }
+    bookingUrlId = activeUrl.id;
+  }
+
+  // Create Google Calendar event with attendee invite
+  let googleEventId: string | null = null;
+  let meetingUrl: string | null = null;
+
+  try {
+    const eventResult = await createEvent({
+      summary: `Meeting with ${input.bookerName}`,
+      description: input.notes ?? 'Scheduled via CRM Platform',
+      startAt: startsAt.toISOString(),
+      endAt: endsAt.toISOString(),
+      attendees: [input.bookerEmail],
+    });
+
+    if (eventResult.ok) {
+      googleEventId = eventResult.eventId;
+      meetingUrl = eventResult.htmlLink;
+    }
+  } catch (err) {
+    logger.warn('Google Calendar event creation failed during internal booking', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const booking = await repo.insertBooking({
+    booking_url_id: bookingUrlId,
+    user_id: userId,
+    lead_id: input.leadId ?? null,
+    booker_name: input.bookerName,
+    booker_email: input.bookerEmail,
+    booker_phone: input.bookerPhone ?? null,
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    meeting_url: meetingUrl,
+    notes: input.notes ?? null,
+    google_event_id: googleEventId,
+  });
+
+  await writeAuditLog({
+    userId,
+    action: 'scheduling.internal_booking.created',
+    entityType: 'booking',
+    entityId: booking.id,
+    newValue: {
+      booker: input.bookerName,
+      email: input.bookerEmail,
+      starts_at: startsAt.toISOString(),
+      forceOverride: input.forceOverride ?? false,
+    },
+    ipAddress: null,
+  });
+
+  return booking;
 }
 
 // ── Round Robin ──────────────────────────────────────────────────────────

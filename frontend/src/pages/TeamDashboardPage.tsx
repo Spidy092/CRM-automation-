@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTeamMetrics } from '@/api/teamMetrics';
 import { usePipelines } from '@/api/pipelines';
 import { Button } from '@/components/ui/button';
@@ -144,44 +145,52 @@ export function TeamDashboardPage() {
       {/* Summary cards */}
       {summary && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">Total Leads</CardTitle>
-              <Users className="h-4 w-4 text-slate-400" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-slate-900">{summary.totalLeads}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">Contacted Leads</CardTitle>
-              <UserCheck className="h-4 w-4 text-slate-400" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-emerald-600">{summary.contactedLeads}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">Avg Response Time</CardTitle>
-              <Clock className="h-4 w-4 text-slate-400" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-indigo-600">
-                {summary.avgResponseTime > 0 ? `${Math.round(summary.avgResponseTime)}s` : '—'}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">Total Activities</CardTitle>
-              <Activity className="h-4 w-4 text-slate-400" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-amber-600">{summary.totalActivities}</p>
-            </CardContent>
-          </Card>
+          <Link to="/leads" className="block transition-transform hover:-translate-y-0.5">
+            <Card className="h-full">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-slate-500">Total Leads</CardTitle>
+                <Users className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-slate-900">{summary.totalLeads}</p>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link to="/leads" className="block transition-transform hover:-translate-y-0.5">
+            <Card className="h-full">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-slate-500">Contacted Leads</CardTitle>
+                <UserCheck className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-emerald-600">{summary.contactedLeads}</p>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link to="/reports" className="block transition-transform hover:-translate-y-0.5">
+            <Card className="h-full">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-slate-500">Avg Response Time</CardTitle>
+                <Clock className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-indigo-600">
+                  {summary.avgResponseTime > 0 ? `${Math.round(summary.avgResponseTime)}s` : '—'}
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link to="/reports" className="block transition-transform hover:-translate-y-0.5">
+            <Card className="h-full">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-slate-500">Total Activities</CardTitle>
+                <Activity className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-amber-600">{summary.totalActivities}</p>
+              </CardContent>
+            </Card>
+          </Link>
         </div>
       )}
 

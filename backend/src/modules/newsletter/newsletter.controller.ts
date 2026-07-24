@@ -10,6 +10,9 @@ import {
   updatePreferencesBodySchema,
   listSubscribersQuerySchema,
   subscriberIdParamSchema,
+  broadcastBodySchema,
+  automatedDigestToggleSchema,
+  updateDigestConfigSchema,
 } from './newsletter.schema';
 
 /** Strips the persisted unsubscribe token hash before any admin-facing response. */
@@ -135,3 +138,63 @@ export async function getSubscriberHandler(
     next(err);
   }
 }
+
+export async function broadcastHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const body = broadcastBodySchema.parse(req.body);
+    const result = await newsletterService.triggerBroadcast(body.subject, body.htmlBody);
+    if (!result.ok) throw result.error;
+    sendSuccess(res, result.value, 202);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function toggleAutomatedDigestHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const body = automatedDigestToggleSchema.parse(req.body);
+    const result = await newsletterService.toggleAutomatedDigest(body.enabled);
+    if (!result.ok) throw result.error;
+    sendSuccess(res, result.value);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getDigestConfigHandler(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const result = await newsletterService.getDigestConfig();
+    if (!result.ok) throw result.error;
+    sendSuccess(res, result.value);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateDigestConfigHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const body = updateDigestConfigSchema.parse(req.body);
+    const result = await newsletterService.updateDigestConfig(body);
+    if (!result.ok) throw result.error;
+    sendSuccess(res, result.value);
+  } catch (err) {
+    next(err);
+  }
+}
+

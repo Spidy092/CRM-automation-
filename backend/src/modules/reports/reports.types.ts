@@ -31,6 +31,8 @@ export interface DashboardMetrics {
   /** Count of leads with status = 'won'. */
   wonDeals: number;
   recentActivity: DashboardActivityPoint[];
+  leadSources?: Array<{ name: string; value: number }>;
+  myPipelineStages?: Array<{ name: string; count: number }>;
 }
 
 export interface DashboardActivityPoint {

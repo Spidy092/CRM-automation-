@@ -15,6 +15,10 @@ export interface Campaign {
   sequence_id: string | null;
   pipeline_id: string | null;
   trigger_stage_id: string | null;
+  /** Lead source_platform values that auto-enroll a new lead into this campaign. */
+  trigger_source: string[] | null;
+  /** Lead tags that auto-enroll a new lead into this campaign (any-match). */
+  trigger_tags: string[] | null;
   ai_personalization_enabled: boolean;
   send_window_enabled: boolean;
   /** Local hour (0–23), inclusive, in send_window_timezone. */
@@ -72,6 +76,8 @@ export interface CreateCampaignInput {
   sequence_id?: string;
   pipeline_id?: string;
   trigger_stage_id?: string | null;
+  trigger_source?: string[] | null;
+  trigger_tags?: string[] | null;
   ai_personalization_enabled?: boolean;
   send_window_enabled?: boolean;
   send_window_start_hour?: number;
@@ -89,6 +95,8 @@ export interface UpdateCampaignInput {
   sequence_id?: string;
   pipeline_id?: string;
   trigger_stage_id?: string | null;
+  trigger_source?: string[] | null;
+  trigger_tags?: string[] | null;
   ai_personalization_enabled?: boolean;
   send_window_enabled?: boolean;
   send_window_start_hour?: number;

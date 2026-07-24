@@ -20,8 +20,10 @@ import { Sentry } from '../shared/utils/sentry';
 import {
   findActiveCampaignsByStage,
   findActiveCampaignsByPipelineNoStage,
+  findActiveCampaignsBySourceOrTags,
   addLeadsToCampaign,
 } from '../modules/campaigns/campaigns.repository';
+import type { Campaign } from '../modules/campaigns/campaigns.types';
 import {
   findSequenceById,
   findNextBestActionByLeadId,
@@ -36,7 +38,8 @@ import { pushToUser } from '../modules/notifications/notifications.emitter';
  * Lead Events Worker
  *
  * Consumes `lead-events` queue and triggers downstream automation:
- *   - lead.created       → enqueue scoring recalculation
+ *   - lead.created       → enqueue scoring recalculation + AI research, and auto-enroll into
+ *                          any active campaign whose trigger_source/trigger_tags match the lead
  *   - lead.stage_moved   → auto-enroll lead in active campaigns targeting that pipeline
  *                          and dispatch first outreach step for each
  *   - lead.status_changed → cancel pending outreach when lead is paused/won/lost/opted_out
@@ -113,6 +116,7 @@ export async function handleLeadEvent(data: LeadEventJob): Promise<void> {
       await scoringQueue.add(SCORING_CALCULATE_LEAD, { leadId });
       await enqueueAiResearch({ leadId });
       logger.info('lead.created → scoring + ai research enqueued', { leadId });
+      await handleLeadCreatedTrigger(leadId);
       break;
 
     case 'lead.stage_moved':
@@ -191,90 +195,130 @@ export async function handleStageMoved(
   const nextBestAction = await findNextBestActionByLeadId(leadId);
 
   for (const campaign of campaigns) {
-    if (!campaign.sequence_id) continue;
-
-    const sequence = await findSequenceById(campaign.sequence_id);
-    if (!sequence) {
-      logger.warn('campaign sequence not found, skipping enrollment', {
-        leadId,
-        campaignId: campaign.id,
-        sequenceId: campaign.sequence_id,
-      });
-      continue;
-    }
-
-    const steps = sequence.steps as Array<{
-      stepNumber: number;
-      channel: string;
-      templateId: string;
-      delayHours: number;
-    }>;
-    if (!steps || steps.length === 0) {
-      logger.warn('campaign sequence has no steps, skipping enrollment', {
-        leadId,
-        campaignId: campaign.id,
-      });
-      continue;
-    }
-
-    const firstStep = [...steps].sort((a, b) => a.stepNumber - b.stepNumber)[0];
-
-    await addLeadsToCampaign(campaign.id, [leadId]);
-
-    const routed = await routeByNextBestAction({
-      leadId,
-      campaign,
-      firstStep,
-      nextBestAction,
+    await enrollLeadInCampaign(leadId, campaign, nextBestAction, {
+      triggerReason: 'stage move',
+      logContext: { pipelineId, toStageId },
     });
+  }
+}
 
-    if (routed) {
-      logger.info('lead auto-enrolled in campaign → outreach routed by next_best_action', {
-        leadId,
-        campaignId: campaign.id,
-        pipelineId,
-        toStageId,
-        triggerStageId: campaign.trigger_stage_id ?? null,
-        firstStepNumber: firstStep.stepNumber,
-        action: nextBestAction?.action,
-      });
-      continue;
-    }
+export async function handleLeadCreatedTrigger(leadId: string): Promise<void> {
+  const lead = await findLeadById(leadId).catch(() => null);
+  if (!lead) {
+    logger.warn('lead.created trigger: lead not found, skipping', { leadId });
+    return;
+  }
 
-    await enqueueOutreachDispatch({
+  const campaigns = await findActiveCampaignsBySourceOrTags(lead.source_platform, lead.tags ?? []);
+
+  if (campaigns.length === 0) {
+    logger.info('lead.created: no matching source/tag-triggered campaigns', {
+      leadId,
+      source: lead.source_platform,
+      tags: lead.tags,
+    });
+    return;
+  }
+
+  const nextBestAction = await findNextBestActionByLeadId(leadId);
+
+  for (const campaign of campaigns) {
+    await enrollLeadInCampaign(leadId, campaign, nextBestAction, {
+      triggerReason: 'source/tag match on lead creation',
+      logContext: { source: lead.source_platform, tags: lead.tags },
+    });
+  }
+}
+
+async function enrollLeadInCampaign(
+  leadId: string,
+  campaign: Campaign,
+  nextBestAction: { action: string; reason: string; confidence: number } | null,
+  options: { triggerReason: string; logContext: Record<string, unknown> },
+): Promise<void> {
+  const { triggerReason, logContext } = options;
+
+  if (!campaign.sequence_id) return;
+
+  const sequence = await findSequenceById(campaign.sequence_id);
+  if (!sequence) {
+    logger.warn('campaign sequence not found, skipping enrollment', {
       leadId,
       campaignId: campaign.id,
       sequenceId: campaign.sequence_id,
-      stepNumber: firstStep.stepNumber,
-      channel: firstStep.channel as 'whatsapp' | 'email' | 'sms' | 'phone_call',
-      templateId: firstStep.templateId,
-      mockMode: false,
-      aiPersonalizationEnabled: campaign.ai_personalization_enabled,
     });
+    return;
+  }
 
-    // Push SSE notification to the lead's assigned rep (best-effort)
-    const lead = await findLeadById(leadId).catch(() => null);
-    if (lead?.assigned_to) {
-      void pushToUser(lead.assigned_to, {
-        id: `enroll:${campaign.id}:${leadId}`,
-        type: 'campaign_enrolled',
-        title: 'Lead enrolled in campaign',
-        message: `${lead.business_name} was auto-enrolled in "${campaign.name}" after a stage move.`,
-        data: { leadId, campaignId: campaign.id },
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    logger.info('lead auto-enrolled in campaign → outreach dispatched', {
+  const steps = sequence.steps as Array<{
+    stepNumber: number;
+    channel: string;
+    templateId: string;
+    delayHours: number;
+  }>;
+  if (!steps || steps.length === 0) {
+    logger.warn('campaign sequence has no steps, skipping enrollment', {
       leadId,
       campaignId: campaign.id,
-      pipelineId,
-      toStageId,
-      triggerStageId: campaign.trigger_stage_id ?? null,
+    });
+    return;
+  }
+
+  const firstStep = [...steps].sort((a, b) => a.stepNumber - b.stepNumber)[0];
+
+  await addLeadsToCampaign(campaign.id, [leadId]);
+
+  const routed = await routeByNextBestAction({
+    leadId,
+    campaign,
+    firstStep,
+    nextBestAction,
+  });
+
+  if (routed) {
+    logger.info('lead auto-enrolled in campaign → outreach routed by next_best_action', {
+      leadId,
+      campaignId: campaign.id,
+      triggerReason,
+      ...logContext,
       firstStepNumber: firstStep.stepNumber,
-      channel: firstStep.channel,
+      action: nextBestAction?.action,
+    });
+    return;
+  }
+
+  await enqueueOutreachDispatch({
+    leadId,
+    campaignId: campaign.id,
+    sequenceId: campaign.sequence_id,
+    stepNumber: firstStep.stepNumber,
+    channel: firstStep.channel as 'whatsapp' | 'email' | 'sms' | 'phone_call',
+    templateId: firstStep.templateId,
+    mockMode: false,
+    aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+  });
+
+  // Push SSE notification to the lead's assigned rep (best-effort)
+  const lead = await findLeadById(leadId).catch(() => null);
+  if (lead?.assigned_to) {
+    void pushToUser(lead.assigned_to, {
+      id: `enroll:${campaign.id}:${leadId}`,
+      type: 'campaign_enrolled',
+      title: 'Lead enrolled in campaign',
+      message: `${lead.business_name} was auto-enrolled in "${campaign.name}" (${triggerReason}).`,
+      data: { leadId, campaignId: campaign.id },
+      timestamp: new Date().toISOString(),
     });
   }
+
+  logger.info('lead auto-enrolled in campaign → outreach dispatched', {
+    leadId,
+    campaignId: campaign.id,
+    triggerReason,
+    ...logContext,
+    firstStepNumber: firstStep.stepNumber,
+    channel: firstStep.channel,
+  });
 }
 
 type SequenceStep = { stepNumber: number; channel: string; templateId: string; delayHours: number };

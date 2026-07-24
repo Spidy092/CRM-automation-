@@ -11,6 +11,7 @@ import {
   taskIdParamSchema,
   listTasksQuerySchema,
   manualSendSchema,
+  quickSendSchema,
 } from './outreach.schema';
 import * as outreachService from './outreach.service';
 import { OutreachActor } from './outreach.types';
@@ -166,6 +167,21 @@ export async function sendManualOutreachHandler(
     const input = manualSendSchema.parse(req.body);
     const result = await outreachService.sendManualOutreach(input, actorFromReq(req));
     sendSuccess(res, result, 202);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function quickSendHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { leadId } = leadIdParamSchema.parse(req.params);
+    const input = quickSendSchema.parse(req.body);
+    const log = await outreachService.sendQuickMessage(leadId, input, actorFromReq(req));
+    sendSuccess(res, log, 201);
   } catch (err) {
     next(err);
   }

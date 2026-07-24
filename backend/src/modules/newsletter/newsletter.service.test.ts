@@ -28,6 +28,9 @@ import {
   updateSubscriberPreferences,
   listSubscribers,
   getSubscriberById,
+  getDigestConfig,
+  updateDigestConfig,
+  DEFAULT_DIGEST_CONFIG,
 } from './newsletter.service';
 
 const mockedRepo = repo as jest.Mocked<typeof repo>;
@@ -235,6 +238,44 @@ describe('newsletter.service', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.id).toBe('sub-1');
+    });
+  });
+
+  describe('getDigestConfig & updateDigestConfig', () => {
+    it('returns default config when redis returns null', async () => {
+      mockedRedis.get.mockResolvedValue(null);
+      const result = await getDigestConfig();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toEqual(DEFAULT_DIGEST_CONFIG);
+    });
+
+    it('returns parsed config from redis when present', async () => {
+      const customConfig = {
+        topic: 'Custom Growth Hacks',
+        tone: 'casual',
+        customPrompt: 'Focus on growth.',
+        targetAudience: 'Startups',
+      };
+      mockedRedis.get.mockResolvedValue(JSON.stringify(customConfig));
+      const result = await getDigestConfig();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.topic).toBe('Custom Growth Hacks');
+    });
+
+    it('updates digest config in redis', async () => {
+      const newConfig = {
+        topic: 'New Topic',
+        tone: 'motivational' as const,
+        customPrompt: 'Prompt here',
+        targetAudience: 'Audience',
+      };
+      mockedRedis.set.mockResolvedValue('OK');
+      const result = await updateDigestConfig(newConfig);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toEqual(newConfig);
     });
   });
 });

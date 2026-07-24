@@ -7,7 +7,7 @@ import { findActiveDefinitions } from '../custom-fields/customFields.repository'
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { findStageById } from '../pipeline/pipeline.repository';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
-import { enqueueLeadEvent } from '../../workers/queue';
+import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
 import {
   findExistingForDedup,
   findLeadById,
@@ -21,6 +21,8 @@ import {
   updateLeadOutcome,
   findActivityForLead,
   bulkClassifyLeads as repoBulkClassify,
+  bulkUpdateLeads as repoBulkUpdate,
+  bulkPauseLeads as repoBulkPause,
   type LeadActivityEntry,
 } from './leads.repository';
 import {
@@ -281,27 +283,53 @@ export async function setLeadPaused(
   id: string,
   paused: boolean,
   actor: Actor,
+  reason?: string,
 ): Promise<LeadResponse> {
   const before = await findLeadById(id);
   if (!before) throw new AppError('Lead not found', 404);
   assertAccess(before.assigned_to, actor, true);
 
-  const targetStatus: LeadStatus = paused ? 'paused' : 'active';
-  if (before.status === targetStatus) {
-    return toLeadResponse(before);
+  if (paused) {
+    if (before.status === 'paused') {
+      return toLeadResponse(before);
+    }
+    if (['won', 'lost', 'opted_out'].includes(before.status)) {
+      throw new AppError(`Cannot pause lead with status "${before.status}". Only active leads can be paused.`, 400);
+    }
+  } else {
+    if (before.status === 'active') {
+      return toLeadResponse(before);
+    }
+    if (before.status !== 'paused') {
+      throw new AppError(`Cannot resume lead with status "${before.status}". Only paused leads can be resumed.`, 400);
+    }
   }
 
+  const targetStatus: LeadStatus = paused ? 'paused' : 'active';
   const updated = await updateLeadStatus(id, targetStatus);
   if (paused) {
     await cancelPendingOutreachJobs({ leadId: id });
   }
+
+  await insertActivity({
+    lead_id: id,
+    user_id: actor.id,
+    type: 'status_change',
+    metadata: {
+      field: 'status',
+      from: before.status,
+      to: targetStatus,
+      reason: reason ?? (paused ? 'manual_pause' : 'manual_resume'),
+    },
+  });
+
   await writeAuditLog({
     userId: actor.id,
     action: paused ? 'lead.paused' : 'lead.resumed',
     entityType: 'lead',
     entityId: id,
     oldValue: { status: before.status },
-    newValue: { status: targetStatus },
+    newValue: { status: targetStatus, reason: reason ?? null },
     ipAddress: actor.ipAddress ?? null,
   });
   return toLeadResponse(updated);
@@ -342,6 +370,11 @@ export async function bulkClassifyLeads(
   actor: Actor,
 ): Promise<number> {
   const updated = await repoBulkClassify(ids, classification);
+  if (updated > 0) {
+    for (const leadId of ids) {
+      await enqueueScoringCalculate(leadId);
+    }
+  }
   await writeAuditLog({
     userId: actor.id,
     action: 'lead.bulk_classified',
@@ -351,6 +384,103 @@ export async function bulkClassifyLeads(
     ipAddress: actor.ipAddress ?? null,
   });
   return updated;
+}
+
+export async function bulkUpdateLeads(
+  ids: string[],
+  patch: Partial<LeadInput>,
+  actor: Actor,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+
+  if (patch.custom_fields !== undefined) {
+    const defs = await findActiveDefinitions();
+    const result = validateCustomFieldValues(defs, patch.custom_fields ?? null);
+    if (!result.valid) {
+      throw new AppError(`Invalid custom fields: ${result.errors.join('; ')}`, 422);
+    }
+    patch.custom_fields = result.sanitized;
+  }
+
+  if (patch.pipeline_stage_id !== undefined && patch.pipeline_stage_id !== null) {
+    const targetStage = await findStageById(patch.pipeline_stage_id);
+    if (!targetStage) {
+      throw new AppError('Pipeline stage not found', 404);
+    }
+    const isTargetTerminal = targetStage.is_terminal_won || targetStage.is_terminal_lost;
+
+    for (const leadId of ids) {
+      const lead = await findLeadById(leadId);
+      if (!lead) continue;
+
+      // H3: Cross-pipeline validation
+      if (lead.pipeline_stage_id) {
+        const currentStage = await findStageById(lead.pipeline_stage_id);
+        if (currentStage && currentStage.pipeline_id !== targetStage.pipeline_id) {
+          throw new AppError('Target stage belongs to a different pipeline than the lead’s current pipeline', 400);
+        }
+      }
+
+      // H1: Closed lead protection
+      const isLeadClosed = ['won', 'lost', 'opted_out'].includes(lead.status);
+      if (isLeadClosed && !isTargetTerminal) {
+        throw new AppError('Cannot move a closed (won/lost/opted_out) lead to an active stage. Reopen the lead status first.', 400);
+      }
+
+      // H2: Resolve stage outcome side-effects
+      const outcome = resolveStageOutcome(lead.status, targetStage);
+      if (outcome) {
+        await updateLeadOutcome(leadId, outcome);
+        await insertActivity({
+          lead_id: leadId,
+          user_id: actor.id,
+          type: 'status_change',
+          metadata: { field: 'status', from: lead.status, to: outcome, reason: 'bulk_pipeline_stage_move' },
+        });
+      }
+    }
+  }
+
+  const updated = await repoBulkUpdate(ids, patch);
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'lead.bulk_updated',
+    entityType: 'lead',
+    entityId: 'bulk',
+    newValue: { ids, patch, updated },
+    ipAddress: actor.ipAddress ?? null,
+  });
+  return updated;
+}
+
+export async function bulkPauseLeads(
+  ids: string[],
+  paused: boolean,
+  actor: Actor,
+): Promise<{ updated: number; cancelledJobs: number }> {
+  if (ids.length === 0) return { updated: 0, cancelledJobs: 0 };
+
+  const targetStatus: LeadStatus = paused ? 'paused' : 'active';
+  const updated = await repoBulkPause(ids, targetStatus);
+  let cancelledJobs = 0;
+  if (paused) {
+    for (const leadId of ids) {
+      const count = await cancelPendingOutreachJobs({ leadId });
+      if (typeof count === 'number' && !isNaN(count)) {
+        cancelledJobs += count;
+      }
+    }
+  }
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: paused ? 'lead.bulk_paused' : 'lead.bulk_resumed',
+    entityType: 'lead',
+    entityId: 'bulk',
+    newValue: { ids, paused, updated, cancelledJobs },
+    ipAddress: actor.ipAddress ?? null,
+  });
+  return { updated, cancelledJobs };
 }
 
 export { clampLimit, decodeCursor };

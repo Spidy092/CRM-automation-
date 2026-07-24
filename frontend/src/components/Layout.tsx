@@ -22,6 +22,7 @@ import {
   Brain,
   FormInput,
   CalendarDays,
+  MailOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/ui/NotificationBell';
@@ -33,13 +34,14 @@ const navigation = [
   { name: 'Pipelines', href: '/pipelines', icon: GitBranch, group: 'Workspace' },
   { name: 'Automation', href: '/automation/rules', icon: Zap, group: 'Automation' },
   { name: 'Campaigns', href: '/campaigns', icon: FileText, group: 'Automation' },
-  { name: 'Sequences', href: '/outreach/sequences', icon: ListOrdered, group: 'Automation' },
+  { name: 'Content', href: '/outreach/sequences', icon: ListOrdered, group: 'Automation' },
   { name: 'Templates', href: '/templates', icon: MessageSquare, group: 'Automation' },
   { name: 'Web Forms', href: '/forms', icon: FormInput, group: 'Automation' },
   { name: 'Scheduling', href: '/scheduling', icon: CalendarDays, group: 'Automation' },
   { name: 'Reports', href: '/reports', icon: BarChart3, group: 'Intelligence' },
   { name: 'Team Dashboard', href: '/team-dashboard', icon: UsersRound, group: 'Intelligence' },
   { name: 'Scrapers', href: '/scraper', icon: Search, group: 'Intelligence' },
+  { name: 'Newsletter', href: '/newsletter', icon: MailOpen, group: 'Intelligence' },
   { name: 'Settings', href: '/settings', icon: Settings, group: 'Admin' },
   { name: 'Custom Fields', href: '/settings/custom-fields', icon: SlidersHorizontal, group: 'Admin' },
   { name: 'AI & Testing', href: '/admin/ai-decisions', icon: Brain, group: 'Admin' },

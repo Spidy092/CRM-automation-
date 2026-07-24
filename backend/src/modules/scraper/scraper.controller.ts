@@ -94,8 +94,8 @@ export async function triggerScrapeHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const result = await scraperService.runScrape(req.params.configId, actorFromReq(req));
-    sendSuccess(res, result);
+    const result = await scraperService.queueScrapeRun(req.params.configId, actorFromReq(req));
+    sendSuccess(res, result, 202);
   } catch (err) {
     next(err);
   }

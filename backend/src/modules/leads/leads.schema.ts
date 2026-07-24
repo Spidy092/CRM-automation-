@@ -27,6 +27,7 @@ const baseLeadSchema = z.object({
   tags: z.array(z.string()).optional(),
   notes: z.string().optional().nullable(),
   deal_value: z.number().min(0).optional().nullable(),
+  next_follow_up_at: z.string().datetime({ offset: true }).optional().nullable(),
 });
 
 export const createLeadSchema = baseLeadSchema;
@@ -45,6 +46,7 @@ export const listLeadsQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
   search: z.string().max(255).optional(),
   tags: z.string().max(255).optional(), // comma-separated
+  exclude_tags: z.string().max(255).optional(), // comma-separated
   /** ISO-8601 datetime string — returns leads created on or after this point */
   created_after: z.string().datetime({ offset: true }).optional(),
   /** When "true", returns only leads where classification IS NULL (unscored) */
@@ -62,4 +64,16 @@ export const pauseLeadSchema = z.object({
 export const bulkClassifySchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(500),
   classification: classificationEnum,
+});
+
+/** POST /leads/bulk-update — update fields on a batch of lead IDs */
+export const bulkUpdateSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+  patch: updateLeadSchema,
+});
+
+/** POST /leads/bulk-pause — pause or resume outreach on a batch of lead IDs */
+export const bulkPauseSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+  paused: z.boolean(),
 });

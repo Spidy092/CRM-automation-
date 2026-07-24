@@ -32,6 +32,8 @@ import {
   updateScraperConfigLastRun,
   sumScraperLogsSince,
 } from './scraper.repository';
+import { syncSchedule, removeSchedule } from './scraper.scheduler';
+import { enqueueScraperRun } from '../../workers/queue';
 
 interface ScrapedLead {
   business_name: string;
@@ -215,6 +217,7 @@ export async function createConfig(
     newValue: { name: config.name, source_type: config.source_type },
     ipAddress: actor.ipAddress ?? null,
   });
+  await syncSchedule(config.id, config.schedule_cron, config.is_active);
   return config;
 }
 
@@ -241,12 +244,14 @@ export async function updateConfig(
     newValue: { name: updated.name, is_active: updated.is_active },
     ipAddress: actor.ipAddress ?? null,
   });
+  await syncSchedule(updated.id, updated.schedule_cron, updated.is_active);
   return updated;
 }
 
 export async function removeConfig(id: string, actor: ScraperActor): Promise<void> {
   await getConfigById(id);
   await deleteScraperConfig(id);
+  await removeSchedule(id);
   await writeAuditLog({
     userId: actor.id,
     action: 'scraper_config.deleted',
@@ -330,33 +335,37 @@ async function finalizeSuccessfulRun(
   };
 }
 
-export async function runScrape(configId: string, _actor: ScraperActor): Promise<ScraperRunResult> {
-  const config = await getConfigById(configId);
-  if (!config.is_active) {
-    throw new AppError('Scraper config is not active', 400);
-  }
-
-  const log = await insertScraperLog({ config_id: configId, status: 'running' });
-
+/**
+ * Executes a scraper config against an already-created log row and writes
+ * the outcome back to it. Shared by the synchronous `runScrape` path (used
+ * directly by tests and the worker's scheduled-run branch, which has no
+ * pre-created log) and `runScrapeForJob` (the worker's background-run
+ * branch, whose log row was created up front by `queueScrapeRun` so the UI
+ * can see a "running" entry the instant the run is triggered).
+ */
+async function runScrapeCore(
+  config: ScraperConfigRow,
+  logId: string,
+): Promise<ScraperRunResult> {
   try {
-    const result = await executeScraper(config, log.id);
-    return await finalizeSuccessfulRun(log.id, configId, config.source_type, result);
+    const result = await executeScraper(config, logId);
+    return await finalizeSuccessfulRun(logId, config.id, config.source_type, result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    await updateScraperLog(log.id, {
+    await updateScraperLog(logId, {
       status: 'failed',
       completed_at: new Date().toISOString(),
       error_message: message,
     });
 
     logger.error('scraper run failed', {
-      configId,
+      configId: config.id,
       source_type: config.source_type,
       error: message,
     });
 
     return {
-      logId: log.id,
+      logId,
       recordsFound: 0,
       recordsImported: 0,
       recordsDuplicate: 0,
@@ -367,6 +376,58 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
       errorMessage: message,
     };
   }
+}
+
+export async function runScrape(configId: string, _actor: ScraperActor): Promise<ScraperRunResult> {
+  const config = await getConfigById(configId);
+  if (!config.is_active) {
+    throw new AppError('Scraper config is not active', 400);
+  }
+
+  const log = await insertScraperLog({ config_id: configId, status: 'running' });
+  return runScrapeCore(config, log.id);
+}
+
+/**
+ * Background-run entry point used by `scraper.worker.ts` for jobs enqueued
+ * via `queueScrapeRun` — the log row already exists (created synchronously
+ * in the HTTP request so the UI has something to show/poll immediately), so
+ * this reuses it instead of creating a second one.
+ */
+export async function runScrapeForJob(configId: string, logId: string): Promise<ScraperRunResult> {
+  const config = await getConfigById(configId);
+  return runScrapeCore(config, logId);
+}
+
+/**
+ * HTTP-facing "Run Now": validates the config, creates its log row
+ * immediately (status 'running', visible to the UI's existing logs poll),
+ * enqueues the actual scrape on the scraper worker queue, and returns
+ * without waiting for it to finish — so a slow deep-crawl can no longer
+ * block (or time out) the request thread.
+ */
+export async function queueScrapeRun(
+  configId: string,
+  actor: ScraperActor,
+): Promise<ScraperRunResult> {
+  const config = await getConfigById(configId);
+  if (!config.is_active) {
+    throw new AppError('Scraper config is not active', 400);
+  }
+
+  const log = await insertScraperLog({ config_id: configId, status: 'running' });
+  await enqueueScraperRun({ configId, logId: log.id, triggeredBy: actor.id });
+
+  logger.info('scraper run enqueued', { configId, logId: log.id, triggeredBy: actor.id });
+
+  return {
+    logId: log.id,
+    recordsFound: 0,
+    recordsImported: 0,
+    recordsDuplicate: 0,
+    recordsFailed: 0,
+    status: 'running',
+  };
 }
 
 /** Leads created by a specific scraper run — powers the "view leads" drilldown. */

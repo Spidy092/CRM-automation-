@@ -52,6 +52,7 @@ export interface Lead {
   deal_value: number | null;
   won_at: string | null;
   lost_at: string | null;
+  next_follow_up_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -75,6 +76,7 @@ export interface LeadInput {
   tags?: string[];
   notes?: string | null;
   deal_value?: number | null;
+  next_follow_up_at?: string | null;
 }
 
 export type ActivityType =

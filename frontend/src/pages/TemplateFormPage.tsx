@@ -5,9 +5,12 @@ import {
   useCreateTemplate,
   useUpdateTemplate,
   useUploadTemplateAttachment,
+  useAttachTemplateFromLibrary,
   useDeleteTemplateAttachment,
   type TemplateInput,
 } from '@/api/templates';
+import { useFiles, type LibraryFile } from '@/api/files';
+import { usePages } from '@/api/pages';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
 import type { MessageChannel, TemplateAttachment } from '@/types';
-import { ArrowLeft, FileText, Image as ImageIcon, Paperclip, Save, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, FileStack, FileText, FolderOpen, Image as ImageIcon, Link as LinkIcon, Paperclip, Save, Trash2, Upload, X } from 'lucide-react';
 
 const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,application/pdf';
 const MAX_ATTACHMENTS = 3;
@@ -35,12 +38,167 @@ function AttachmentThumb({ attachment }: { attachment: TemplateAttachment }) {
   );
 }
 
+function PagePickerModal({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (slug: string) => void;
+  onClose: () => void;
+}) {
+  const { data: pages = [], isLoading } = usePages();
+  const publishedPages = pages.filter((p) => p.status === 'published');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-900">Insert Public Page Link</h3>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+        {!isLoading && publishedPages.length === 0 && (
+          <p className="text-sm text-slate-500">
+            No published pages found. Create & publish a page in Content &gt; Pages first.
+          </p>
+        )}
+        <div className="space-y-2">
+          {publishedPages.map((page) => (
+            <button
+              key={page.id}
+              type="button"
+              onClick={() => onSelect(page.slug)}
+              className="flex w-full items-center gap-3 rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
+            >
+              <FileStack className="h-5 w-5 shrink-0 text-indigo-600" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-slate-900">{page.title}</div>
+                <div className="text-xs font-mono text-slate-500">/p/{page.slug}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileLinkPickerModal({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (file: LibraryFile) => void;
+  onClose: () => void;
+}) {
+  const { data: files = [], isLoading } = useFiles();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-900">Insert Library File Link</h3>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+        {!isLoading && files.length === 0 && (
+          <p className="text-sm text-slate-500">
+            No files in library. Upload files in Content &gt; Files first.
+          </p>
+        )}
+        <div className="space-y-2">
+          {files.map((file) => (
+            <button
+              key={file.id}
+              type="button"
+              onClick={() => onSelect(file)}
+              className="flex w-full items-center gap-3 rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
+            >
+              {file.mime_type.startsWith('image/') ? (
+                <img src={file.url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+              ) : (
+                <FileText className="h-6 w-6 shrink-0 text-slate-500" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-slate-900">{file.filename}</div>
+                <div className="text-xs text-slate-500">{(file.size_bytes / 1024).toFixed(0)} KB</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LibraryPickerModal({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (fileId: string) => void;
+  onClose: () => void;
+}) {
+  const { data: files = [], isLoading } = useFiles();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-900">Choose from Files library</h3>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+        {!isLoading && files.length === 0 && (
+          <p className="text-sm text-slate-500">
+            No files in the library yet. Upload some from the Files page first.
+          </p>
+        )}
+        <div className="space-y-2">
+          {files.map((file) => (
+            <button
+              key={file.id}
+              type="button"
+              onClick={() => onSelect(file.id)}
+              className="flex w-full items-center gap-3 rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50"
+            >
+              {file.mime_type.startsWith('image/') ? (
+                <img src={file.url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+              ) : (
+                <FileText className="h-6 w-6 shrink-0 text-slate-500" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-slate-900">{file.filename}</div>
+                <div className="text-xs text-slate-500">{(file.size_bytes / 1024).toFixed(0)} KB</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AttachmentsPanel({ templateId }: { templateId: string }) {
   const { data: template } = useTemplate(templateId);
   const uploadAttachment = useUploadTemplateAttachment();
+  const attachFromLibrary = useAttachTemplateFromLibrary();
   const deleteAttachment = useDeleteTemplateAttachment();
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
 
   const attachments = template?.attachments ?? [];
   const atLimit = attachments.length >= MAX_ATTACHMENTS;
@@ -54,6 +212,16 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
       showToast('Attachment uploaded.', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : getApiErrorMessage(error, 'Failed to upload attachment.'), 'error');
+    }
+  };
+
+  const handleSelectFromLibrary = async (fileId: string) => {
+    setShowLibraryPicker(false);
+    try {
+      await attachFromLibrary.mutateAsync({ id: templateId, fileId });
+      showToast('Attachment added from library.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to attach file from library.'), 'error');
     }
   };
 
@@ -116,27 +284,46 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
           className="hidden"
           onChange={handleFileChange}
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploadAttachment.isPending || atLimit}
-        >
-          {uploadAttachment.isPending ? (
-            <>
-              <ImageIcon className="mr-2 h-3.5 w-3.5 animate-pulse" />
-              Uploading…
-            </>
-          ) : atLimit ? (
-            `Limit reached (${MAX_ATTACHMENTS})`
-          ) : (
-            <>
-              <Upload className="mr-2 h-3.5 w-3.5" />
-              Add attachment
-            </>
-          )}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadAttachment.isPending || atLimit}
+          >
+            {uploadAttachment.isPending ? (
+              <>
+                <ImageIcon className="mr-2 h-3.5 w-3.5 animate-pulse" />
+                Uploading…
+              </>
+            ) : atLimit ? (
+              `Limit reached (${MAX_ATTACHMENTS})`
+            ) : (
+              <>
+                <Upload className="mr-2 h-3.5 w-3.5" />
+                Add attachment
+              </>
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowLibraryPicker(true)}
+            disabled={attachFromLibrary.isPending || atLimit}
+          >
+            <FolderOpen className="mr-2 h-3.5 w-3.5" />
+            Browse Library
+          </Button>
+        </div>
+
+        {showLibraryPicker && (
+          <LibraryPickerModal
+            onSelect={handleSelectFromLibrary}
+            onClose={() => setShowLibraryPicker(false)}
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -169,6 +356,8 @@ export function TemplateFormPage() {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showPagePicker, setShowPagePicker] = useState(false);
+  const [showFilePicker, setShowFilePicker] = useState(false);
 
   useEffect(() => {
     if (existing) {
@@ -178,6 +367,19 @@ export function TemplateFormPage() {
       setBody(existing.body);
     }
   }, [existing]);
+
+  const handleInsertPageLink = (slug: string) => {
+    setShowPagePicker(false);
+    const linkUrl = `${window.location.origin}/p/${slug}`;
+    setBody((prev) => (prev ? `${prev}\n${linkUrl}` : linkUrl));
+    showToast('Page link inserted into body text.', 'success');
+  };
+
+  const handleInsertFileLink = (file: LibraryFile) => {
+    setShowFilePicker(false);
+    setBody((prev) => (prev ? `${prev}\n${file.url}` : file.url));
+    showToast('File URL inserted into body text.', 'success');
+  };
 
   const detectedVars = extractVariables(body);
 
@@ -280,7 +482,31 @@ export function TemplateFormPage() {
             )}
 
             <div className="space-y-1.5">
-              <Label htmlFor="body">Message body *</Label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="body">Message body *</Label>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setShowPagePicker(true)}
+                  >
+                    <FileStack className="mr-1 h-3.5 w-3.5 text-indigo-600" />
+                    Insert Page Link
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setShowFilePicker(true)}
+                  >
+                    <LinkIcon className="mr-1 h-3.5 w-3.5 text-blue-600" />
+                    Insert File Link
+                  </Button>
+                </div>
+              </div>
               <p className="text-xs text-slate-500">
                 Use <code className="rounded bg-slate-100 px-1">{'{{variable}}'}</code> placeholders.
                 Available: <code>{'{{business_name}}'}</code>, <code>{'{{contact_name}}'}</code>,{' '}
@@ -322,6 +548,20 @@ export function TemplateFormPage() {
         </CardContent>
       </Card>
 
+      {showPagePicker && (
+        <PagePickerModal
+          onSelect={handleInsertPageLink}
+          onClose={() => setShowPagePicker(false)}
+        />
+      )}
+
+      {showFilePicker && (
+        <FileLinkPickerModal
+          onSelect={handleInsertFileLink}
+          onClose={() => setShowFilePicker(false)}
+        />
+      )}
+
       {isEdit && id ? (
         <AttachmentsPanel templateId={id} />
       ) : (
@@ -335,3 +575,4 @@ export function TemplateFormPage() {
     </div>
   );
 }
+

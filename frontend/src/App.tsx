@@ -32,6 +32,11 @@ import { AutomationRulesPage } from '@/pages/AutomationRulesPage';
 import { LeadDetailPage } from '@/pages/LeadDetailPage';
 import { TemplatesPage } from '@/pages/TemplatesPage';
 import { TemplateFormPage } from '@/pages/TemplateFormPage';
+import { FilesLibraryPage } from '@/pages/FilesLibraryPage';
+import { MessagesLibraryPage } from '@/pages/MessagesLibraryPage';
+import { PagesLibraryPage } from '@/pages/PagesLibraryPage';
+import { PageEditorPage } from '@/pages/PageEditorPage';
+import { PublicLandingPage } from '@/pages/PublicLandingPage';
 import { CustomFieldsPage } from '@/pages/CustomFieldsPage';
 import { AIInboxPage } from '@/pages/AIInboxPage';
 import { LeadAIProfilePage } from '@/pages/LeadAIProfilePage';
@@ -46,6 +51,9 @@ import { SchedulingPage } from '@/pages/SchedulingPage';
 import { PublicBookingPage } from '@/pages/PublicBookingPage';
 import { PublicFormPage } from '@/pages/PublicFormPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
+import { NewsletterPage } from '@/pages/NewsletterPage';
+import { PublicSubscribePage } from '@/pages/PublicSubscribePage';
+import { PublicNewsletterActionPage } from '@/pages/PublicNewsletterActionPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ToastProvider } from '@/components/ui/Toast';
 
@@ -164,6 +172,11 @@ function App() {
                 <Route path="templates" element={<TemplatesPage />} />
                 <Route path="templates/new" element={<TemplateFormPage />} />
                 <Route path="templates/:id/edit" element={<TemplateFormPage />} />
+                <Route path="files" element={<FilesLibraryPage />} />
+                <Route path="messages" element={<MessagesLibraryPage />} />
+                <Route path="pages" element={<PagesLibraryPage />} />
+                <Route path="pages/new" element={<PageEditorPage />} />
+                <Route path="pages/:id/edit" element={<PageEditorPage />} />
                 <Route path="settings/custom-fields" element={<CustomFieldsPage />} />
                 <Route path="forms" element={<FormsPage />} />
                 <Route path="forms/new" element={<FormBuilderPage />} />
@@ -171,9 +184,13 @@ function App() {
                 <Route path="forms/:id/analytics" element={<FormAnalyticsPage />} />
                 <Route path="ab-testing" element={<ABTestPage />} />
                 <Route path="scheduling" element={<SchedulingPage />} />
+                <Route path="newsletter" element={<NewsletterPage />} />
               </Route>
               <Route path="/forms/:slug" element={<PublicFormPage />} />
               <Route path="/book/:slug" element={<PublicBookingPage />} />
+              <Route path="/p/:slug" element={<PublicLandingPage />} />
+              <Route path="/subscribe" element={<PublicSubscribePage />} />
+              <Route path="/newsletter/:action" element={<PublicNewsletterActionPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AppInitializer>

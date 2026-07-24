@@ -22,4 +22,12 @@ export interface NewsletterActor {
   role: UserRole;
 }
 
+export interface NewsletterDigestConfig {
+  topic: string;
+  tone: 'professional' | 'casual' | 'motivational' | 'technical';
+  customPrompt: string;
+  targetAudience: string;
+}
+
 export type NewsletterResult<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
