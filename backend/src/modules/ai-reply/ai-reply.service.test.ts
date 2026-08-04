@@ -29,6 +29,7 @@ import {
 import { findUserById } from '../users/users.repository';
 import { findStageByName } from '../pipeline/pipeline.repository';
 import { proposeAgentAction } from '../agent/agent.service';
+import { upsertReplyTask, resolveOpenReplyTask } from '../outreach/outreach.service';
 import OpenAI from 'openai';
 import { logger } from '../../shared/utils/logger';
 import type { ClassifyReplyInput, ReplyClassification } from './ai-reply.types';
@@ -55,6 +56,10 @@ jest.mock('./ai-reply.repository');
 jest.mock('../users/users.repository');
 jest.mock('../pipeline/pipeline.repository');
 jest.mock('../agent/agent.service');
+jest.mock('../outreach/outreach.service', () => ({
+  upsertReplyTask: jest.fn(),
+  resolveOpenReplyTask: jest.fn(),
+}));
 
 const mockedOpenAI = OpenAI as jest.MockedClass<typeof OpenAI>;
 const mockedLogger = logger as unknown as {
@@ -755,5 +760,54 @@ describe('classifyReply', () => {
 
     expect(result.intent_class).toBe('interested');
     expect(result.confidence).toBe(92);
+  });
+
+  describe('rep task creation', () => {
+    it('upserts an intent-aware task naming the lead for a pricing question', async () => {
+      mockOpenAICompletion(
+        makeAiOutput({ intent_class: 'pricing_question', intent_subtype: 'price' }),
+      );
+
+      await classifyReply({ leadId, channel: 'sms', messageText: 'How much?' });
+
+      expect(upsertReplyTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          leadId,
+          type: 'follow_up',
+          title: 'Acme Inc replied — send quotation',
+        }),
+      );
+      expect(resolveOpenReplyTask).not.toHaveBeenCalled();
+    });
+
+    it('creates a meeting_prep task for a meeting request', async () => {
+      mockOpenAICompletion(makeAiOutput({ intent_class: 'meeting_request' }));
+
+      await classifyReply({ leadId, channel: 'sms', messageText: 'Can we talk Tuesday?' });
+
+      expect(upsertReplyTask).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'meeting_prep' }),
+      );
+    });
+
+    it('creates no task on opt_out and cancels the open placeholder', async () => {
+      mockOpenAICompletion(
+        makeAiOutput({ intent_class: 'opt_out', intent_subtype: 'unsubscribe' }),
+      );
+
+      await classifyReply({ leadId, channel: 'sms', messageText: 'Stop messaging me' });
+
+      expect(upsertReplyTask).not.toHaveBeenCalled();
+      expect(resolveOpenReplyTask).toHaveBeenCalledWith(leadId);
+    });
+
+    it('still returns the classification when task creation fails', async () => {
+      (upsertReplyTask as jest.Mock).mockRejectedValueOnce(new Error('db down'));
+      mockOpenAICompletion(makeAiOutput());
+
+      const result = await classifyReply({ leadId, channel: 'sms', messageText: 'Yes please.' });
+
+      expect(result.intent_class).toBe('interested');
+    });
   });
 });

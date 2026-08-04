@@ -12,6 +12,8 @@ import { pool, queryOne } from '../shared/utils/db';
 import { logger } from '../shared/utils/logger';
 import { cancelPendingOutreachJobs, enqueueAiClassifyReply } from '../workers/queue';
 import { publishAIDomainEvent } from '../shared/events/eventBus';
+import { upsertReplyTask } from '../modules/outreach/outreach.service';
+import { buildPendingReplyTaskSpec, resolveDueAt } from '../modules/ai-reply/ai-reply.tasks';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -59,15 +61,27 @@ async function stopAutomationForReply(leadId: string, campaignIds: string[]): Pr
     );
   }
 
-  await pool.query(
-    `INSERT INTO tasks (lead_id, assigned_to, type, title, description, due_at, created_by)
-     SELECT id, assigned_to, 'follow_up', 'Follow up on inbound reply',
-            'Inbound reply stopped automation. Review the conversation and respond.',
-            NOW(), assigned_to
-     FROM leads
-     WHERE id = $1 AND assigned_to IS NOT NULL AND deleted_at IS NULL`,
-    [leadId],
-  );
+  // Placeholder task, created immediately so the rep is never waiting on the
+  // AI. The classifier upgrades this same task in place once the intent is
+  // known (see ai-reply.service), so replying twice does not stack up tasks.
+  const spec = buildPendingReplyTaskSpec();
+  try {
+    await upsertReplyTask({
+      leadId,
+      campaignId: campaignIds[0] ?? null,
+      type: spec.type,
+      title: spec.title,
+      description: 'Inbound reply stopped automation. Review the conversation and respond.',
+      dueAt: resolveDueAt(spec),
+    });
+  } catch (err) {
+    // A task failure must not fail the webhook — the provider would retry the
+    // whole delivery and we would re-process the reply.
+    logger.error('Failed to upsert inbound reply task', {
+      leadId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 // ── WhatsApp ───────────────────────────────────────────────────────────────

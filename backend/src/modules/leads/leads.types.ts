@@ -92,10 +92,33 @@ export interface LeadInput {
   next_follow_up_at?: string | null;
 }
 
+/** Columns the list endpoint is allowed to sort by. */
+export type LeadSortBy =
+  | 'created_at'
+  | 'updated_at'
+  | 'business_name'
+  | 'contact_name'
+  | 'email'
+  | 'industry'
+  | 'location'
+  | 'lead_score'
+  | 'deal_value'
+  | 'status'
+  | 'classification'
+  | 'next_follow_up_at';
+
+export type LeadSortDir = 'asc' | 'desc';
+
 export interface LeadListFilters {
   limit: number;
   cursorTs?: string;
   cursorId?: string;
+  /** Offset paging — used by the customizable table when a page number or sort is chosen. */
+  offset?: number;
+  /** When true the result meta carries the total row count for the same filter set. */
+  countTotal?: boolean;
+  sortBy?: LeadSortBy;
+  sortDir?: LeadSortDir;
   status?: LeadStatus;
   classification?: LeadClassification;
   source_platform?: string;
@@ -118,6 +141,10 @@ export interface LeadListResult {
     limit: number;
     hasMore: boolean;
     nextCursor?: string;
+    /** Present only when the caller asked for a count (`count_total=true`). */
+    total?: number;
+    /** Echoed back when offset paging was used, so the client can render page numbers. */
+    offset?: number;
   };
 }
 

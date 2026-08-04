@@ -5,6 +5,7 @@ jest.mock('./scheduling.repository', () => ({
   findBookingsByUserAndDateRange: jest.fn(),
   findBookingUrlsByUser: jest.fn(),
   findBookingUrlBySlug: jest.fn(),
+  findBookingUrlById: jest.fn(),
   insertBookingUrl: jest.fn(),
   updateBookingUrl: jest.fn(),
   findBookingsByUser: jest.fn(),
@@ -26,6 +27,7 @@ jest.mock('../../shared/utils/logger', () => ({
 }));
 jest.mock('../integrations/google-calendar/google-calendar.connector', () => ({
   createEvent: jest.fn(),
+  deleteEvent: jest.fn(),
 }));
 
 import {
@@ -34,6 +36,7 @@ import {
   getAvailableSlots,
   listBookingUrls,
   getBookingUrlBySlug,
+  getBookingUrlById,
   createBookingUrl,
   updateBookingUrlById,
   listBookings,
@@ -43,10 +46,11 @@ import {
   getRoundRobinUser,
 } from './scheduling.service';
 import * as repo from './scheduling.repository';
-import { createEvent } from '../integrations/google-calendar/google-calendar.connector';
+import { createEvent, deleteEvent } from '../integrations/google-calendar/google-calendar.connector';
 
 const mockedRepo = repo as jest.Mocked<typeof repo>;
 const mockedCreateEvent = createEvent as jest.MockedFunction<typeof createEvent>;
+const mockedDeleteEvent = deleteEvent as jest.MockedFunction<typeof deleteEvent>;
 
 describe('scheduling.service', () => {
   beforeEach(() => {
@@ -125,6 +129,22 @@ describe('scheduling.service', () => {
       await expect(getBookingUrlBySlug('missing')).rejects.toMatchObject({ statusCode: 404 });
     });
 
+    it('gets booking url by id when owner matches', async () => {
+      mockedRepo.findBookingUrlById.mockResolvedValue({ id: 'url-1', user_id: 'u1' } as any);
+      const res = await getBookingUrlById('url-1', 'u1');
+      expect(res.id).toBe('url-1');
+    });
+
+    it('throws 404 when booking url id not found', async () => {
+      mockedRepo.findBookingUrlById.mockResolvedValue(null);
+      await expect(getBookingUrlById('missing', 'u1')).rejects.toMatchObject({ statusCode: 404 });
+    });
+
+    it('throws 404 when booking url belongs to another user', async () => {
+      mockedRepo.findBookingUrlById.mockResolvedValue({ id: 'url-1', user_id: 'other' } as any);
+      await expect(getBookingUrlById('url-1', 'u1')).rejects.toMatchObject({ statusCode: 404 });
+    });
+
     it('creates url with unique slug', async () => {
       mockedRepo.findBookingUrlBySlug.mockResolvedValueOnce(null as any).mockResolvedValue({ id: 'url-1' } as any);
       mockedRepo.insertBookingUrl.mockResolvedValue({ id: 'url-1', slug: 'test', title: 'Test' } as any);
@@ -169,10 +189,15 @@ describe('scheduling.service', () => {
     });
 
     it('cancels booking and updates status', async () => {
-      mockedRepo.findBookingById.mockResolvedValue({ id: 'book-1', google_event_id: 'evt-1' } as any);
+      mockedRepo.findBookingById.mockResolvedValue({ id: 'book-1', user_id: 'u1', google_event_id: 'evt-1' } as any);
       mockedRepo.updateBookingStatus.mockResolvedValue({ id: 'book-1', status: 'cancelled' } as any);
       const res = await cancelBooking('book-1', 'u1');
       expect(res.status).toBe('cancelled');
+    });
+
+    it('throws 403 when cancelling another user\'s booking', async () => {
+      mockedRepo.findBookingById.mockResolvedValue({ id: 'book-1', user_id: 'other-user', google_event_id: null } as any);
+      await expect(cancelBooking('book-1', 'u1')).rejects.toMatchObject({ statusCode: 403 });
     });
 
     it('creates internal booking on behalf of lead with calendar invite', async () => {
@@ -210,6 +235,7 @@ describe('scheduling.service', () => {
       mockedRepo.getLastBookedUser.mockResolvedValue(null);
       const res = await getRoundRobinUser();
       expect(res).toBe('u1');
+      expect(mockedRepo.getLastBookedUser).toHaveBeenCalledWith(['u1']);
     });
 
     it('returns next user in round robin', async () => {
@@ -217,6 +243,7 @@ describe('scheduling.service', () => {
       mockedRepo.getLastBookedUser.mockResolvedValue('u1');
       const res = await getRoundRobinUser();
       expect(res).toBe('u2');
+      expect(mockedRepo.getLastBookedUser).toHaveBeenCalledWith(['u1', 'u2']);
     });
   });
 });

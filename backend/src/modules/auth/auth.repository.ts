@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { pool, queryOne } from '../../shared/utils/db';
-import { UserRecord } from './auth.types';
+import { UserRecord, ApiKeyListItem, ApiKeyRecordRow } from './auth.types';
 
 export async function findUserByEmail(email: string): Promise<UserRecord | null> {
   return queryOne<UserRecord>(
@@ -77,7 +77,7 @@ export async function createApiKey(
   return res;
 }
 
-export async function listApiKeys(userId: string): Promise<any[]> {
+export async function listApiKeys(userId: string): Promise<ApiKeyListItem[]> {
   const result = await pool.query(
     `SELECT id, name, prefix, last_used_at, expires_at, created_at
      FROM api_keys
@@ -85,7 +85,7 @@ export async function listApiKeys(userId: string): Promise<any[]> {
      ORDER BY created_at DESC`,
     [userId],
   );
-  return result.rows;
+  return result.rows as ApiKeyListItem[];
 }
 
 export async function revokeApiKey(userId: string, id: string): Promise<number> {
@@ -96,8 +96,8 @@ export async function revokeApiKey(userId: string, id: string): Promise<number> 
   return res.rowCount ?? 0;
 }
 
-export async function findApiKeyByHash(keyHash: string): Promise<any | null> {
-  return queryOne<any>(
+export async function findApiKeyByHash(keyHash: string): Promise<ApiKeyRecordRow | null> {
+  return queryOne<ApiKeyRecordRow>(
     `SELECT k.id, k.user_id, k.expires_at, k.deleted_at, u.id as u_id, u.email, u.role, u.name, u.is_active
      FROM api_keys k
      JOIN users u ON k.user_id = u.id

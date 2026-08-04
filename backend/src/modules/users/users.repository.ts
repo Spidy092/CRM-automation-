@@ -7,7 +7,7 @@ import { User, UpdateProfileInput, CreateUserInput, UpdatePermissionsInput } fro
  */
 export async function findAllUsers(): Promise<User[]> {
   return query<User>(
-    `SELECT id, name, email, role, is_active, created_at
+    `SELECT id, name, email, role, is_active, is_available, created_at, updated_at
      FROM users
      WHERE deleted_at IS NULL
      ORDER BY created_at DESC`,
@@ -20,7 +20,7 @@ export async function findAllUsers(): Promise<User[]> {
  */
 export async function findUserById(id: string): Promise<User | null> {
   return queryOne<User>(
-    `SELECT id, name, email, role, is_active, created_at
+    `SELECT id, name, email, role, is_active, is_available, created_at, updated_at
      FROM users
      WHERE id = $1
        AND deleted_at IS NULL`,
@@ -30,7 +30,7 @@ export async function findUserById(id: string): Promise<User | null> {
 
 export async function findUserByEmail(email: string): Promise<User | null> {
   return queryOne<User>(
-    `SELECT id, name, email, role, is_active, created_at
+    `SELECT id, name, email, role, is_active, is_available, created_at, updated_at
      FROM users
      WHERE email = $1
        AND deleted_at IS NULL`,
@@ -46,7 +46,7 @@ export async function insertUser(
   const user = await queryOne<User>(
     `INSERT INTO users (id, name, email, password_hash, role, is_active)
      VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, name, email, role, is_active, created_at`,
+     RETURNING id, name, email, role, is_active, is_available, created_at, updated_at`,
     [id, input.name, input.email.toLowerCase(), passwordHash, input.role, input.is_active],
   );
   if (!user) throw new Error('Insert did not return a row');
@@ -66,7 +66,7 @@ export async function updateUserProfile(
      SET name = $1, updated_at = NOW()
      WHERE id = $2
        AND deleted_at IS NULL
-     RETURNING id, name, email, role, is_active, created_at`,
+     RETURNING id, name, email, role, is_active, is_available, created_at, updated_at`,
     [input.name, id],
   );
 }
@@ -86,7 +86,7 @@ export async function updateUserPermissions(
          updated_at = NOW()
      WHERE id = $3
        AND deleted_at IS NULL
-     RETURNING id, name, email, role, is_active, created_at`,
+     RETURNING id, name, email, role, is_active, is_available, created_at, updated_at`,
     [input.role ?? null, input.is_active ?? null, id],
   );
 }

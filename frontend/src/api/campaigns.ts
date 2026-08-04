@@ -4,6 +4,7 @@ import type { ApiResponse } from './client';
 
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
 export type OutreachTone = 'formal' | 'professional' | 'conversational';
+export type AutonomyLevel = 'supervised' | 'guarded' | 'autopilot';
 
 export interface Campaign {
   id: string;
@@ -20,6 +21,13 @@ export interface Campaign {
   /** Lead tags that auto-enroll a new lead into this campaign (any-match). */
   trigger_tags: string[] | null;
   ai_personalization_enabled: boolean;
+  autonomy_level: AutonomyLevel;
+  ai_min_confidence: number;
+  ab_test_enabled: boolean;
+  ab_test_metric: string;
+  ab_test_min_samples: number;
+  ab_test_confidence: number;
+  ab_test_auto_promote: boolean;
   send_window_enabled: boolean;
   /** Local hour (0–23), inclusive, in send_window_timezone. */
   send_window_start_hour: number;
@@ -79,6 +87,13 @@ export interface CreateCampaignInput {
   trigger_source?: string[] | null;
   trigger_tags?: string[] | null;
   ai_personalization_enabled?: boolean;
+  autonomy_level?: AutonomyLevel;
+  ai_min_confidence?: number;
+  ab_test_enabled?: boolean;
+  ab_test_metric?: string;
+  ab_test_min_samples?: number;
+  ab_test_confidence?: number;
+  ab_test_auto_promote?: boolean;
   send_window_enabled?: boolean;
   send_window_start_hour?: number;
   send_window_end_hour?: number;
@@ -98,6 +113,13 @@ export interface UpdateCampaignInput {
   trigger_source?: string[] | null;
   trigger_tags?: string[] | null;
   ai_personalization_enabled?: boolean;
+  autonomy_level?: AutonomyLevel;
+  ai_min_confidence?: number;
+  ab_test_enabled?: boolean;
+  ab_test_metric?: string;
+  ab_test_min_samples?: number;
+  ab_test_confidence?: number;
+  ab_test_auto_promote?: boolean;
   send_window_enabled?: boolean;
   send_window_start_hour?: number;
   send_window_end_hour?: number;
@@ -106,11 +128,11 @@ export interface UpdateCampaignInput {
   daily_send_limit?: number | null;
 }
 
-export function useCampaigns() {
+export function useCampaigns(params?: { pipeline_id?: string }) {
   return useQuery({
-    queryKey: ['campaigns'],
+    queryKey: params?.pipeline_id ? ['campaigns', params] : ['campaigns'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiResponse<Campaign[]>>('/campaigns');
+      const response = await apiClient.get<ApiResponse<Campaign[]>>('/campaigns', { params });
       return response.data.data;
     },
   });

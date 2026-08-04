@@ -3,7 +3,7 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { FormRow, FormSubmissionRow, FormFieldDef } from './forms.types';
 
 const FORM_COLS = `id, name, slug, description, fields, submit_action, submit_message,
-  redirect_url, is_active, theme, email_settings, created_by, created_at, updated_at`;
+  redirect_url, is_active, theme, email_settings, created_by, created_at, updated_at, deleted_at`;
 
 function parseFields(raw: unknown): FormFieldDef[] {
   if (Array.isArray(raw)) return raw as FormFieldDef[];
@@ -17,29 +17,39 @@ function parseFields(raw: unknown): FormFieldDef[] {
   return [];
 }
 
-function mapFormRow(row: FormRow & { fields: unknown, email_settings: unknown }): FormRow {
-  const email_settings = typeof row.email_settings === 'string' ? JSON.parse(row.email_settings) : row.email_settings;
-  return { ...row, fields: parseFields(row.fields), email_settings: email_settings || {} };
+function mapFormRow(row: FormRow & { fields: unknown; email_settings: unknown }): FormRow {
+  const rawSettings = row.email_settings;
+  const emailSettingsObj =
+    typeof rawSettings === 'string'
+      ? (JSON.parse(rawSettings) as Record<string, unknown>)
+      : (rawSettings as Record<string, unknown> | null);
+  return {
+    ...row,
+    fields: parseFields(row.fields),
+    email_settings: (emailSettingsObj as FormRow['email_settings']) || {},
+  };
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
 
 export async function findForms(limit: number, offset: number): Promise<FormRow[]> {
   const rows = await query<FormRow & { fields: unknown }>(
-    `SELECT ${FORM_COLS} FROM forms ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+    `SELECT ${FORM_COLS} FROM forms WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
     [limit, offset],
   );
   return rows.map(mapFormRow);
 }
 
 export async function countForms(): Promise<number> {
-  const row = await queryOne<{ total: string }>('SELECT COUNT(*) as total FROM forms');
+  const row = await queryOne<{ total: string }>(
+    'SELECT COUNT(*) as total FROM forms WHERE deleted_at IS NULL',
+  );
   return parseInt(row?.total ?? '0', 10);
 }
 
 export async function findFormById(id: string): Promise<FormRow | null> {
   const row = await queryOne<FormRow & { fields: unknown }>(
-    `SELECT ${FORM_COLS} FROM forms WHERE id = $1`,
+    `SELECT ${FORM_COLS} FROM forms WHERE id = $1 AND deleted_at IS NULL`,
     [id],
   );
   return row ? mapFormRow(row) : null;
@@ -47,7 +57,7 @@ export async function findFormById(id: string): Promise<FormRow | null> {
 
 export async function findFormBySlug(slug: string): Promise<FormRow | null> {
   const row = await queryOne<FormRow & { fields: unknown }>(
-    `SELECT ${FORM_COLS} FROM forms WHERE slug = $1 AND is_active = true`,
+    `SELECT ${FORM_COLS} FROM forms WHERE slug = $1 AND deleted_at IS NULL`,
     [slug],
   );
   return row ? mapFormRow(row) : null;
@@ -66,7 +76,7 @@ export async function insertForm(data: {
   email_settings?: Record<string, unknown>;
   created_by: string;
 }): Promise<FormRow> {
-  const row = await queryOne<FormRow & { fields: unknown, email_settings: unknown }>(
+  const row = await queryOne<FormRow & { fields: unknown; email_settings: unknown }>(
     `INSERT INTO forms (name, slug, description, fields, submit_action, submit_message,
        redirect_url, is_active, theme, email_settings, created_by)
      VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)
@@ -156,16 +166,17 @@ export async function updateForm(
   }
 
   params.push(id);
-  const sql = `UPDATE forms SET ${sets.join(', ')} WHERE id = $${i} RETURNING ${FORM_COLS}`;
-  const row = await queryOne<FormRow & { fields: unknown, email_settings: unknown }>(sql, params);
+  const sql = `UPDATE forms SET ${sets.join(', ')} WHERE id = $${i} AND deleted_at IS NULL RETURNING ${FORM_COLS}`;
+  const row = await queryOne<FormRow & { fields: unknown; email_settings: unknown }>(sql, params);
   if (!row) throw new AppError('Form not found', 404);
   return mapFormRow(row);
 }
 
 export async function deleteForm(id: string): Promise<void> {
-  const result = await queryOne<{ id: string }>('DELETE FROM forms WHERE id = $1 RETURNING id', [
-    id,
-  ]);
+  const result = await queryOne<{ id: string }>(
+    'UPDATE forms SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+    [id],
+  );
   if (!result) throw new AppError('Form not found', 404);
 }
 

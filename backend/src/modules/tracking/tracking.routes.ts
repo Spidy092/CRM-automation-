@@ -29,6 +29,19 @@ router.get('/open/:logId', async (req: Request, res: Response) => {
   }
 });
 
+function sanitizeRedirectUrl(target: string | undefined): string | null {
+  if (!target) return null;
+  try {
+    const parsed = new URL(target);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /**
  * GET /track/click/:logId
  * Records the click event and redirects to the original URL.
@@ -43,17 +56,19 @@ router.get('/click/:logId', async (req: Request, res: Response) => {
     // Try to get URL from DB first (stored at send time)
     const storedUrl = await recordClick(logId);
     const target = storedUrl || originalUrl;
+    const safeTarget = sanitizeRedirectUrl(target);
 
-    if (target) {
-      res.redirect(302, target);
+    if (safeTarget) {
+      res.redirect(302, safeTarget);
     } else {
       // Fallback: return a simple page indicating the link was tracked
       res.status(200).send('<html><body><p>Link tracked.</p></body></html>');
     }
   } catch (err) {
     logger.warn('Click tracking error', { logId, error: (err as Error).message });
-    if (originalUrl) {
-      res.redirect(302, originalUrl);
+    const safeFallback = sanitizeRedirectUrl(originalUrl);
+    if (safeFallback) {
+      res.redirect(302, safeFallback);
     } else {
       res.status(200).send('<html><body><p>Link tracked.</p></body></html>');
     }

@@ -451,7 +451,18 @@ export async function enqueueOutreachFollowUp(payload: OutreachFollowUpJob): Pro
 }
 
 export async function enqueueScraperRun(payload: ScraperRunJob): Promise<string> {
-  const job = await scraperQueue.add(SCRAPER_RUN, payload);
+  // Key the job on the log id so a double-clicked "Run Now" enqueues once
+  // instead of starting two concurrent crawls of the same target — which
+  // doubles the request rate against a site we are already rate-limiting
+  // ourselves for, and leaves two 'running' rows in the UI.
+  //
+  // Scheduled (cron) runs carry no logId; those are already deduplicated by
+  // the repeatable job's own key in scraper.scheduler.ts.
+  const job = await scraperQueue.add(
+    SCRAPER_RUN,
+    payload,
+    payload.logId ? { jobId: `scraper-run-${payload.logId}` } : undefined,
+  );
   return job.id as string;
 }
 
@@ -504,7 +515,7 @@ export async function toggleNewsletterAutomatedDigest(enabled: boolean): Promise
     await newsletterQueue.add(
       NEWSLETTER_AUTOMATED_DIGEST,
       {},
-      { repeat: { pattern: '0 9 * * 5' } } // Every Friday at 9 AM
+      { repeat: { pattern: '0 9 * * 5' } }, // Every Friday at 9 AM
     );
   } else {
     const repeatableJobs = await newsletterQueue.getRepeatableJobs();

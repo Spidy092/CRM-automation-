@@ -11,6 +11,7 @@ import {
   type VariantMetrics,
 } from '@/api/abTesting';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { AdminToolsTabs } from '@/components/AdminToolsTabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -110,7 +111,7 @@ export function ABTestPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Automation"
+        eyebrow="Admin · AI audit"
         title="A/B Testing"
         description="Compare message variants and auto-promote the winner"
         actions={
@@ -119,6 +120,8 @@ export function ABTestPage() {
           </Button>
         }
       />
+
+      <AdminToolsTabs />
 
       {/* Campaign ID input */}
       <Card>

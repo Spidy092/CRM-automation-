@@ -275,14 +275,14 @@ function getStatsForRole(
   const myWonLeads = metrics.wonDeals;
 
   const accentMap: Record<string, { accent: string; bg: string }> = {
-    leads: { accent: 'border-l-4 border-blue-500', bg: 'bg-blue-50/40' },
-    conversion: { accent: 'border-l-4 border-emerald-500', bg: 'bg-emerald-50/40' },
-    campaigns: { accent: 'border-l-4 border-violet-500', bg: 'bg-violet-50/40' },
-    qualified: { accent: 'border-l-4 border-amber-500', bg: 'bg-amber-50/40' },
-    outreach: { accent: 'border-l-4 border-cyan-500', bg: 'bg-cyan-50/40' },
-    won: { accent: 'border-l-4 border-rose-500', bg: 'bg-rose-50/40' },
-    revenue: { accent: 'border-l-4 border-green-500', bg: 'bg-green-50/40' },
-    tasks: { accent: 'border-l-4 border-slate-500', bg: 'bg-slate-50/40' },
+    leads: { accent: 'border-l-4 border-blue-500', bg: 'bg-blue-50/40 dark:bg-blue-950/20' },
+    conversion: { accent: 'border-l-4 border-emerald-500', bg: 'bg-emerald-50/40 dark:bg-emerald-950/20' },
+    campaigns: { accent: 'border-l-4 border-violet-500', bg: 'bg-violet-50/40 dark:bg-violet-950/20' },
+    qualified: { accent: 'border-l-4 border-amber-500', bg: 'bg-amber-50/40 dark:bg-amber-950/20' },
+    outreach: { accent: 'border-l-4 border-cyan-500', bg: 'bg-cyan-50/40 dark:bg-cyan-950/20' },
+    won: { accent: 'border-l-4 border-rose-500', bg: 'bg-rose-50/40 dark:bg-rose-950/20' },
+    revenue: { accent: 'border-l-4 border-green-500', bg: 'bg-green-50/40 dark:bg-green-950/20' },
+    tasks: { accent: 'border-l-4 border-slate-500', bg: 'bg-slate-50/40 dark:bg-slate-900/20' },
   };
 
   switch (role) {
@@ -628,15 +628,15 @@ function WorkQueueSkeleton() {
 
 function WorkQueue({ items }: { items: WorkQueueItem[] }) {
   return (
-    <Card className="overflow-hidden border-slate-200">
-      <CardHeader className="border-b bg-white pb-4 pt-6">
+    <Card className="overflow-hidden border-slate-200 dark:border-slate-800">
+      <CardHeader className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 pb-4 pt-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 text-base font-semibold">
-              <Clock3 className="h-4 w-4 text-slate-600" />
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+              <Clock3 className="h-4 w-4 text-slate-600 dark:text-slate-400" />
               Today's Work Queue
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-slate-500 dark:text-slate-400">
               Leads, pipeline, campaigns, and templates in one review flow
             </CardDescription>
           </div>
@@ -649,7 +649,7 @@ function WorkQueue({ items }: { items: WorkQueueItem[] }) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {items.map((item) => (
             <div
               key={item.id}
@@ -659,9 +659,9 @@ function WorkQueue({ items }: { items: WorkQueueItem[] }) {
                 <div
                   className={cn(
                     'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                    item.priority === 'high' && 'bg-rose-50 text-rose-600',
-                    item.priority === 'medium' && 'bg-amber-50 text-amber-600',
-                    item.priority === 'low' && 'bg-emerald-50 text-emerald-600',
+                    item.priority === 'high' && 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300',
+                    item.priority === 'medium' && 'bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300',
+                    item.priority === 'low' && 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-300',
                   )}
                 >
                   {item.icon}
@@ -671,21 +671,21 @@ function WorkQueue({ items }: { items: WorkQueueItem[] }) {
                     <span
                       className={cn(
                         'rounded-full px-2 py-0.5 text-xs font-semibold',
-                        item.priority === 'high' && 'bg-rose-100 text-rose-700',
-                        item.priority === 'medium' && 'bg-amber-100 text-amber-700',
-                        item.priority === 'low' && 'bg-emerald-100 text-emerald-700',
+                        item.priority === 'high' && 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300',
+                        item.priority === 'medium' && 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300',
+                        item.priority === 'low' && 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300',
                       )}
                     >
                       {item.eyebrow}
                     </span>
-                    <span className="text-xs capitalize text-slate-500">
+                    <span className="text-xs capitalize text-slate-500 dark:text-slate-400">
                       {item.priority} priority
                     </span>
                   </div>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
                     {item.title}
                   </p>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                     {item.description}
                   </p>
                 </div>
@@ -738,7 +738,7 @@ export function DashboardPage() {
       getWorkQueueItems({
         leads: leadsQuery.data?.items ?? [],
         campaigns: campaignsQuery.data ?? [],
-        templates: templatesQuery.data ?? [],
+        templates: templatesQuery.data?.items ?? [],
         hasPipelineStages:
           pipelinesQuery.data?.some((pipeline) => pipeline.stages.length > 0) ?? false,
         role,
@@ -748,7 +748,7 @@ export function DashboardPage() {
       leadsQuery.data?.items,
       pipelinesQuery.data,
       role,
-      templatesQuery.data,
+      templatesQuery.data?.items,
     ],
   );
 
@@ -806,20 +806,20 @@ export function DashboardPage() {
               <CardContent className="p-7">
               <div className="flex items-start justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-600">
+                  <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
                     {stats[0].title}
                   </p>
                   <div className="mt-2 flex flex-wrap items-baseline gap-3">
-                    <span className="text-5xl font-bold tracking-tight text-slate-900">
+                    <span className="text-5xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
                       {formatValue(stats[0].value, stats[0].format)}
                     </span>
                     <TrendBadge value={stats[0].trend} />
                   </div>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                     {stats[0].description}
                   </p>
                 </div>
-                <div className="shrink-0 rounded-xl bg-white/70 p-3 shadow-sm backdrop-blur-sm">
+                <div className="shrink-0 rounded-xl bg-white/70 dark:bg-slate-800/80 p-3 shadow-sm backdrop-blur-sm">
                   {stats[0].icon}
                 </div>
               </div>
@@ -883,17 +883,17 @@ export function DashboardPage() {
                   >
                     <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-slate-600">
+                      <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
                         {stat.title}
                       </p>
-                      <div className="rounded-lg bg-white/70 p-2 shadow-sm">
+                      <div className="rounded-lg bg-white/70 dark:bg-slate-800/80 p-2 shadow-sm">
                         {stat.icon}
                       </div>
                     </div>
-                    <p className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
+                    <p className="mt-3 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
                       {formatValue(stat.value, stat.format)}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {stat.description}
                     </p>
                   </CardContent>
@@ -910,17 +910,17 @@ export function DashboardPage() {
             <StatCardWrapper key={stat.title} to={stat.to}>
               <Card className={cn(stat.accent, stat.bg, "h-full")}>
                 <CardContent className="flex items-center gap-4 p-5">
-                <div className="shrink-0 rounded-xl bg-white/70 p-2.5 shadow-sm">
+                <div className="shrink-0 rounded-xl bg-white/70 dark:bg-slate-800/80 p-2.5 shadow-sm">
                   {stat.icon}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-slate-500">
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
                     {stat.title}
                   </p>
-                  <p className="text-xl font-bold text-slate-900">
+                  <p className="text-xl font-bold text-slate-900 dark:text-slate-50">
                     {formatValue(stat.value, stat.format)}
                   </p>
-                  <p className="truncate text-xs text-slate-500">
+                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
                     {stat.description}
                   </p>
                 </div>
@@ -1181,12 +1181,12 @@ export function DashboardPage() {
         </Card>
 
         {/* Dark snapshot card */}
-        <Card className="overflow-hidden bg-slate-900 text-white">
+        <Card className="overflow-hidden bg-slate-900 border-slate-800 text-white">
           <CardHeader className="border-b border-white/10 pb-4 pt-6">
             <CardTitle className="text-base font-semibold text-white">
               Quick Snapshot
             </CardTitle>
-            <CardDescription className="text-slate-400">
+            <CardDescription className="text-slate-300">
               At-a-glance summary
             </CardDescription>
           </CardHeader>
@@ -1203,7 +1203,7 @@ export function DashboardPage() {
             ) : metrics ? (
               <>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+                  <p className="text-xs font-medium uppercase tracking-wider text-slate-300">
                     Total Leads
                   </p>
                   <p className="mt-1 text-2xl font-bold text-white">
@@ -1211,7 +1211,7 @@ export function DashboardPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+                  <p className="text-xs font-medium uppercase tracking-wider text-slate-300">
                     Conversion Rate
                   </p>
                   <p className="mt-1 text-2xl font-bold text-white">
@@ -1219,7 +1219,7 @@ export function DashboardPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+                  <p className="text-xs font-medium uppercase tracking-wider text-slate-300">
                     Active Outreach
                   </p>
                   <p className="mt-1 text-2xl font-bold text-white">
@@ -1227,7 +1227,7 @@ export function DashboardPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
+                  <p className="text-xs font-medium uppercase tracking-wider text-slate-300">
                     Campaigns
                   </p>
                   <p className="mt-1 text-2xl font-bold text-white">

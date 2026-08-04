@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLead, useLeadActivities, useCreateLeadActivity, usePauseLead, useDeleteLead, useEnrichLead } from '@/api/leads';
+import { useLeadOutreachLogs } from '@/api/outreach';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -8,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { statusTones } from '@/lib/constants';
+import { formatCurrency } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 import { QuickResponseModal } from '@/components/ui/QuickResponseModal';
 import { FollowUpPicker } from '@/components/ui/FollowUpPicker';
@@ -40,6 +42,9 @@ import {
   CalendarCheck,
   ChevronDown,
   ChevronRight,
+  MailCheck,
+  Clock,
+  ChevronUp,
 } from 'lucide-react';
 
 const activityTypeIcons: Record<import('@/types').ActivityType, React.ReactNode> = {
@@ -427,6 +432,7 @@ export function LeadDetailPage() {
   const [activityLimit, setActivityLimit] = React.useState(25);
   const { data: lead, isLoading: leadLoading, error: leadError } = useLead(leadId);
   const { data: activitiesPage, isLoading: activityLoading } = useLeadActivities(leadId, { limit: activityLimit });
+  const { data: outreachLogs = [], isLoading: logsLoading } = useLeadOutreachLogs(leadId);
   const createActivity = useCreateLeadActivity();
   const pauseLead = usePauseLead();
   const deleteLead = useDeleteLead();
@@ -683,11 +689,7 @@ export function LeadDetailPage() {
                 <Row
                   icon={<DollarSign className="h-4 w-4 text-green-600" />}
                   label="Deal Value"
-                  value={lead.deal_value.toLocaleString(undefined, {
-                    style: 'currency',
-                    currency: 'USD',
-                    maximumFractionDigits: 0,
-                  })}
+                  value={formatCurrency(lead.deal_value)}
                 />
               )}
               {lead.status === 'won' && lead.won_at && (
@@ -762,14 +764,14 @@ export function LeadDetailPage() {
           )}
         </div>
 
-        {/* Activity timeline */}
-        <div className="lg:col-span-2">
+        {/* Activity timeline and Message History */}
+        <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
               <h3 className="text-sm font-semibold text-slate-900">Activity Timeline</h3>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleAddNote} className="mb-6 flex flex-col gap-3">
+              <form onSubmit={(e) => { e.preventDefault(); void handleAddNote(); }} className="mb-6 flex flex-col gap-3">
                 <Textarea
                   placeholder="Add a note..."
                   value={noteText}
@@ -839,6 +841,42 @@ export function LeadDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Message History */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <MailCheck className="h-4 w-4 text-indigo-500" />
+                <h3 className="text-sm font-semibold text-slate-900">Message History</h3>
+                {outreachLogs.length > 0 && (
+                  <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                    {outreachLogs.length} sent
+                  </span>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {logsLoading && (
+                <div className="flex h-24 items-center justify-center">
+                  <div className="h-5 w-5 animate-spin rounded-full border-4 border-slate-300 border-t-indigo-600" />
+                </div>
+              )}
+              {!logsLoading && outreachLogs.length === 0 && (
+                <div className="flex flex-col items-center gap-2 py-8 text-center text-slate-500">
+                  <MailCheck className="h-8 w-8 text-slate-300" />
+                  <p className="text-sm">No messages sent yet</p>
+                  <p className="text-xs text-slate-400">Emails sent via campaigns will appear here.</p>
+                </div>
+              )}
+              {!logsLoading && outreachLogs.length > 0 && (
+                <ul className="space-y-3">
+                  {outreachLogs.map((log) => (
+                    <MessageLogItem key={log.id} log={log} />
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
       {showQuickResponse && (
@@ -885,5 +923,82 @@ function Row({
         <div className="text-sm font-medium text-slate-900 mt-0.5">{children ?? value ?? '—'}</div>
       </div>
     </div>
+  );
+}
+
+// ── Message History sub-component ────────────────────────────────────────────
+
+const STATUS_STYLES: Record<string, string> = {
+  sent:      'bg-blue-100 text-blue-700',
+  delivered: 'bg-green-100 text-green-700',
+  opened:    'bg-purple-100 text-purple-700',
+  replied:   'bg-indigo-100 text-indigo-700',
+  failed:    'bg-red-100 text-red-700',
+  pending:   'bg-slate-100 text-slate-600',
+};
+
+const CHANNEL_LABELS: Record<string, string> = {
+  email:       '📧 Email',
+  whatsapp:    '💬 WhatsApp',
+  sms:         '📱 SMS',
+  phone_call:  '📞 Call',
+};
+
+function MessageLogItem({ log }: { log: import('@/api/outreach').OutreachLog }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const preview = log.message_body ? log.message_body.slice(0, 150) : null;
+  const hasMore  = log.message_body ? log.message_body.length > 150 : false;
+
+  const statusStyle = STATUS_STYLES[log.status] ?? 'bg-slate-100 text-slate-600';
+  const sentAt = log.sent_at ? new Date(log.sent_at).toLocaleString() : '—';
+
+  return (
+    <li className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {log.step_number != null && (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+            Step {log.step_number}
+          </span>
+        )}
+        <span className="text-xs text-slate-500">
+          {CHANNEL_LABELS[log.channel] ?? log.channel}
+        </span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusStyle}`}>
+          {log.status}
+        </span>
+        <span className="ml-auto flex items-center gap-1 text-xs text-slate-400">
+          <Clock className="h-3 w-3" />
+          {sentAt}
+        </span>
+      </div>
+
+      {/* Body preview */}
+      {preview && (
+        <div className="mt-3">
+          <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
+            {expanded ? log.message_body : preview}
+            {!expanded && hasMore && '…'}
+          </p>
+          {hasMore && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline"
+            >
+              {expanded
+                ? <><ChevronUp className="h-3 w-3" /> Show less</>
+                : <><ChevronDown className="h-3 w-3" /> Show more</>}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Error message if failed */}
+      {log.error_message && (
+        <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+          ⚠ {log.error_message}
+        </p>
+      )}
+    </li>
   );
 }

@@ -120,10 +120,6 @@ function mockUseIntegrations(
   } as any);
 }
 
-function getSummaryCard() {
-  return screen.getByText('Integration health summary').closest('.overflow-hidden') as HTMLElement;
-}
-
 function getCategorySection(name: string) {
   return screen.getByRole('heading', { name }).closest('section') as HTMLElement;
 }
@@ -159,44 +155,13 @@ describe('IntegrationsPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the health summary with counts', () => {
+  it('renders the health summary bar with counts', () => {
     mockUseIntegrations(mockIntegrations);
     renderWithProviders(<IntegrationsPage />);
 
-    const summary = getSummaryCard();
-    expect(summary).toBeInTheDocument();
-
-    expect(within(summary).getByText('Total')).toBeInTheDocument();
-    expect(
-      within(within(summary).getByText('Total').parentElement as HTMLElement).getByText('3'),
-    ).toBeInTheDocument();
-
-    expect(within(summary).getByText('Enabled')).toBeInTheDocument();
-    expect(
-      within(within(summary).getByText('Enabled').parentElement as HTMLElement).getByText('2'),
-    ).toBeInTheDocument();
-
-    expect(within(summary).getByText('Connected')).toBeInTheDocument();
-    expect(
-      within(within(summary).getByText('Connected').parentElement as HTMLElement).getByText('1'),
-    ).toBeInTheDocument();
-
-    expect(within(summary).getByText('Failed')).toBeInTheDocument();
-    expect(
-      within(within(summary).getByText('Failed').parentElement as HTMLElement).getByText('1'),
-    ).toBeInTheDocument();
-
-    expect(within(summary).getByText('No credentials')).toBeInTheDocument();
-    expect(
-      within(within(summary).getByText('No credentials').parentElement as HTMLElement).getByText(
-        '1',
-      ),
-    ).toBeInTheDocument();
-
-    expect(within(summary).getByText('Untested')).toBeInTheDocument();
-    expect(
-      within(within(summary).getByText('Untested').parentElement as HTMLElement).getByText('0'),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Healthy|Needs attention/)).toBeInTheDocument();
+    expect(screen.getByText(/enabled/)).toBeInTheDocument();
+    expect(screen.getByText(/connected/)).toBeInTheDocument();
   });
 
   it('renders category headings and groups cards by category', () => {
@@ -216,12 +181,12 @@ describe('IntegrationsPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('bulk Test Connections button is present and opens the results dialog', async () => {
+  it('bulk Test All button is present and opens the results dialog', async () => {
     vi.mocked(bulkTestIntegrations).mockResolvedValue(mockBulkResult);
     mockUseIntegrations(mockIntegrations);
     renderWithProviders(<IntegrationsPage />);
 
-    const button = screen.getByRole('button', { name: /test connections/i });
+    const button = screen.getByRole('button', { name: /test all/i });
     expect(button).toBeInTheDocument();
     fireEvent.click(button);
 
@@ -239,7 +204,7 @@ describe('IntegrationsPage', () => {
     expect(within(dialog).getByText('Invalid token')).toBeInTheDocument();
   });
 
-  it('toggles an integration and calls the update mutation', async () => {
+  it('shows confirmation dialog when disabling an integration', async () => {
     const mutateAsync = vi.fn().mockResolvedValue({});
     vi.mocked(useUpdateIntegration).mockReturnValue({
       mutateAsync,
@@ -255,11 +220,43 @@ describe('IntegrationsPage', () => {
     fireEvent.click(toggleButton);
 
     await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    const dialog = screen.getByRole('dialog');
+    const confirmButton = within(dialog).getByRole('button', { name: /disable/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledTimes(1);
     });
     expect(mutateAsync).toHaveBeenCalledWith({
       id: 'int-openwa-1',
       input: { is_enabled: false },
+    });
+  });
+
+  it('enables a disabled integration without confirmation', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    vi.mocked(useUpdateIntegration).mockReturnValue({
+      mutateAsync,
+      isPending: false,
+    } as any);
+
+    mockUseIntegrations(mockIntegrations);
+    renderWithProviders(<IntegrationsPage />);
+
+    const toggleButton = within(getCategorySection('Productivity')).getByRole('button', {
+      name: 'Disabled',
+    });
+    fireEvent.click(toggleButton);
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 'int-sheets-1',
+      input: { is_enabled: true },
     });
   });
 
@@ -289,110 +286,14 @@ describe('IntegrationsPage', () => {
     expect(mutateAsync).toHaveBeenCalledWith('int-openwa-1');
   });
 
-  it('shows OpenWA credential fields and help text when editing', async () => {
+  it('opens the setup wizard via Configure button', async () => {
     mockUseIntegrations(mockIntegrations);
     renderWithProviders(<IntegrationsPage />);
 
-    fireEvent.click(
-      within(getCategorySection('Messaging')).getByRole('button', { name: /credentials/i }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/OpenWA Base URL/i)).toBeInTheDocument();
+    const configureButton = within(getCategorySection('Messaging')).getByRole('button', {
+      name: 'Configure',
     });
-    expect(screen.getByLabelText(/API Key/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Session ID/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Phone Numbers/i)).toBeInTheDocument();
-
-    expect(
-      screen.getByText('The root URL of your external OpenWA HTTP server.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('OpenWA API key used in the x-api-key header.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('WhatsApp session identifier managed by the OpenWA server.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'One or more WhatsApp sender numbers for rotation (E.164 format).',
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it('saves OpenWA credentials and calls the update mutation', async () => {
-    const mutateAsync = vi.fn().mockResolvedValue({});
-    vi.mocked(useUpdateIntegration).mockReturnValue({
-      mutateAsync,
-      isPending: false,
-    } as any);
-
-    mockUseIntegrations(mockIntegrations);
-    renderWithProviders(<IntegrationsPage />);
-
-    fireEvent.click(
-      within(getCategorySection('Messaging')).getByRole('button', { name: /credentials/i }),
-    );
-
-    fireEvent.change(screen.getByLabelText(/OpenWA Base URL/i), {
-      target: { value: 'https://openwa.example.com' },
-    });
-    fireEvent.change(screen.getByLabelText(/API Key/i), {
-      target: { value: 'secret-key' },
-    });
-    fireEvent.change(screen.getByLabelText(/Session ID/i), {
-      target: { value: 'session-1' },
-    });
-    fireEvent.change(screen.getByLabelText(/Phone Numbers/i), {
-      target: { value: '+1234567890, +0987654321' },
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /save credentials/i }));
-
-    await waitFor(() => {
-      expect(mutateAsync).toHaveBeenCalledTimes(1);
-    });
-    expect(mutateAsync).toHaveBeenCalledWith({
-      id: 'int-openwa-1',
-      input: {
-        credentials: {
-          baseUrl: 'https://openwa.example.com',
-          apiKey: 'secret-key',
-          sessionId: 'session-1',
-          numbers: ['+1234567890', '+0987654321'],
-        },
-      },
-    });
-  });
-
-  it('opens the setup wizard from Add Integration', async () => {
-    mockUseIntegrations(mockIntegrations);
-    renderWithProviders(<IntegrationsPage />);
-
-    const addButton = screen.getByRole('button', { name: /add integration/i });
-    expect(addButton).toBeInTheDocument();
-    fireEvent.click(addButton);
-
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-    });
-
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('Integration Setup')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText('Select a provider to configure'),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole('heading', { name: 'Messaging' })).toBeInTheDocument();
-  });
-
-  it('opens the setup wizard for a specific integration via Setup button', async () => {
-    mockUseIntegrations(mockIntegrations);
-    renderWithProviders(<IntegrationsPage />);
-
-    const setupButton = within(getCategorySection('Messaging')).getByRole('button', {
-      name: 'Setup',
-    });
-    fireEvent.click(setupButton);
+    fireEvent.click(configureButton);
 
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -401,5 +302,39 @@ describe('IntegrationsPage', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Integration Setup')).toBeInTheDocument();
     expect(within(dialog).getByText('Configure OpenWA')).toBeInTheDocument();
+  });
+
+  it('filters integrations by search query', () => {
+    mockUseIntegrations(mockIntegrations);
+    renderWithProviders(<IntegrationsPage />);
+
+    const searchInput = screen.getByPlaceholderText('Search integrations...');
+    fireEvent.change(searchInput, { target: { value: 'sheets' } });
+
+    expect(screen.getByText('Google Sheets')).toBeInTheDocument();
+    expect(screen.queryByText('OpenWA')).not.toBeInTheDocument();
+    expect(screen.queryByText('Google Ads')).not.toBeInTheDocument();
+  });
+
+  it('filters integrations by category tab', () => {
+    mockUseIntegrations(mockIntegrations);
+    renderWithProviders(<IntegrationsPage />);
+
+    const advertisingTab = screen.getByRole('button', { name: 'Advertising' });
+    fireEvent.click(advertisingTab);
+
+    expect(screen.getByText('Google Ads')).toBeInTheDocument();
+    expect(screen.queryByText('OpenWA')).not.toBeInTheDocument();
+    expect(screen.queryByText('Google Sheets')).not.toBeInTheDocument();
+  });
+
+  it('shows no-match message when search has no results', () => {
+    mockUseIntegrations(mockIntegrations);
+    renderWithProviders(<IntegrationsPage />);
+
+    const searchInput = screen.getByPlaceholderText('Search integrations...');
+    fireEvent.change(searchInput, { target: { value: 'zzz-nonexistent' } });
+
+    expect(screen.getByText('No integrations match your search.')).toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLead, useCreateLead, useUpdateLead, usePauseLead } from '@/api/leads';
 import { useCampaigns } from '@/api/campaigns';
@@ -14,8 +14,72 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { LeadTimeline } from '@/components/LeadTimeline';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { ColumnSettings, type ColumnOption, type ColumnPreset } from '@/components/ui/ColumnSettings';
+import { useTablePrefs } from '@/lib/tablePrefs';
 import { Pause, Play, Send } from 'lucide-react';
 import type { LeadInput } from '@/types';
+
+/**
+ * Fields the API requires — always rendered, never hideable, so the form can
+ * always be submitted.
+ */
+const REQUIRED_FIELD_KEYS = [
+  'business_name',
+  'contact_name',
+  'email',
+  'phone',
+  'industry',
+  'location',
+];
+
+/** Optional built-in fields a user can switch on or off, in render order. */
+const OPTIONAL_FIELDS: { key: string; label: string }[] = [
+  { key: 'website', label: 'Website' },
+  { key: 'country', label: 'Country' },
+  { key: 'pipeline_stage_id', label: 'Pipeline Stage' },
+  { key: 'deal_value', label: 'Deal Value' },
+  { key: 'google_rating', label: 'Google Rating' },
+  { key: 'review_count', label: 'Review Count' },
+  { key: 'source_platform', label: 'Source' },
+  { key: 'next_follow_up_at', label: 'Next Follow-up' },
+  { key: 'tags', label: 'Tags' },
+  { key: 'notes', label: 'Notes' },
+];
+
+/** ISO string → value accepted by an <input type="datetime-local">. */
+function toLocalDateTimeInput(value: string | null | undefined): string {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Human labels for the always-on required fields. */
+function labelForRequired(key: string): string {
+  const labels: Record<string, string> = {
+    business_name: 'Business Name',
+    contact_name: 'Contact Name',
+    email: 'Email',
+    phone: 'Phone',
+    industry: 'Industry',
+    location: 'Location',
+  };
+  return labels[key] ?? key;
+}
+
+/** Field set shown before a user customizes anything — matches the previous form. */
+const DEFAULT_FORM_FIELDS = [
+  ...REQUIRED_FIELD_KEYS,
+  'website',
+  'country',
+  'pipeline_stage_id',
+  'deal_value',
+  'google_rating',
+  'review_count',
+  'tags',
+  'notes',
+];
 
 export function LeadFormPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,8 +95,82 @@ export function LeadFormPage() {
   const { data: campaigns = [] } = useCampaigns();
   const { data: sequenceData } = useSequences();
   const { data: pipelines } = usePipelines();
-  const { data: templates = [] } = useTemplates({ approval_status: 'approved' });
-  const { data: customFields = [] } = useCustomFields();
+  const { data: templatesData } = useTemplates({ approval_status: 'approved' });
+  const templates = templatesData?.items ?? [];
+  const { data: customFieldsData } = useCustomFields();
+  // Stable identity: a `= []` destructuring default is a fresh array on every
+  // render, which would invalidate every memo below it on every render.
+  const customFields = useMemo(() => customFieldsData ?? [], [customFieldsData]);
+
+  /** Required built-ins + optional built-ins + one entry per custom field. */
+  const fieldOptions = useMemo<ColumnOption[]>(() => {
+    const required: ColumnOption[] = REQUIRED_FIELD_KEYS.map((key) => ({
+      key,
+      label: OPTIONAL_FIELDS.find((f) => f.key === key)?.label ?? labelForRequired(key),
+      locked: true,
+      group: '(required)',
+    }));
+    const optional: ColumnOption[] = OPTIONAL_FIELDS.map((f) => ({ key: f.key, label: f.label }));
+    const custom: ColumnOption[] = customFields.map((field) => ({
+      key: `cf:${field.field_key}`,
+      label: field.label,
+      // A required custom field is validated server-side, so it must stay visible.
+      locked: field.is_required,
+      group: '(custom)',
+    }));
+    return [...required, ...optional, ...custom];
+  }, [customFields]);
+
+  const availableFieldKeys = useMemo(() => fieldOptions.map((o) => o.key), [fieldOptions]);
+
+  const defaultFieldKeys = useMemo(
+    () => [
+      ...DEFAULT_FORM_FIELDS,
+      ...customFields.map((f) => `cf:${f.field_key}`),
+    ],
+    [customFields],
+  );
+
+  const {
+    visibleColumns: visibleFields,
+    toggleColumn: toggleField,
+    setColumns: setFields,
+    reset: resetFields,
+  } = useTablePrefs('lead-form', { columns: defaultFieldKeys }, availableFieldKeys);
+
+  // Required fields and required custom fields are always rendered, whatever is stored.
+  const lockedKeys = useMemo(
+    () => fieldOptions.filter((o) => o.locked).map((o) => o.key),
+    [fieldOptions],
+  );
+  const shownFields = useMemo(
+    () => new Set([...lockedKeys, ...visibleFields]),
+    [lockedKeys, visibleFields],
+  );
+  /** Same set, ordered like the master field list, for the picker. */
+  const shownFieldsOrdered = useMemo(
+    () => availableFieldKeys.filter((k) => shownFields.has(k)),
+    [availableFieldKeys, shownFields],
+  );
+  const isVisible = (key: string) => shownFields.has(key);
+
+  const visibleCustomFields = useMemo(
+    () => customFields.filter((field) => isVisible(`cf:${field.field_key}`)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [customFields, shownFields],
+  );
+
+  const fieldPresets = useMemo<ColumnPreset[]>(
+    () => [
+      { label: 'Essentials only', keys: lockedKeys },
+      {
+        label: 'Sales',
+        keys: [...lockedKeys, 'pipeline_stage_id', 'deal_value', 'next_follow_up_at', 'tags', 'notes'],
+      },
+      { label: 'Everything', keys: availableFieldKeys },
+    ],
+    [lockedKeys, availableFieldKeys],
+  );
 
   const [manualSendData, setManualSendData] = useState({
     campaignId: '',
@@ -57,6 +195,7 @@ export function LeadFormPage() {
     tags: [],
     notes: null,
     deal_value: null,
+    next_follow_up_at: null,
     custom_fields: {},
   });
 
@@ -79,10 +218,11 @@ export function LeadFormPage() {
         tags: lead.tags,
         notes: lead.notes,
         deal_value: lead.deal_value,
+        next_follow_up_at: lead.next_follow_up_at,
         custom_fields: lead.custom_fields || {},
       }));
     }
-  }, [lead, isEditing]);
+  }, [lead, isEditing, setFormData]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -206,10 +346,24 @@ export function LeadFormPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Lead Information</CardTitle>
-          <CardDescription>
-            {isEditing ? 'Update the lead details' : 'Enter the lead details to create a new lead'}
-          </CardDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle>Lead Information</CardTitle>
+              <CardDescription>
+                {isEditing ? 'Update the lead details' : 'Enter the lead details to create a new lead'}
+              </CardDescription>
+            </div>
+            <ColumnSettings
+              label="Fields"
+              hint="Pick the fields you actually fill in. Required fields stay on, and hidden fields keep any value already saved."
+              options={fieldOptions}
+              visible={shownFieldsOrdered}
+              onToggle={toggleField}
+              onReset={resetFields}
+              presets={fieldPresets}
+              onPresetSelect={setFields}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -259,15 +413,18 @@ export function LeadFormPage() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="website">Website</Label>
-                <Input
-                  id="website"
-                  name="website"
-                  value={formData.website || ''}
-                  onChange={handleChange}
-                />
-              </div>
+              {isVisible('website') && (
+                <div className="space-y-2">
+                  <Label htmlFor="website">Website</Label>
+                  <Input
+                    id="website"
+                    name="website"
+                    value={formData.website || ''}
+                    onChange={handleChange}
+                  />
+                </div>
+              )}
+
 
               <div className="space-y-2">
                 <Label htmlFor="industry">Industry *</Label>
@@ -291,84 +448,130 @@ export function LeadFormPage() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="country">Country</Label>
-                <Input
-                  id="country"
-                  name="country"
-                  value={formData.country || ''}
-                  onChange={handleChange}
-                />
-              </div>
+              {isVisible('country') && (
+                <div className="space-y-2">
+                  <Label htmlFor="country">Country</Label>
+                  <Input
+                    id="country"
+                    name="country"
+                    value={formData.country || ''}
+                    onChange={handleChange}
+                  />
+                </div>
+              )}
 
-              <div className="space-y-2">
-                <Label htmlFor="pipeline_stage_id">Pipeline Stage</Label>
-                <select
-                  id="pipeline_stage_id"
-                  name="pipeline_stage_id"
-                  value={formData.pipeline_stage_id || ''}
-                  onChange={handleChange}
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                >
-                  <option value="">None (No Pipeline Assigned)</option>
-                  {pipelines?.map((p) => (
-                    <optgroup key={p.id} label={p.name}>
-                      {p.stages?.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="deal_value">Deal Value ($)</Label>
-                <Input
-                  id="deal_value"
-                  name="deal_value"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.deal_value || ''}
-                  onChange={handleChange}
-                />
-              </div>
+              {isVisible('pipeline_stage_id') && (
+                <div className="space-y-2">
+                  <Label htmlFor="pipeline_stage_id">Pipeline Stage</Label>
+                  <select
+                    id="pipeline_stage_id"
+                    name="pipeline_stage_id"
+                    value={formData.pipeline_stage_id || ''}
+                    onChange={handleChange}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  >
+                    <option value="">None (No Pipeline Assigned)</option>
+                    {pipelines?.map((p) => (
+                      <optgroup key={p.id} label={p.name}>
+                        {p.stages?.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-              <div className="space-y-2">
-                <Label htmlFor="google_rating">Google Rating (0–5)</Label>
-                <Input
-                  id="google_rating"
-                  name="google_rating"
-                  type="number"
-                  min="0"
-                  max="5"
-                  step="0.1"
-                  value={formData.google_rating ?? ''}
-                  onChange={(e) => {
-                    const value = e.target.value === '' ? null : parseFloat(e.target.value);
-                    setFormData((prev) => ({ ...prev, google_rating: value }));
-                  }}
-                />
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="review_count">Review Count</Label>
-                <Input
-                  id="review_count"
-                  name="review_count"
-                  type="number"
-                  min="0"
-                  value={formData.review_count ?? ''}
-                  onChange={(e) => {
-                    const value = e.target.value === '' ? null : parseInt(e.target.value);
-                    setFormData((prev) => ({ ...prev, review_count: value }));
-                  }}
-                />
-              </div>
+              {isVisible('deal_value') && (
+                <div className="space-y-2">
+                  <Label htmlFor="deal_value">Deal Value ($)</Label>
+                  <Input
+                    id="deal_value"
+                    name="deal_value"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formData.deal_value || ''}
+                    onChange={handleChange}
+                  />
+                </div>
+              )}
+
+
+              {isVisible('google_rating') && (
+                <div className="space-y-2">
+                  <Label htmlFor="google_rating">Google Rating (0–5)</Label>
+                  <Input
+                    id="google_rating"
+                    name="google_rating"
+                    type="number"
+                    min="0"
+                    max="5"
+                    step="0.1"
+                    value={formData.google_rating ?? ''}
+                    onChange={(e) => {
+                      const value = e.target.value === '' ? null : parseFloat(e.target.value);
+                      setFormData((prev) => ({ ...prev, google_rating: value }));
+                    }}
+                  />
+                </div>
+              )}
+
+
+              {isVisible('review_count') && (
+                <div className="space-y-2">
+                  <Label htmlFor="review_count">Review Count</Label>
+                  <Input
+                    id="review_count"
+                    name="review_count"
+                    type="number"
+                    min="0"
+                    value={formData.review_count ?? ''}
+                    onChange={(e) => {
+                      const value = e.target.value === '' ? null : parseInt(e.target.value);
+                      setFormData((prev) => ({ ...prev, review_count: value }));
+                    }}
+                  />
+                </div>
+              )}
+
+              {isVisible('source_platform') && (
+                <div className="space-y-2">
+                  <Label htmlFor="source_platform">Source</Label>
+                  <Input
+                    id="source_platform"
+                    name="source_platform"
+                    value={formData.source_platform}
+                    onChange={handleChange}
+                    placeholder="manual"
+                  />
+                </div>
+              )}
+
+              {isVisible('next_follow_up_at') && (
+                <div className="space-y-2">
+                  <Label htmlFor="next_follow_up_at">Next Follow-up</Label>
+                  <Input
+                    id="next_follow_up_at"
+                    name="next_follow_up_at"
+                    type="datetime-local"
+                    value={toLocalDateTimeInput(formData.next_follow_up_at)}
+                    onChange={(e) => {
+                      // The API expects an ISO-8601 string with offset.
+                      const value = e.target.value ? new Date(e.target.value).toISOString() : null;
+                      setFormData((prev) => ({ ...prev, next_follow_up_at: value }));
+                    }}
+                  />
+                </div>
+              )}
+
             </div>
 
+            {isVisible('tags') && (
             <div className="space-y-2">
               <Label htmlFor="tags">Tags (comma-separated)</Label>
               <Input
@@ -384,7 +587,9 @@ export function LeadFormPage() {
                 }}
               />
             </div>
+            )}
 
+            {isVisible('notes') && (
             <div className="space-y-2">
               <Label htmlFor="notes">Notes</Label>
               <textarea
@@ -395,12 +600,13 @@ export function LeadFormPage() {
                 className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
+            )}
 
-            {customFields.length > 0 && (
+            {visibleCustomFields.length > 0 && (
               <div className="space-y-4 pt-4 border-t border-slate-200">
                 <h3 className="text-lg font-semibold text-slate-900">Custom Fields</h3>
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                  {customFields.map((field) => (
+                  {visibleCustomFields.map((field) => (
                     <div key={field.id} className="space-y-2">
                       <Label htmlFor={`cf-${field.field_key}`}>
                         {field.label} {field.is_required && '*'}

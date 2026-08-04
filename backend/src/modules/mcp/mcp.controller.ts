@@ -86,7 +86,7 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
 export function handleMcpGet(req: Request, res: Response): void {
   // Only accept SSE connections
   if (req.headers.accept !== 'text/event-stream') {
-    res.status(400).json({
+    res.status(405).json({
       jsonrpc: '2.0',
       id: null,
       error: { code: JSONRPC_INVALID_REQUEST, message: 'Only text/event-stream is supported for GET' },

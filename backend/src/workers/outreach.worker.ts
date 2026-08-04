@@ -19,7 +19,7 @@ import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/u
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { AppError } from '../shared/middleware/errorHandler';
-import { findSequenceById } from '../modules/outreach/outreach.repository';
+import { findSequenceByIdIncludingDeleted as findSequenceById } from '../modules/outreach/outreach.repository';
 import {
   findCampaignById,
   countSentTodayForCampaign,
@@ -29,6 +29,7 @@ import { createLog, updateLogStatus } from '../modules/outreach/outreach.service
 import { OutreachStatus } from '../shared/types';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
+import { isPlaceholderPhone, isPlaceholderEmail } from '../shared/utils/phone';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { createTask } from '../modules/outreach/outreach.service';
@@ -38,6 +39,18 @@ interface DispatchResult {
   success: boolean;
   externalId?: string;
   error?: string;
+}
+
+/**
+ * True when a destination is a scraper-generated placeholder rather than a
+ * real contact (e.g. Google Places returned no phone/email for the
+ * business — see scraper.service.ts generatePlaceholder{Phone,Email}).
+ * Dispatching to these burns anti-ban budget and risks the sending
+ * account's reputation on numbers/addresses that were never real.
+ */
+function isPlaceholderContact(channel: string, destination: string): boolean {
+  if (channel === 'email') return isPlaceholderEmail(destination);
+  return isPlaceholderPhone(destination);
 }
 
 export type StopCheckResult = { stopped: boolean; reason?: string };
@@ -448,6 +461,12 @@ export async function handleSendAiReply(data: OutreachSendAiReplyJob): Promise<v
   if (!destination) {
     throw new AppError(`Lead ${leadId} has no ${channel} destination`, 400);
   }
+  if (isPlaceholderContact(channel, destination)) {
+    throw new AppError(
+      `Lead ${leadId} has a placeholder ${channel} (scraped without real contact info) — cannot dispatch`,
+      400,
+    );
+  }
 
   const log = await createLog({
     leadId,
@@ -609,6 +628,12 @@ async function sendViaConnector(opts: {
   // 6. Validate destination
   if (!destination) {
     return { success: false, error: `Lead has no ${opts.channel} destination` };
+  }
+  if (isPlaceholderContact(opts.channel, destination)) {
+    return {
+      success: false,
+      error: `Lead has a placeholder ${opts.channel} (scraped without real contact info) — cannot dispatch`,
+    };
   }
 
   // 7. Call dispatch

@@ -54,7 +54,11 @@ export function PipelineManagePage() {
     setStages(newStages.map((s, i) => ({ ...s, position: i })));
   };
 
-  const handleStageChange = (index: number, field: keyof StageInput, value: unknown) => {
+  const handleStageChange = <K extends keyof StageInput>(
+    index: number,
+    field: K,
+    value: StageInput[K],
+  ) => {
     let newStages = [...stages];
     
     if (field === 'is_terminal_won' && value === true) {
@@ -187,28 +191,6 @@ export function PipelineManagePage() {
                 </div>
               </div>
 
-              {editingId && stages.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>Current Stages</Label>
-                  <span className="text-xs text-slate-400">Stage editing is not available in this view</span>
-                </div>
-                <div className="space-y-2">
-                  {stages.map((stage, index) => (
-                    <div key={index} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                      <GripVertical className="h-4 w-4 text-slate-300" />
-                      <span className="flex-1 text-sm text-slate-600">{stage.name}</span>
-                      <div className="flex gap-2 text-xs">
-                        {stage.is_terminal_won && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700 font-medium">Won</span>}
-                        {stage.is_terminal_lost && <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 font-medium">Lost</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              )}
-
-              {!editingId && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <Label>Stages</Label>
@@ -219,7 +201,7 @@ export function PipelineManagePage() {
                 </div>
                 <div className="space-y-2">
                   {stages.map((stage, index) => (
-                    <div key={index} className="flex items-center gap-2 rounded-lg border p-3">
+                    <div key={index} className="flex items-center gap-2 rounded-lg border p-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
                       <GripVertical className="h-4 w-4 text-slate-400" />
                       <Input
                         value={stage.name}
@@ -228,24 +210,31 @@ export function PipelineManagePage() {
                         className="flex-1"
                         required
                       />
-                      <div className="flex items-center space-x-2">
-                        <label className="flex items-center space-x-1 text-sm">
-                          <input type="checkbox" checked={stage.is_terminal_won} onChange={(e) => handleStageChange(index, 'is_terminal_won', e.target.checked)} className="h-3 w-3 rounded border-slate-300" />
-                          <span>Won</span>
+                      <div className="flex items-center space-x-3">
+                        <label className="flex items-center space-x-1 text-sm cursor-pointer">
+                          <input type="checkbox" checked={stage.is_terminal_won} onChange={(e) => handleStageChange(index, 'is_terminal_won', e.target.checked)} className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+                          <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Won</span>
                         </label>
-                        <label className="flex items-center space-x-1 text-sm">
-                          <input type="checkbox" checked={stage.is_terminal_lost} onChange={(e) => handleStageChange(index, 'is_terminal_lost', e.target.checked)} className="h-3 w-3 rounded border-slate-300" />
-                          <span>Lost</span>
+                        <label className="flex items-center space-x-1 text-sm cursor-pointer">
+                          <input type="checkbox" checked={stage.is_terminal_lost} onChange={(e) => handleStageChange(index, 'is_terminal_lost', e.target.checked)} className="h-3.5 w-3.5 rounded border-slate-300 text-red-600 focus:ring-red-500" />
+                          <span className="text-xs font-semibold text-red-600 dark:text-red-400">Lost</span>
                         </label>
                       </div>
-                      <Button type="button" variant="ghost" size="icon" onClick={() => handleRemoveStage(index)} disabled={stages.length <= 1}>
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
+                      {stages.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRemoveStage(index)}
+                          className="text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
-              )}
 
 
               <div className="flex justify-end space-x-4">

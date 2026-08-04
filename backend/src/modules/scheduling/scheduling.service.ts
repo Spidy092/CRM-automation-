@@ -12,7 +12,10 @@ import {
   CreateBookingInput,
 } from './scheduling.types';
 import * as repo from './scheduling.repository';
-import { createEvent } from '../integrations/google-calendar/google-calendar.connector';
+import {
+  createEvent,
+  deleteEvent,
+} from '../integrations/google-calendar/google-calendar.connector';
 
 // ── Availability ─────────────────────────────────────────────────────────
 
@@ -34,6 +37,25 @@ export async function setAvailability(
   for (const slot of slots) {
     if (slot.isActive && slot.startTime >= slot.endTime) {
       throw new AppError('Start time must be before end time', 400);
+    }
+  }
+
+  // Check for overlapping shifts within the same day
+  const byDay = new Map<number, typeof slots>();
+  for (const slot of slots) {
+    if (!slot.isActive) continue;
+    if (!byDay.has(slot.dayOfWeek)) byDay.set(slot.dayOfWeek, []);
+    byDay.get(slot.dayOfWeek)!.push(slot);
+  }
+  for (const [day, daySlots] of byDay) {
+    daySlots.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    for (let i = 1; i < daySlots.length; i++) {
+      if (daySlots[i].startTime < daySlots[i - 1].endTime) {
+        throw new AppError(
+          `Overlapping shifts on ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day]}: ${daySlots[i - 1].startTime}–${daySlots[i - 1].endTime} overlaps ${daySlots[i].startTime}–${daySlots[i].endTime}`,
+          400,
+        );
+      }
     }
   }
 
@@ -87,7 +109,12 @@ export async function getAvailableSlots(
   let availability = await repo.findAvailabilityByUserAndDay(userId, dayOfWeek);
 
   // Apply custom time window override if set
-  if (dateOverride && !dateOverride.is_blocked && dateOverride.start_time && dateOverride.end_time) {
+  if (
+    dateOverride &&
+    !dateOverride.is_blocked &&
+    dateOverride.start_time &&
+    dateOverride.end_time
+  ) {
     availability = [
       {
         id: 'override',
@@ -219,6 +246,12 @@ export async function getBookingUrlBySlug(slug: string): Promise<BookingUrl> {
   return url;
 }
 
+export async function getBookingUrlById(id: string, userId: string): Promise<BookingUrl> {
+  const url = await repo.findBookingUrlById(id);
+  if (!url || url.user_id !== userId) throw new AppError('Booking URL not found', 404);
+  return url;
+}
+
 export async function createBookingUrl(
   userId: string,
   input: CreateBookingUrlInput,
@@ -231,11 +264,14 @@ export async function createBookingUrl(
     .slice(0, 60);
   let slug = baseSlug;
   let counter = 1;
-  // eslint-disable-next-line no-constant-condition -- intentional loop with break
-  while (true) {
+  const MAX_SLUG_ATTEMPTS = 100;
+  while (counter <= MAX_SLUG_ATTEMPTS) {
     const existing = await repo.findBookingUrlBySlug(slug);
     if (!existing) break;
     slug = `${baseSlug}-${counter++}`;
+  }
+  if (counter > MAX_SLUG_ATTEMPTS) {
+    throw new AppError('Could not generate a unique slug. Please choose a different title.', 409);
   }
 
   const url = await repo.insertBookingUrl({
@@ -297,7 +333,8 @@ export async function listBookings(userId: string): Promise<Booking[]> {
 
 export async function createBooking(slug: string, input: CreateBookingInput): Promise<Booking> {
   const bookingUrl = await repo.findBookingUrlBySlug(slug);
-  if (!bookingUrl || !bookingUrl.is_active) throw new AppError('Booking page not found or inactive', 404);
+  if (!bookingUrl || !bookingUrl.is_active)
+    throw new AppError('Booking page not found or inactive', 404);
 
   // Validate slot is in the future
   const startsAt = new Date(input.startsAt);
@@ -319,8 +356,11 @@ export async function createBooking(slug: string, input: CreateBookingInput): Pr
     throw new AppError('This date is not available for booking', 409);
   }
 
-  // Calculate end time (30 min default)
-  const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
+  // Calculate end time from availability slot duration
+  const dayOfWeek = startsAt.getUTCDay();
+  const availForDay = await repo.findAvailabilityByUserAndDay(bookingUrl.user_id, dayOfWeek);
+  const slotDurationMin = availForDay[0]?.slot_duration_min ?? 30;
+  const endsAt = new Date(startsAt.getTime() + slotDurationMin * 60 * 1000);
 
   // Check for conflicts
   const conflicts = await repo.findConflictingBookings(
@@ -402,15 +442,22 @@ export async function cancelBooking(bookingId: string, actorId: string): Promise
   const booking = await repo.findBookingById(bookingId);
   if (!booking) throw new AppError('Booking not found', 404);
 
+  if (booking.user_id !== actorId) {
+    throw new AppError('You do not have permission to cancel this booking', 403);
+  }
+
   const updated = await repo.updateBookingStatus(bookingId, 'cancelled');
 
   // Cancel Google Calendar event if exists
   if (booking.google_event_id) {
     try {
-      // Google Calendar cancel would go here — for now just log
-      logger.info('Would cancel Google Calendar event', {
-        eventId: booking.google_event_id,
-      });
+      const result = await deleteEvent(booking.google_event_id);
+      if (!result.ok) {
+        logger.warn('Failed to cancel Google Calendar event', {
+          eventId: booking.google_event_id,
+          error: result.error,
+        });
+      }
     } catch (err) {
       logger.warn('Failed to cancel Google Calendar event', {
         error: err instanceof Error ? err.message : String(err),
@@ -447,7 +494,11 @@ export async function createInternalBooking(
     throw new AppError('Booking time must be in the future', 400);
   }
 
-  const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
+  // Calculate end time from availability slot duration
+  const dayOfWeek = startsAt.getUTCDay();
+  const availForDay = await repo.findAvailabilityByUserAndDay(userId, dayOfWeek);
+  const slotDurationMin = availForDay[0]?.slot_duration_min ?? 30;
+  const endsAt = new Date(startsAt.getTime() + slotDurationMin * 60 * 1000);
 
   // Check double booking conflicts
   const conflicts = await repo.findConflictingBookings(
@@ -542,7 +593,8 @@ export async function getRoundRobinUser(): Promise<string | null> {
   const users = await repo.getAllBookingUrlUsers();
   if (users.length === 0) return null;
 
-  const lastBookedUserId = await repo.getLastBookedUser();
+  const userIds = users.map((u) => u.user_id);
+  const lastBookedUserId = await repo.getLastBookedUser(userIds);
 
   if (!lastBookedUserId) return users[0].user_id;
 

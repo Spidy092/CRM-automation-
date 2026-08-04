@@ -13,6 +13,7 @@ import {
   getLeadsForRun,
   retryFailedItems,
   getStatsSummary,
+  isRetryableScrapeError,
 } from './scraper.service';
 import * as repo from './scraper.repository';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
@@ -106,6 +107,37 @@ function activeConfig(source_type: string, config: Record<string, unknown>) {
   };
 }
 
+/**
+ * Runs an async operation under fake timers, repeatedly draining pending
+ * timers until it settles.
+ *
+ * A single `runAllTimersAsync()` is not enough for the crawler: it awaits
+ * network calls between pages, so the next crawl-delay timer is only
+ * scheduled after some microtasks have flushed. If that happens *after*
+ * `runAllTimersAsync()` has drained, the awaited promise never settles and
+ * the test hangs until Jest's timeout. Looping until settled removes the
+ * dependency on exactly how many microtask ticks the implementation takes.
+ */
+async function runWithFakeTimers<T>(op: () => Promise<T>): Promise<T> {
+  const promise = op();
+  let settled = false;
+  const tracked = promise.then(
+    (v) => {
+      settled = true;
+      return v;
+    },
+    (e) => {
+      settled = true;
+      throw e;
+    },
+  );
+  // Bounded so a genuine hang still fails the test rather than looping forever.
+  for (let i = 0; i < 100 && !settled; i++) {
+    await jest.runAllTimersAsync();
+  }
+  return tracked;
+}
+
 describe('Scraper Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -156,7 +188,7 @@ describe('Scraper Service', () => {
         {
           name: 'Test',
           source_type: 'google_places',
-          config: { apiKeyRef: 'GOOGLE_PLACES_API_KEY' },
+          config: { query: 'cafes', apiKeyRef: 'GOOGLE_PLACES_API_KEY' },
         },
         mockActor,
       );
@@ -171,7 +203,7 @@ describe('Scraper Service', () => {
         source_type: 'youtube',
       });
       const result = await createConfig(
-        { name: 'YT', source_type: 'youtube', config: { apiKeyRef: 'YT_KEY' } },
+        { name: 'YT', source_type: 'youtube', config: { query: 'agencies', apiKeyRef: 'YT_KEY' } },
         mockActor,
       );
       expect(result.id).toBe('2');
@@ -184,7 +216,7 @@ describe('Scraper Service', () => {
         source_type: 'facebook',
       });
       const result = await createConfig(
-        { name: 'FB', source_type: 'facebook', config: { accessTokenRef: 'FB_TOKEN' } },
+        { name: 'FB', source_type: 'facebook', config: { pageId: '123', accessTokenRef: 'FB_TOKEN' } },
         mockActor,
       );
       expect(result.id).toBe('3');
@@ -242,7 +274,7 @@ describe('Scraper Service', () => {
       });
       const result = await updateConfig(
         '1',
-        { name: 'New', config: { apiKeyRef: 'GOOGLE_PLACES_API_KEY' } },
+        { name: 'New', config: { query: 'cafes', apiKeyRef: 'GOOGLE_PLACES_API_KEY' } },
         mockActor,
       );
       expect(result.name).toBe('New');
@@ -798,9 +830,7 @@ describe('Scraper Service', () => {
       const html = `<html><body><a href="mailto:hi@acme.com">Email</a></body></html>`;
       global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
 
-      const promise = runScrape('1', mockActor);
-      await jest.runAllTimersAsync();
-      const result = await promise;
+      const result = await runWithFakeTimers(() => runScrape('1', mockActor));
 
       // Same page content repeated across 3 "pages" (no real pagination) —
       // should collapse to a single lead, not 3.
@@ -853,9 +883,7 @@ describe('Scraper Service', () => {
       );
       const html = `<div><div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div><a class="next">Next</a></div>`;
       global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
-      const promise = runScrape('1', mockActor);
-      await jest.runAllTimersAsync();
-      const result = await promise;
+      const result = await runWithFakeTimers(() => runScrape('1', mockActor));
       expect(result.status).toBe('completed');
       jest.useRealTimers();
     });
@@ -1513,6 +1541,294 @@ describe('Scraper Service', () => {
       puppeteerPageMock.$$eval.mockRejectedValue(new Error('boom'));
       await expect(discoverPages('https://example.com/')).rejects.toThrow('boom');
       expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+  });
+
+  // ── Tier 1 audit fixes ──────────────────────────────────────────────────
+
+  describe('isRetryableScrapeError (C1)', () => {
+    it('treats network/unknown errors as retryable', () => {
+      expect(isRetryableScrapeError(new Error('ECONNRESET'))).toBe(true);
+      expect(isRetryableScrapeError('a string throw')).toBe(true);
+    });
+
+    it('treats upstream 429 and 5xx as retryable', () => {
+      expect(isRetryableScrapeError(new AppError('rate limited', 429))).toBe(true);
+      expect(isRetryableScrapeError(new AppError('bad gateway', 502))).toBe(true);
+      expect(isRetryableScrapeError(new AppError('timed out', 504))).toBe(true);
+    });
+
+    it('treats 4xx configuration errors as permanent', () => {
+      expect(isRetryableScrapeError(new AppError('selectors are required', 400))).toBe(false);
+      expect(isRetryableScrapeError(new AppError('robots.txt disallows', 403))).toBe(false);
+      expect(isRetryableScrapeError(new AppError('not found', 404))).toBe(false);
+    });
+  });
+
+  describe('run failure classification (C1)', () => {
+    it('marks a transient upstream failure retryable on the result', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'cafes' }),
+      );
+      global.fetch = jest.fn().mockRejectedValue(new Error('socket hang up'));
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('failed');
+      expect(result.retryable).toBe(true);
+    });
+
+    it('marks a misconfiguration NOT retryable so it is not re-run three times', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('web_scrape', { url: 'http://x' }), // selectors mode, none provided
+      );
+      global.fetch = jest.fn();
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('selectors are required');
+      expect(result.retryable).toBe(false);
+    });
+  });
+
+  describe('runScrapeForJob honours a pause (R6)', () => {
+    it('does not scrape when the config was paused after enqueue', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        ...activeConfig('web_scrape', { url: 'http://x', selectors: { business_name: '.n' } }),
+        is_active: false,
+      });
+      global.fetch = jest.fn();
+
+      const result = await runScrapeForJob('1', 'log-1');
+
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('paused');
+      expect(global.fetch).not.toHaveBeenCalled();
+      // The 'running' row created by queueScrapeRun must be closed out, or the
+      // UI polls it forever.
+      expect(repo.updateScraperLog).toHaveBeenCalledWith(
+        'log-1',
+        expect.objectContaining({ status: 'failed' }),
+      );
+    });
+
+    it('is not retryable — pausing is a deliberate operator action', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        ...activeConfig('web_scrape', { url: 'http://x' }),
+        is_active: false,
+      });
+      const result = await runScrapeForJob('1', 'log-1');
+      expect(result.retryable).toBeUndefined();
+    });
+  });
+
+  describe('queueScrapeRun idempotency (C6)', () => {
+    const cfg = () => activeConfig('web_scrape', { url: 'http://x', selectors: { n: '.n' } });
+
+    it('attaches to an in-flight run instead of starting a second one', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(cfg());
+      (repo.findRunningLogByConfig as jest.Mock).mockResolvedValue({ id: 'log-inflight' });
+
+      const result = await queueScrapeRun('1', mockActor);
+
+      expect(result.logId).toBe('log-inflight');
+      expect(result.status).toBe('running');
+      expect(repo.insertScraperLog).not.toHaveBeenCalled();
+      expect(enqueueScraperRun).not.toHaveBeenCalled();
+    });
+
+    it('starts a run when nothing is in flight, and audits who triggered it', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(cfg());
+      (repo.findRunningLogByConfig as jest.Mock).mockResolvedValue(null);
+      const { writeAuditLog } = require('../../shared/utils/audit');
+
+      const result = await queueScrapeRun('1', mockActor);
+
+      expect(result.logId).toBe('log-1');
+      expect(enqueueScraperRun).toHaveBeenCalledWith({
+        configId: '1',
+        logId: 'log-1',
+        triggeredBy: mockActor.id,
+      });
+      expect(writeAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'scraper_run.triggered', userId: mockActor.id }),
+      );
+    });
+  });
+
+  describe('config validation is enforced at write time (C2)', () => {
+    it('rejects a config whose values exceed the documented caps', async () => {
+      await expect(
+        createConfig(
+          {
+            name: 'Runaway',
+            source_type: 'web_scrape',
+            config: { url: 'https://example.com', maxPages: 100000 },
+          },
+          mockActor,
+        ),
+      ).rejects.toThrow();
+      expect(repo.insertScraperConfig).not.toHaveBeenCalled();
+    });
+
+    it('rejects an update that would make the stored config invalid', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        id: '1',
+        name: 'Old',
+        source_type: 'google_places',
+      });
+      await expect(
+        updateConfig('1', { config: { apiKeyRef: 'GOOGLE_PLACES_API_KEY' } }, mockActor),
+      ).rejects.toThrow();
+      expect(repo.updateScraperConfig).not.toHaveBeenCalled();
+    });
+
+    it('persists schema defaults so run-time never has to guess', async () => {
+      (repo.insertScraperConfig as jest.Mock).mockResolvedValue({ id: '9', name: 'W' });
+      await createConfig(
+        { name: 'W', source_type: 'web_scrape', config: { url: 'https://example.com' } },
+        mockActor,
+      );
+      const written = (repo.insertScraperConfig as jest.Mock).mock.calls[0][0];
+      expect(written.config.mode).toBe('smart');
+      expect(written.config.maxPages).toBe(1);
+    });
+  });
+
+  describe('createConfig rolls back when the schedule cannot be registered (C3)', () => {
+    it('deletes the row rather than leaving a config with a phantom schedule', async () => {
+      (repo.insertScraperConfig as jest.Mock).mockResolvedValue({
+        id: 'cfg-9',
+        name: 'W',
+        source_type: 'web_scrape',
+        schedule_cron: '0 3 * * *',
+        is_active: true,
+      });
+      (syncSchedule as jest.Mock).mockRejectedValueOnce(new Error('redis down'));
+
+      await expect(
+        createConfig(
+          {
+            name: 'W',
+            source_type: 'web_scrape',
+            config: { url: 'https://example.com' },
+            schedule_cron: '0 3 * * *',
+          },
+          mockActor,
+        ),
+      ).rejects.toThrow('Could not register the schedule');
+
+      expect(repo.deleteScraperConfig).toHaveBeenCalledWith('cfg-9');
+    });
+  });
+
+  describe('youtube run association (C4)', () => {
+    it('tags imported leads with the run log id so the drilldown finds them', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'agencies' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ items: [{ snippet: { channelTitle: 'Acme TV', country: 'IN' } }] }),
+      );
+
+      await runScrape('1', mockActor);
+
+      expect(createLeadMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scraper_log_id: 'log-1' }),
+        expect.anything(),
+      );
+    });
+  });
+
+  describe('google_places does not persist the API key (S1)', () => {
+    it('stores opaque photo references, never a key-bearing photo URL', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'cafes' }),
+      );
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            status: 'OK',
+            results: [{ place_id: 'p1', name: 'Acme Cafe', formatted_address: 'BLR' }],
+          }),
+        )
+        .mockResolvedValue(
+          jsonResponse({
+            result: {
+              formatted_phone_number: '+91 99999 11111',
+              photos: [{ photo_reference: 'PHOTOREF123' }],
+            },
+          }),
+        );
+
+      await runScrape('1', mockActor);
+
+      const logCall = (repo.updateScraperLog as jest.Mock).mock.calls.find(
+        (c) => c[1]?.raw_response,
+      );
+      const serialised = JSON.stringify(logCall?.[1]?.raw_response ?? {});
+      expect(serialised).toContain('PHOTOREF123');
+      expect(serialised).not.toContain('test-key');
+      expect(serialised).not.toContain('maps.googleapis.com/maps/api/place/photo');
+    });
+  });
+
+  describe('SSRF guards (S2)', () => {
+    beforeEach(() => {
+      process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
+    });
+
+    it('browser_scrape refuses a cloud-metadata address', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('browser_scrape', { url: 'http://169.254.169.254/latest/meta-data/' }),
+      );
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('SSRF');
+      expect(puppeteerPageMock.goto).not.toHaveBeenCalled();
+    });
+
+    it('browser_scrape refuses loopback', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('browser_scrape', { url: 'http://localhost:5432/' }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('forbidden');
+    });
+
+    it('detectSelectors refuses an internal address before calling the LLM', async () => {
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'k', model: 'gpt-4o', baseUrl: null });
+      global.fetch = jest.fn();
+      await expect(detectSelectors('http://127.0.0.1/admin')).rejects.toThrow('SSRF');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('discoverPages refuses an internal address before launching Chrome', async () => {
+      await expect(discoverPages('http://169.254.169.254/')).rejects.toThrow('SSRF');
+      expect(puppeteerLaunchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('fetch timeouts (R1)', () => {
+    it('surfaces a hung upstream as a retryable timeout instead of hanging forever', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'cafes' }),
+      );
+      // Simulate what fetch does when the abort signal fires.
+      const abortErr = new Error('The operation was aborted');
+      abortErr.name = 'TimeoutError';
+      global.fetch = jest.fn().mockRejectedValue(abortErr);
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('timed out');
+      expect(result.retryable).toBe(true);
     });
   });
 });

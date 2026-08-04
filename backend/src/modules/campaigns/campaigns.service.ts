@@ -52,8 +52,8 @@ class ValidationError extends AppError {
   }
 }
 
-export async function getAllCampaigns(): Promise<Campaign[]> {
-  return findCampaigns();
+export async function getAllCampaigns(filter?: { pipeline_id?: string }): Promise<Campaign[]> {
+  return findCampaigns(filter);
 }
 
 export async function getCampaignById(id: string): Promise<Campaign> {

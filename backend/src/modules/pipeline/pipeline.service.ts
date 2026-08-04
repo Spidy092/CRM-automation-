@@ -9,11 +9,13 @@ import {
   findPipelineById,
   findPipelineWithStages,
   insertPipeline,
+  insertPipelineWithStages,
   updatePipeline,
   deletePipeline,
   insertStage,
   updateStage,
   deleteStage,
+  countLeadsInStage,
   findStagesByPipeline,
   findStageById,
   moveLeadToStage,
@@ -51,17 +53,12 @@ export async function createPipeline(
   input: CreatePipelineInput,
   actor: Actor,
 ): Promise<PipelineWithStages> {
-  const pipeline = await insertPipeline(input.name, input.is_default ?? false, actor.id);
-
-  for (const stage of input.stages) {
-    await insertStage(
-      pipeline.id,
-      stage.name,
-      stage.position,
-      stage.is_terminal_won ?? false,
-      stage.is_terminal_lost ?? false,
-    );
-  }
+  const pipeline = await insertPipelineWithStages(
+    input.name,
+    input.is_default ?? false,
+    input.stages,
+    actor.id,
+  );
 
   await writeAuditLog({
     userId: actor.id,
@@ -72,7 +69,7 @@ export async function createPipeline(
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return findPipelineWithStages(pipeline.id) as Promise<PipelineWithStages>;
+  return pipeline;
 }
 
 export async function updatePipelineById(
@@ -189,6 +186,14 @@ export async function deleteStageById(id: string, actor: Actor): Promise<void> {
   const existing = await findStageById(id);
   if (!existing) {
     throw new AppError('Pipeline stage not found', 404);
+  }
+
+  const leadsCount = await countLeadsInStage(id);
+  if (leadsCount > 0) {
+    throw new AppError(
+      `Cannot delete pipeline stage '${existing.name}' because ${leadsCount} lead(s) are currently assigned to it. Move or reassign leads first.`,
+      400,
+    );
   }
 
   await deleteStage(id);

@@ -28,20 +28,43 @@ export async function handleScraperJob(job: Job): Promise<void> {
   logger.info('scraper job started', baseMeta);
 
   try {
+    let result;
     if (job.name === SCRAPER_RUN) {
       const { configId, triggeredBy, logId } = job.data as ScraperRunJob;
       if (logId) {
-        await runScrapeForJob(configId, logId);
+        result = await runScrapeForJob(configId, logId);
       } else {
         const actor = { id: triggeredBy, role: 'admin', ipAddress: null };
-        await runScrape(configId, actor);
+        result = await runScrape(configId, actor);
       }
     } else {
       throw new AppError(`Unknown scraper job: ${job.name}`, 500);
     }
 
+    // The service never throws on a scrape failure — it writes the reason to
+    // the log row and returns status 'failed' so the HTTP layer can render it.
+    // Left alone, that reads here as a clean return: the job would be counted
+    // as a success, BullMQ would never retry it, and the DLQ would never see
+    // it. Convert a retryable failure back into a throw so the queue's
+    // attempts/backoff/DLQ configuration actually applies.
+    if (result.status === 'failed' && result.retryable) {
+      throw new AppError(`Scraper run failed: ${result.errorMessage ?? 'Unknown error'}`, 502);
+    }
+
     const durationSec = (Date.now() - start) / 1000;
     observeJobDuration({ name: job.name, queue: SCRAPER_QUEUE }, durationSec);
+    // A non-retryable failure is still a failed run, not a success — count it
+    // as such even though we deliberately do not retry it.
+    if (result.status === 'failed') {
+      incJobsFailed({ name: job.name, queue: SCRAPER_QUEUE });
+      logger.warn('scraper job finished with a permanent failure; not retrying', {
+        jobId: job.id,
+        jobName: job.name,
+        durationSec,
+        error: result.errorMessage,
+      });
+      return;
+    }
     incJobsProcessed({ name: job.name, queue: SCRAPER_QUEUE, status: 'success' });
     logger.info('scraper job completed', { jobId: job.id, jobName: job.name, durationSec });
   } catch (err) {

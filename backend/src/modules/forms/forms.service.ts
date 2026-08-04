@@ -8,6 +8,7 @@ import {
   CreateFormInput,
   UpdateFormInput,
   FormActor,
+  FormEmailStatus,
 } from './forms.types';
 import {
   findForms,
@@ -33,10 +34,21 @@ function slugify(name: string): string {
     .slice(0, 100);
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function renderTemplate(template: string, data: Record<string, unknown>): string {
   if (!template) return '';
+  const map = data as Record<string, string | number | boolean | null | undefined>;
   return template.replace(/\{([^}]+)\}/g, (match, key) => {
-    return data[key] !== undefined ? String(data[key]) : match;
+    const val = map[key as keyof typeof map];
+    return val !== undefined && val !== null ? escapeHtml(String(val)) : match;
   });
 }
 
@@ -47,7 +59,7 @@ async function sendSystemEmail(
   leadId?: string,
   fromEmail?: string,
   fromName?: string,
-) {
+): Promise<{ ok: boolean; error?: string }> {
   const emailInput = {
     to,
     subject,
@@ -59,39 +71,73 @@ async function sendSystemEmail(
 
   try {
     const sgRes = await sendgrid.sendEmail(emailInput);
-    if (sgRes.ok) return;
+    if (sgRes?.ok) return { ok: true };
+    if (sgRes && !sgRes.ok) {
+      const errDetail =
+        'error' in sgRes && typeof sgRes.error === 'string' ? sgRes.error : undefined;
+      logger.warn('SendGrid failed for system email, falling back to SMTP', { error: errDetail });
+    }
   } catch (err) {
-    logger.warn('SendGrid failed for system email, falling back to SMTP', { error: (err as Error).message });
+    logger.warn('SendGrid failed for system email, falling back to SMTP', {
+      error: (err as Error).message,
+    });
   }
 
   try {
-    await smtp.sendEmail(emailInput);
+    const smtpRes = await smtp.sendEmail(emailInput);
+    if (smtpRes?.ok) return { ok: true };
+    const errDetail =
+      smtpRes && 'error' in smtpRes && typeof smtpRes.error === 'string'
+        ? smtpRes.error
+        : 'SMTP failed to send email';
+    return { ok: false, error: errDetail };
   } catch (err) {
-    logger.error('SMTP failed for system email', { error: (err as Error).message });
+    const error = (err as Error).message;
+    logger.error('SMTP failed for system email', { error });
+    return { ok: false, error };
   }
 }
 
-async function dispatchFormEmails(form: FormRow, data: Record<string, unknown>, leadId?: string) {
+async function dispatchFormEmails(
+  form: FormRow,
+  data: Record<string, unknown>,
+  leadId?: string,
+): Promise<FormEmailStatus> {
   const settings = form.email_settings;
-  if (!settings) return;
+  if (!settings) {
+    return { success: true, sentCount: 0, failedCount: 0 };
+  }
 
   const getEmailAddress = (field: string) => {
     const rendered = renderTemplate(field, data);
-    return rendered.split(',').map(e => e.trim()).filter(Boolean);
+    return rendered
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean);
   };
+
+  let sentCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
 
   // 1. Auto Reply
   if (settings.autoReply?.enabled) {
     const toEmail = String(data.email || data.contact_email || '');
     if (toEmail && toEmail.includes('@')) {
-      await sendSystemEmail(
+      const res = await sendSystemEmail(
         toEmail,
         renderTemplate(settings.autoReply.subject, data),
         renderTemplate(settings.autoReply.body, data),
         leadId,
         settings.autoReply.fromEmail,
-        settings.autoReply.fromName
+        settings.autoReply.fromName,
       );
+      if (res.ok) {
+        sentCount++;
+      } else {
+        failedCount++;
+        if (res.error) errors.push(`AutoReply: ${res.error}`);
+      }
     }
   }
 
@@ -99,12 +145,18 @@ async function dispatchFormEmails(form: FormRow, data: Record<string, unknown>, 
   if (settings.teamNotification?.enabled && settings.teamNotification.emails) {
     const emails = getEmailAddress(settings.teamNotification.emails);
     for (const to of emails) {
-      await sendSystemEmail(
+      const res = await sendSystemEmail(
         to,
         renderTemplate(settings.teamNotification.subject, data),
         renderTemplate(settings.teamNotification.body, data),
-        leadId
+        leadId,
       );
+      if (res.ok) {
+        sentCount++;
+      } else {
+        failedCount++;
+        if (res.error) errors.push(`TeamNotification (${to}): ${res.error}`);
+      }
     }
   }
 
@@ -112,14 +164,27 @@ async function dispatchFormEmails(form: FormRow, data: Record<string, unknown>, 
   if (settings.partnerNotification?.enabled && settings.partnerNotification.emails) {
     const emails = getEmailAddress(settings.partnerNotification.emails);
     for (const to of emails) {
-      await sendSystemEmail(
+      const res = await sendSystemEmail(
         to,
         renderTemplate(settings.partnerNotification.subject, data),
         renderTemplate(settings.partnerNotification.body, data),
-        leadId
+        leadId,
       );
+      if (res.ok) {
+        sentCount++;
+      } else {
+        failedCount++;
+        if (res.error) errors.push(`PartnerNotification (${to}): ${res.error}`);
+      }
     }
   }
+
+  return {
+    success: failedCount === 0,
+    sentCount,
+    failedCount,
+    ...(errors.length > 0 ? { errors } : {}),
+  };
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -145,7 +210,8 @@ export async function getForm(id: string): Promise<FormRow> {
 
 export async function getFormBySlug(slug: string): Promise<FormRow> {
   const row = await findFormBySlug(slug);
-  if (!row) throw new AppError('Form not found or inactive', 404);
+  if (!row) throw new AppError('Form not found', 404);
+  if (!row.is_active) throw new AppError('Form is currently inactive', 403);
   return row;
 }
 
@@ -166,7 +232,7 @@ export async function createForm(input: CreateFormInput, actor: FormActor): Prom
     redirect_url: input.redirect_url ?? null,
     is_active: input.is_active ?? true,
     theme: input.theme ?? {},
-    email_settings: input.email_settings as any ?? {},
+    email_settings: (input.email_settings as unknown as Record<string, unknown>) ?? {},
     created_by: actor.id,
   });
 
@@ -206,7 +272,7 @@ export async function updateFormById(
     redirect_url: input.redirect_url,
     is_active: input.is_active,
     theme: input.theme,
-    email_settings: input.email_settings as any,
+    email_settings: input.email_settings as unknown as Record<string, unknown>,
   });
 
   await writeAuditLog({
@@ -249,20 +315,37 @@ export async function submitForm(
   leadId?: string;
   message: string;
   redirectUrl?: string;
+  emailStatus?: FormEmailStatus;
 }> {
   const form = await findFormById(formId);
   if (!form) throw new AppError('Form not found', 404);
   if (!form.is_active) throw new AppError('Form is not accepting submissions', 400);
 
-  // Validate required fields
+  // Validate fields against definition
   for (const field of form.fields) {
-    if (
-      field.required &&
-      !data[field.name] &&
-      data[field.name] !== 0 &&
-      data[field.name] !== false
-    ) {
+    const val = data[field.name];
+    if (field.required && !val && val !== 0 && val !== false) {
       throw new AppError(`Field "${field.label}" is required`, 422);
+    }
+
+    if (val !== undefined && val !== null && val !== '') {
+      if (
+        field.type === 'email' &&
+        typeof val === 'string' &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)
+      ) {
+        throw new AppError(`Field "${field.label}" must be a valid email address`, 422);
+      }
+      if (
+        field.type === 'select' &&
+        field.options &&
+        field.options.length > 0 &&
+        typeof val === 'string'
+      ) {
+        if (!field.options.includes(val)) {
+          throw new AppError(`Invalid selection for field "${field.label}"`, 422);
+        }
+      }
     }
   }
 
@@ -322,15 +405,24 @@ export async function submitForm(
   });
 
   // Dispatch Emails based on form.email_settings
-  dispatchFormEmails(form, data, leadId).catch(err => {
-    logger.error('Failed to dispatch form emails', { formId: form.id, error: err.message });
-  });
+  let emailStatus: FormEmailStatus | undefined;
+  try {
+    emailStatus = await dispatchFormEmails(form, data, leadId);
+    if (!emailStatus.success) {
+      logger.warn('Form submission emails had failures', { formId: form.id, emailStatus });
+    }
+  } catch (err) {
+    const errorMsg = (err as Error).message;
+    logger.error('Failed to dispatch form emails', { formId: form.id, error: errorMsg });
+    emailStatus = { success: false, sentCount: 0, failedCount: 1, errors: [errorMsg] };
+  }
 
   return {
     submission,
     leadId,
     message: form.submit_message,
     redirectUrl: form.redirect_url ?? undefined,
+    emailStatus,
   };
 }
 

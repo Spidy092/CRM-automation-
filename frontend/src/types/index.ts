@@ -320,6 +320,9 @@ export type ScraperSourceType =
   | 'facebook'
   | 'youtube'
   | 'web_scrape'
+  | 'meta_lead_forms'
+  | 'google_ads_lead_forms'
+  | 'linkedin_lead_forms'
   | 'apify_actor'
   | 'browser_scrape';
 
@@ -339,6 +342,8 @@ export interface ScraperConfig {
   is_active: boolean;
   config: Record<string, unknown>;
   schedule_cron: string | null;
+  webhook_url: string | null;
+  group_name: string | null;
   last_run_at: string | null;
   created_by: string;
   created_at: string;

@@ -17,7 +17,7 @@ import { errorHandler, notFoundHandler } from './shared/middleware/errorHandler'
 import { httpMetricsMiddleware } from './shared/middleware/httpMetrics';
 import { authenticate } from './shared/middleware/auth';
 import { Sentry } from './shared/utils/sentry';
-import { authenticatedLimiter } from './shared/middleware/rateLimiter';
+import { authenticatedLimiter, publicLimiter } from './shared/middleware/rateLimiter';
 import { authRoutes } from './modules/auth/auth.routes';
 import { customFieldsRoutes } from './modules/custom-fields/customFields.routes';
 import { leadsRoutes } from './modules/leads/leads.routes';
@@ -102,7 +102,7 @@ app.use(
 );
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: false }));
 app.use(
   morgan('combined', {
     stream: { write: (message: string) => logger.info(message.trim()) },
@@ -115,11 +115,11 @@ app.use(httpMetricsMiddleware);
 // ── OAuth 2.0 Server (for Claude Web MCP Connector) ──────────────────────────
 // These routes are public — no auth middleware. The token endpoint exchanges a
 // short-lived code for the user's CRM API key (issued on the authorize page).
-app.get('/.well-known/oauth-authorization-server', oauthMetadata);
-app.post('/oauth/register', oauthRegister);
-app.get('/oauth/authorize', oauthAuthorize);
-app.post('/oauth/authorize', oauthAuthorizeSubmit);
-app.post('/oauth/token', oauthToken);
+app.get('/.well-known/oauth-authorization-server', publicLimiter, oauthMetadata);
+app.post('/oauth/register', publicLimiter, oauthRegister);
+app.get('/oauth/authorize', publicLimiter, oauthAuthorize);
+app.post('/oauth/authorize', publicLimiter, oauthAuthorizeSubmit);
+app.post('/oauth/token', publicLimiter, oauthToken);
 
 // ── Health Check (no auth, no rate limit) ─────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -137,7 +137,7 @@ app.get('/health', (_req, res) => {
 });
 
 // ── Prometheus Metrics (no auth — scraped by Prometheus server) ──────────────
-app.get('/metrics', (_req, res) => {
+app.get('/metrics', publicLimiter, (_req, res) => {
   void register
     .metrics()
     .then((metrics) => {
@@ -197,10 +197,10 @@ app.use('/api/v1/scheduling', schedulingRoutes);
 app.use('/api/v1/newsletter', newsletterRoutes);
 
 // ── Public Tracking (no auth — called by email clients) ───────────────────
-app.use('/track', trackingRoutes);
+app.use('/track', publicLimiter, trackingRoutes);
 
 // ── Public Webhooks (no auth, signature verification in handlers) ───────────
-app.use('/webhooks', webhooksRoutes);
+app.use('/webhooks', publicLimiter, webhooksRoutes);
 
 // ── 404 + Error Handling ──────────────────────────────────────────────────────
 app.use(notFoundHandler);

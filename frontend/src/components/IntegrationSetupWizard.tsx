@@ -22,6 +22,13 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/utils';
 import {
+  CREDENTIAL_FIELDS,
+  CATEGORY_ORDER,
+  INTEGRATION_DESCRIPTIONS,
+  groupByCategory,
+  type FieldDef,
+} from '@/lib/integrations.config';
+import {
   AlertCircle,
   CheckCircle,
   ChevronLeft,
@@ -32,142 +39,6 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-
-interface FieldDef {
-  key: string;
-  label: string;
-  type?: 'text' | 'password' | 'secret' | 'number' | 'list' | 'boolean';
-  placeholder?: string;
-  required?: boolean;
-  helpText?: string;
-}
-
-const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
-  whatsapp: [
-    { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: '12345678901234' },
-    { key: 'apiToken', label: 'API Token', type: 'password', placeholder: 'EAAG...' },
-    { key: 'apiVersion', label: 'API Version', placeholder: 'v20.0' },
-    { key: 'appSecret', label: 'App Secret (for webhook verification)', type: 'password' },
-  ],
-  twilio: [
-    { key: 'accountSid', label: 'Account SID', placeholder: 'ACxxxxxxxxxxxxxxxx' },
-    { key: 'authToken', label: 'Auth Token', type: 'password' },
-    { key: 'fromNumber', label: 'From Number (E.164)', placeholder: '+12025551234' },
-  ],
-  sendgrid: [
-    { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'SG.xxxxx' },
-    { key: 'fromEmail', label: 'From Email', placeholder: 'outreach@example.com' },
-    { key: 'fromName', label: 'From Name', placeholder: 'My Company' },
-  ],
-  smtp: [
-    { key: 'host', label: 'SMTP Host', placeholder: 'smtp.example.com' },
-    { key: 'port', label: 'Port', type: 'number', placeholder: '587' },
-    { key: 'user', label: 'Username' },
-    { key: 'pass', label: 'Password', type: 'password' },
-    { key: 'fromEmail', label: 'From Email', placeholder: 'outreach@example.com' },
-    { key: 'fromName', label: 'From Name', placeholder: 'My Company' },
-  ],
-  google_ads: [
-    { key: 'developerToken', label: 'Developer Token', type: 'password' },
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'refreshToken', label: 'Refresh Token', type: 'password' },
-    { key: 'loginCustomerId', label: 'MCC Customer ID (optional)', placeholder: '1234567890' },
-  ],
-  facebook: [
-    { key: 'appId', label: 'App ID' },
-    { key: 'appSecret', label: 'App Secret', type: 'password' },
-    { key: 'accessToken', label: 'Access Token', type: 'password' },
-    { key: 'pageId', label: 'Page ID (optional)' },
-    { key: 'formId', label: 'Lead Form ID (optional)' },
-  ],
-  openwa: [
-    {
-      key: 'baseUrl',
-      label: 'OpenWA Base URL',
-      type: 'text',
-      required: true,
-      placeholder: 'https://openwa.example.com',
-      helpText: 'The root URL of your external OpenWA HTTP server.',
-    },
-    {
-      key: 'apiKey',
-      label: 'API Key',
-      type: 'secret',
-      required: true,
-      helpText: 'OpenWA API key used in the x-api-key header.',
-    },
-    {
-      key: 'sessionId',
-      label: 'Session ID',
-      type: 'text',
-      required: true,
-      helpText: 'WhatsApp session identifier managed by the OpenWA server.',
-    },
-    {
-      key: 'numbers',
-      label: 'Phone Numbers',
-      type: 'list',
-      required: true,
-      helpText: 'One or more WhatsApp sender numbers for rotation (E.164 format).',
-    },
-  ],
-  slack: [
-    { key: 'webhookUrl', label: 'Slack Webhook URL', placeholder: 'https://hooks.slack.com/...' },
-  ],
-  teams: [
-    { key: 'webhookUrl', label: 'Teams Webhook URL', placeholder: 'https://...webhook.office.com/...' },
-  ],
-  google_sheets: [
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'refreshToken', label: 'Refresh Token', type: 'password' },
-    { key: 'spreadsheetId', label: 'Spreadsheet ID (optional)' },
-  ],
-  google_calendar: [
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'refreshToken', label: 'Refresh Token', type: 'password' },
-    { key: 'calendarId', label: 'Calendar ID', placeholder: 'primary' },
-  ],
-  outlook: [
-    { key: 'tenantId', label: 'Tenant ID' },
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'fromEmail', label: 'From Email' },
-  ],
-};
-
-const CATEGORY_MAP: Record<string, string> = {
-  whatsapp: 'Messaging',
-  twilio: 'Messaging',
-  sendgrid: 'Messaging',
-  smtp: 'Messaging',
-  openwa: 'Messaging',
-  google_sheets: 'Productivity',
-  google_calendar: 'Productivity',
-  outlook: 'Productivity',
-  google_ads: 'Advertising',
-  facebook: 'Advertising',
-  google_drive: 'Storage',
-};
-
-const CATEGORY_ORDER = ['Messaging', 'Productivity', 'Advertising', 'Storage', 'Other'];
-
-function getCategory(name: string): string {
-  return CATEGORY_MAP[name] ?? 'Other';
-}
-
-function groupByCategory(integrations: Integration[]): Record<string, Integration[]> {
-  return integrations.reduce<Record<string, Integration[]>>((acc, integration) => {
-    const category = getCategory(integration.name);
-    if (!acc[category]) {
-      acc[category] = [];
-    }
-    acc[category].push(integration);
-    return acc;
-  }, {});
-}
 
 export interface IntegrationSetupWizardProps {
   open: boolean;
@@ -299,6 +170,8 @@ export function IntegrationSetupWizard({
     () => normalizeCredentials(fields, values),
     [fields, values],
   );
+
+  const hasExistingCredentials = selectedIntegration?.last_test_status !== 'no_credentials' && selectedIntegration?.last_test_status !== null;
 
   const testMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -458,26 +331,29 @@ export function IntegrationSetupWizard({
           <div key={category}>
             <h3 className="mb-3 text-sm font-semibold text-foreground">{category}</h3>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {groupedProviders[category]?.map((provider) => (
-                <button
-                  key={provider.id}
-                  type="button"
-                  onClick={() => handleSelectProvider(provider)}
-                  className="flex items-start gap-3 rounded-lg border border-slate-200 bg-card p-4 text-left transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                    <Link2 className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-card-foreground">
-                      {provider.display_name}
-                    </p>
-                    <p className="mt-0.5 text-xs font-mono text-muted-foreground truncate">
-                      {provider.name}
-                    </p>
-                  </div>
-                </button>
-              ))}
+              {groupedProviders[category]?.map((provider) => {
+                const description = INTEGRATION_DESCRIPTIONS[provider.name];
+                return (
+                  <button
+                    key={provider.id}
+                    type="button"
+                    onClick={() => handleSelectProvider(provider)}
+                    className="flex items-start gap-3 rounded-lg border border-slate-200 bg-card p-4 text-left transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                      <Link2 className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-card-foreground">
+                        {provider.display_name}
+                      </p>
+                      {description && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -504,9 +380,19 @@ export function IntegrationSetupWizard({
           </div>
           <div>
             <p className="text-sm font-medium">{selectedIntegration.display_name}</p>
-            <p className="text-xs font-mono text-muted-foreground">{selectedIntegration.name}</p>
+            {INTEGRATION_DESCRIPTIONS[selectedIntegration.name] && (
+              <p className="text-xs text-muted-foreground">
+                {INTEGRATION_DESCRIPTIONS[selectedIntegration.name]}
+              </p>
+            )}
           </div>
         </div>
+
+        {hasExistingCredentials && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+            <strong>Note:</strong> Credentials are already configured. Only fill in fields you want to update — empty fields will keep existing values.
+          </div>
+        )}
 
         {fields.map((field) => {
           const value = values[field.key] ?? '';
@@ -582,7 +468,7 @@ export function IntegrationSetupWizard({
           {testMutation.isPending ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Testing…
+              Testing...
             </>
           ) : (
             <>
@@ -745,19 +631,11 @@ export function IntegrationSetupWizard({
               {updateIntegration.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Enabling…
+                  Enabling...
                 </>
               ) : (
                 'Finish'
               )}
-            </Button>
-          ) : step === 'test' ? (
-            <Button
-              onClick={handleNext}
-              disabled={!canGoNext}
-            >
-              Next
-              <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           ) : (
             <Button

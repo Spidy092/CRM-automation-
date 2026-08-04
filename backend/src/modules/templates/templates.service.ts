@@ -22,6 +22,7 @@ import {
   TemplateInput,
   TemplateListFilters,
   TemplateResponse,
+  TemplateRow,
 } from './templates.types';
 import { getFileRow } from '../files/files.service';
 
@@ -97,10 +98,34 @@ export async function getTemplate(id: string): Promise<TemplateResponse> {
   return toResponse(row);
 }
 
+/**
+ * Roles that may call POST /templates/:id/approve. An actor holding this role gains
+ * nothing by being made to approve their own template as a second step, so we skip it.
+ * Other creators (e.g. `manager` via the agent action) still land in 'pending'.
+ */
+const SELF_APPROVING_ROLES = new Set(['admin', 'marketing']);
+
+/**
+ * Approved templates are locked down so copy that has been signed off cannot drift.
+ * Admins may always edit; so may the original author, since templates now land approved
+ * on create and otherwise their author could never correct their own typo.
+ */
+function assertMayEditApproved(before: TemplateRow, actor: TemplateActor): void {
+  if (before.approval_status !== 'approved') return;
+  if (actor.role === 'admin') return;
+  if (before.created_by === actor.id) return;
+  throw new AppError(
+    "Approved templates may only be edited by admin or the template's author",
+    403,
+  );
+}
+
 export async function createTemplate(
   input: TemplateInput,
   actor: TemplateActor,
 ): Promise<TemplateResponse> {
+  const autoApprove = SELF_APPROVING_ROLES.has(actor.role);
+
   const row = await insertTemplate({
     name: input.name,
     channel: input.channel,
@@ -108,6 +133,7 @@ export async function createTemplate(
     body: input.body,
     variables: input.variables ?? [],
     created_by: actor.id,
+    approved_by: autoApprove ? actor.id : null,
   });
 
   await writeAuditLog({
@@ -115,7 +141,11 @@ export async function createTemplate(
     action: 'template.created',
     entityType: 'template',
     entityId: row.id,
-    newValue: { name: row.name, channel: row.channel },
+    newValue: {
+      name: row.name,
+      channel: row.channel,
+      approval_status: row.approval_status,
+    },
     ipAddress: actor.ipAddress ?? null,
   });
 
@@ -130,10 +160,7 @@ export async function updateTemplate(
   const before = await findTemplateById(id);
   if (!before) throw new AppError('Template not found', 404);
 
-  // Once approved, only admin may edit. Marketing can edit their own pending/draft templates.
-  if (before.approval_status === 'approved' && actor.role !== 'admin') {
-    throw new AppError('Approved templates may only be edited by admin', 403);
-  }
+  assertMayEditApproved(before, actor);
 
   const row = await updateTemplateRepo(id, {
     name: input.name,
@@ -142,6 +169,18 @@ export async function updateTemplate(
     body: input.body,
     variables: input.variables,
   });
+
+  // Reset to pending when meaningful content changes on an approved template,
+  // so modified copy cannot go out without fresh approval.
+  const contentChanged =
+    (input.body !== undefined && input.body !== before.body) ||
+    (input.subject !== undefined && (input.subject ?? null) !== before.subject);
+  if (contentChanged && before.approval_status === 'approved') {
+    await setApprovalStatus(id, 'pending', null, null);
+    row.approval_status = 'pending';
+    row.approved_by = null;
+    row.approved_at = null;
+  }
 
   await writeAuditLog({
     userId: actor.id,
@@ -235,9 +274,7 @@ export async function addTemplateAttachment(
   const before = await findTemplateById(id);
   if (!before) throw new AppError('Template not found', 404);
 
-  if (before.approval_status === 'approved' && actor.role !== 'admin') {
-    throw new AppError('Approved templates may only be edited by admin', 403);
-  }
+  assertMayEditApproved(before, actor);
   if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
     throw new AppError(
       `Unsupported file type "${file.mimetype}". Allowed: PNG, JPEG, WEBP, GIF, PDF.`,
@@ -290,9 +327,7 @@ export async function addTemplateAttachmentFromLibrary(
   const before = await findTemplateById(id);
   if (!before) throw new AppError('Template not found', 404);
 
-  if (before.approval_status === 'approved' && actor.role !== 'admin') {
-    throw new AppError('Approved templates may only be edited by admin', 403);
-  }
+  assertMayEditApproved(before, actor);
   if ((before.attachments ?? []).length >= MAX_ATTACHMENTS_PER_TEMPLATE) {
     throw new AppError(
       `A template may have at most ${MAX_ATTACHMENTS_PER_TEMPLATE} attachments`,
@@ -334,9 +369,7 @@ export async function removeTemplateAttachment(
   const before = await findTemplateById(id);
   if (!before) throw new AppError('Template not found', 404);
 
-  if (before.approval_status === 'approved' && actor.role !== 'admin') {
-    throw new AppError('Approved templates may only be edited by admin', 403);
-  }
+  assertMayEditApproved(before, actor);
 
   const existing = (before.attachments ?? []).find((a) => a.id === attachmentId);
   if (!existing) throw new AppError('Attachment not found', 404);

@@ -10,6 +10,8 @@ import {
   createTask,
   getTask,
   updateTask,
+  upsertReplyTask,
+  resolveOpenReplyTask,
   getLeadTimeline,
   sendQuickMessage,
   sendManualOutreach,
@@ -28,6 +30,8 @@ jest.mock('./outreach.repository', () => ({
   findTaskById: jest.fn(),
   updateTask: jest.fn(),
   findTimelineByLead: jest.fn(),
+  findOpenSystemTaskByLead: jest.fn(),
+  findTaskAssigneeForLead: jest.fn(),
 }));
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
@@ -49,6 +53,8 @@ import {
   findTaskById,
   updateTask as updateTaskRepo,
   findTimelineByLead,
+  findOpenSystemTaskByLead,
+  findTaskAssigneeForLead,
 } from './outreach.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById } from '../leads/leads.repository';
@@ -262,6 +268,88 @@ describe('updateTask', () => {
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'task.updated' }),
     );
+  });
+});
+
+describe('upsertReplyTask', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const input = {
+    leadId: 'lead1',
+    campaignId: 'camp1',
+    type: 'follow_up' as const,
+    title: 'Beth Direct replied — send quotation',
+    description: 'AI classified this reply as "pricing_question"',
+    dueAt: '2026-07-31T12:00:00.000Z',
+  };
+
+  it('inserts a system task (created_by NULL) when none is open', async () => {
+    (findTaskAssigneeForLead as jest.Mock).mockResolvedValue('rep1');
+    (findOpenSystemTaskByLead as jest.Mock).mockResolvedValue(null);
+    (insertTask as jest.Mock).mockResolvedValue(baseTask);
+
+    await upsertReplyTask(input);
+
+    expect(insertTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lead_id: 'lead1',
+        assigned_to: 'rep1',
+        title: input.title,
+        type: 'follow_up',
+        created_by: null,
+      }),
+    );
+    expect(updateTaskRepo).not.toHaveBeenCalled();
+  });
+
+  it('updates the existing open system task instead of creating a duplicate', async () => {
+    (findTaskAssigneeForLead as jest.Mock).mockResolvedValue('rep1');
+    (findOpenSystemTaskByLead as jest.Mock).mockResolvedValue({ ...baseTask, id: 'existing1' });
+    (updateTaskRepo as jest.Mock).mockResolvedValue({ ...baseTask, id: 'existing1' });
+
+    await upsertReplyTask(input);
+
+    expect(insertTask).not.toHaveBeenCalled();
+    expect(updateTaskRepo).toHaveBeenCalledWith(
+      'existing1',
+      expect.objectContaining({
+        title: input.title,
+        type: 'follow_up',
+        due_at: input.dueAt,
+        assigned_to: 'rep1',
+      }),
+    );
+  });
+
+  it('still creates the task when the lead has no assignee to fall back to', async () => {
+    (findTaskAssigneeForLead as jest.Mock).mockResolvedValue(null);
+    (findOpenSystemTaskByLead as jest.Mock).mockResolvedValue(null);
+    (insertTask as jest.Mock).mockResolvedValue(baseTask);
+
+    await upsertReplyTask(input);
+
+    expect(insertTask).toHaveBeenCalledWith(expect.objectContaining({ assigned_to: null }));
+  });
+});
+
+describe('resolveOpenReplyTask', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('cancels the lead open system task', async () => {
+    (findOpenSystemTaskByLead as jest.Mock).mockResolvedValue({ ...baseTask, id: 'existing1' });
+    (updateTaskRepo as jest.Mock).mockResolvedValue({ ...baseTask, status: 'cancelled' });
+
+    await resolveOpenReplyTask('lead1');
+
+    expect(updateTaskRepo).toHaveBeenCalledWith('existing1', { status: 'cancelled' });
+  });
+
+  it('no-ops when nothing is open', async () => {
+    (findOpenSystemTaskByLead as jest.Mock).mockResolvedValue(null);
+
+    await resolveOpenReplyTask('lead1');
+
+    expect(updateTaskRepo).not.toHaveBeenCalled();
   });
 });
 

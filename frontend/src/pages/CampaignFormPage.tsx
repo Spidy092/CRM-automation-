@@ -6,7 +6,10 @@ import {
   useCampaign,
   useAutomationPreview,
   useLaunchCampaign,
+  useCampaignLeads,
+  useAddLeadsToCampaign,
 } from '@/api/campaigns';
+import { useLeads } from '@/api/leads';
 import { usePipelines, usePipeline } from '@/api/pipelines';
 import { useSequences, useCreateSequence } from '@/api/outreach';
 import type { Sequence, SequenceStep } from '@/api/outreach';
@@ -25,6 +28,7 @@ import {
   CHANNEL_LABELS,
   CHANNEL_COLORS,
 } from '@/components/SequenceStepEditor';
+import { SequencePresetPicker } from '@/components/SequencePresetPicker';
 import {
   Clock,
   GitBranch,
@@ -62,8 +66,12 @@ const WIZARD_STEPS = [
   { title: 'Basics', description: 'Name, tone, and targeting' },
   { title: 'Pipeline', description: 'When leads auto-enroll' },
   { title: 'Sequence', description: 'What messages go out' },
+  { title: 'Leads', description: 'Who gets contacted' },
   { title: 'Review & Launch', description: 'Readiness check' },
 ] as const;
+
+const REVIEW_STEP = WIZARD_STEPS.length - 1;
+const LEADS_STEP = REVIEW_STEP - 1;
 
 function StepIndicator({
   current,
@@ -165,6 +173,170 @@ function SequenceCard({
   );
 }
 
+// ── Lead picker (step 4) ─────────────────────────────────────────────────────
+
+/**
+ * Picks the leads this campaign contacts, without a detour to the Leads page.
+ * Enrolment is additive and de-duplicated server-side, so re-adding is harmless
+ * and already-enrolled leads simply render as locked-in.
+ */
+function CampaignLeadPicker({
+  campaignId,
+  hasTrigger,
+}: {
+  campaignId: string;
+  hasTrigger: boolean;
+}) {
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { showToast } = useToast();
+
+  const { data: leadPage, isLoading } = useLeads({
+    search: search.trim() || undefined,
+    status: 'active',
+    limit: 50,
+  });
+  const { data: enrolled = [] } = useCampaignLeads(campaignId);
+  const addLeads = useAddLeadsToCampaign();
+
+  const leads = leadPage?.items ?? [];
+  const enrolledIds = new Set(enrolled.map((row) => row.lead_id));
+  const selectable = leads.filter((lead) => !enrolledIds.has(lead.id));
+  const allSelected = selectable.length > 0 && selectable.every((lead) => selected.has(lead.id));
+
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(selectable.map((lead) => lead.id)));
+  };
+
+  const toggleOne = (leadId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId);
+      else next.add(leadId);
+      return next;
+    });
+  };
+
+  const handleAdd = async () => {
+    const leadIds = Array.from(selected);
+    if (leadIds.length === 0) return;
+    try {
+      await addLeads.mutateAsync({ campaignId, leadIds });
+      showToast(`${leadIds.length} lead${leadIds.length === 1 ? '' : 's'} added.`, 'success');
+      setSelected(new Set());
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to add leads to this campaign.'), 'error');
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Users className="h-5 w-5 text-slate-500" />
+          Who gets contacted
+        </CardTitle>
+        <CardDescription>
+          {enrolled.length > 0
+            ? `${enrolled.length} lead${enrolled.length === 1 ? '' : 's'} already in this campaign.`
+            : 'Pick the leads to enrol now.'}{' '}
+          {hasTrigger
+            ? 'Leads matching your pipeline trigger will also join automatically over time.'
+            : 'You can skip this and add leads later from the Leads page.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by business, contact, email…"
+        />
+
+        {isLoading ? (
+          <p className="py-6 text-center text-sm text-slate-500">Loading leads…</p>
+        ) : leads.length === 0 ? (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+            {search.trim() ? (
+              <>No active leads match “{search.trim()}”.</>
+            ) : (
+              <>
+                No active leads yet.{' '}
+                <Link to="/leads/import" className="font-medium text-indigo-700 underline">
+                  Import some
+                </Link>{' '}
+                to get started.
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border border-slate-200">
+            <div className="flex items-center gap-2 border-b bg-slate-50 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                disabled={selectable.length === 0}
+                aria-label="Select all leads"
+                className="h-4 w-4"
+              />
+              <span className="text-xs font-medium text-slate-600">
+                {selected.size > 0 ? `${selected.size} selected` : 'Select all on this page'}
+              </span>
+            </div>
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+              {leads.map((lead) => {
+                const already = enrolledIds.has(lead.id);
+                return (
+                  <li key={lead.id} className="flex items-center gap-3 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={already || selected.has(lead.id)}
+                      disabled={already}
+                      onChange={() => toggleOne(lead.id)}
+                      aria-label={`Select ${lead.business_name || lead.contact_name}`}
+                      className="h-4 w-4"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-900">
+                        {lead.business_name || lead.contact_name || 'Unnamed lead'}
+                      </p>
+                      <p className="truncate text-xs text-slate-500">
+                        {[lead.contact_name, lead.email, lead.phone].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    {already && (
+                      <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
+                        Enrolled
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {leadPage?.meta?.hasMore && (
+          <p className="text-xs text-slate-500">
+            Showing the first 50 matches — narrow the search to reach the rest.
+          </p>
+        )}
+
+        <Button
+          type="button"
+          onClick={handleAdd}
+          disabled={selected.size === 0 || addLeads.isPending}
+        >
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          {addLeads.isPending
+            ? 'Adding…'
+            : `Add ${selected.size || ''} lead${selected.size === 1 ? '' : 's'}`.trim()}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export function CampaignFormPage() {
@@ -183,7 +355,8 @@ export function CampaignFormPage() {
     (seq) => ({ ...seq, steps: Array.isArray(seq.steps) ? seq.steps : [] }),
   );
 
-  const { data: allTemplates = [] } = useTemplates();
+  const { data: templatesData } = useTemplates();
+  const allTemplates = templatesData?.items ?? [];
   const templateNameById = new Map(allTemplates.map((t) => [t.id, t.name]));
   const approvedTemplateIds = new Set(
     allTemplates.filter((t) => t.approval_status === 'approved').map((t) => t.id),
@@ -221,7 +394,7 @@ export function CampaignFormPage() {
 
   const { data: preview, isLoading: isPreviewLoading } = useAutomationPreview(
     savedCampaignId ?? '',
-    step === 3 && !!savedCampaignId,
+    step === REVIEW_STEP && !!savedCampaignId,
   );
 
   // Fetch stages for the selected pipeline
@@ -255,6 +428,20 @@ export function CampaignFormPage() {
   const goTo = (next: number) => {
     setStep(next);
     setMaxReached((prev) => Math.max(prev, next));
+  };
+
+  /**
+   * The lead picker writes straight to `campaign_leads`, so the campaign row has to
+   * exist before that step renders. Save the draft on the way in rather than making
+   * the user do it — this is the same save `handleLaunch` already performs.
+   */
+  const handleNext = async () => {
+    const next = step + 1;
+    if (next === LEADS_STEP && !savedCampaignId) {
+      const saved = await handleSave();
+      if (!saved) return;
+    }
+    goTo(next);
   };
 
   // When pipeline changes, clear trigger stage if it no longer belongs to the new pipeline
@@ -344,6 +531,7 @@ export function CampaignFormPage() {
   const selectedSequence = sequences.find((seq) => seq.id === sequenceId);
   const selectedStageName = stages.find((stage) => stage.id === triggerStageId)?.name;
   const issues = preview ? [...preview.templateIssues, ...preview.connectorIssues] : [];
+  const sendWindowInvalid = sendWindowEnabled && sendWindowStartHour >= sendWindowEndHour;
 
   const inputClass =
     'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
@@ -571,10 +759,16 @@ export function CampaignFormPage() {
             )}
 
             {!showNewSequence ? (
-              <Button type="button" variant="outline" onClick={() => setShowNewSequence(true)}>
-                <Plus className="mr-1 h-3.5 w-3.5" />
-                Build a new sequence
-              </Button>
+              <div className="space-y-4">
+                <SequencePresetPicker
+                  className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4"
+                  onApplied={(sequence) => setSequenceId(sequence.id)}
+                />
+                <Button type="button" variant="outline" onClick={() => setShowNewSequence(true)}>
+                  <Plus className="mr-1 h-3.5 w-3.5" />
+                  Build one from scratch
+                </Button>
+              </div>
             ) : (
               <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4">
                 <h3 className="mb-3 text-sm font-semibold text-slate-900">New Sequence</h3>
@@ -730,7 +924,12 @@ export function CampaignFormPage() {
       )}
 
       {/* ── Step 4: Review & Launch ────────────────────────────────────────── */}
-      {step === 3 && (
+      {/* ── Step 4: Leads ───────────────────────────────────────────────────── */}
+      {step === LEADS_STEP && savedCampaignId && (
+        <CampaignLeadPicker campaignId={savedCampaignId} hasTrigger={!!pipelineId} />
+      )}
+
+      {step === REVIEW_STEP && (
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -925,14 +1124,18 @@ export function CampaignFormPage() {
           )}
         </div>
         <div className="flex gap-2">
-          {step < 3 ? (
-            <Button type="button" onClick={() => goTo(step + 1)} disabled={step === 0 && !name.trim()}>
-              Next
+          {step < REVIEW_STEP ? (
+            <Button
+              type="button"
+              onClick={handleNext}
+              disabled={(step === 0 && !name.trim()) || isSaving || sendWindowInvalid}
+            >
+              {isSaving ? 'Saving…' : 'Next'}
               <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           ) : (
             <>
-              <Button type="button" variant="outline" onClick={handleFinishDraft} disabled={isSaving || !name.trim()}>
+              <Button type="button" variant="outline" onClick={handleFinishDraft} disabled={isSaving || !name.trim() || sendWindowInvalid}>
                 {isSaving ? 'Saving…' : 'Save as draft'}
               </Button>
               <Button
@@ -943,6 +1146,7 @@ export function CampaignFormPage() {
                   launchCampaign.isPending ||
                   !name.trim() ||
                   !sequenceId ||
+                  sendWindowInvalid ||
                   (!!preview && issues.length > 0)
                 }
               >

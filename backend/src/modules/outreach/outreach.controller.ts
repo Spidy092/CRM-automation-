@@ -4,6 +4,8 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import {
   createSequenceSchema,
   updateSequenceSchema,
+  sequenceIdParamSchema,
+  listSequencesQuerySchema,
   leadIdParamSchema,
   listLogsQuerySchema,
   createTaskSchema,
@@ -30,9 +32,8 @@ export async function listSequencesHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const limit = req.query.limit ? Number(req.query.limit) : 25;
-    const offset = req.query.offset ? Number(req.query.offset) : 0;
-    const result = await outreachService.listSequences(limit, offset);
+    const query = listSequencesQuerySchema.parse(req.query);
+    const result = await outreachService.listSequences(query.limit, query.offset);
     sendSuccess(res, result.items, 200, result.meta);
   } catch (err) {
     next(err);
@@ -45,7 +46,7 @@ export async function getSequenceHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = sequenceIdParamSchema.parse(req.params);
     const item = await outreachService.getSequence(id);
     sendSuccess(res, item);
   } catch (err) {
@@ -73,7 +74,7 @@ export async function updateSequenceHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = sequenceIdParamSchema.parse(req.params);
     const input = updateSequenceSchema.parse(req.body);
     const updated = await outreachService.updateSequence(id, input, actorFromReq(req));
     sendSuccess(res, updated);
@@ -88,7 +89,7 @@ export async function deleteSequenceHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = sequenceIdParamSchema.parse(req.params);
     await outreachService.removeSequence(id, actorFromReq(req));
     sendSuccess(res, { deleted: true });
   } catch (err) {
@@ -102,7 +103,7 @@ export async function getSequenceStatsHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = sequenceIdParamSchema.parse(req.params);
     const stats = await outreachService.getSequenceStats(id);
     sendSuccess(res, stats);
   } catch (err) {

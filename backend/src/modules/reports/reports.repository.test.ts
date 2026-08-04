@@ -38,7 +38,7 @@ function mockQueryResult(rows: unknown[]) {
 
 describe('reports.repository', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   describe('findDashboardMetrics', () => {
@@ -53,6 +53,8 @@ describe('reports.repository', () => {
         { date: '2026-06-20', leads: '2', outreach: '1' },
         { date: '2026-06-21', leads: '3', outreach: '2' },
       ],
+      sources: [{ name: 'facebook', value: '5' }],
+      pipeline: [{ name: 'active', value: '5' }],
     };
 
     function setupMocks() {
@@ -63,7 +65,8 @@ describe('reports.repository', () => {
         .mockResolvedValueOnce(mockQueryResult(baseRows.outreach))
         .mockResolvedValueOnce(mockQueryResult(baseRows.conversion))
         .mockResolvedValueOnce(mockQueryResult(baseRows.revenue))
-        .mockResolvedValueOnce(mockQueryResult(baseRows.activity));
+        .mockResolvedValueOnce(mockQueryResult(baseRows.activity))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.sources));
     }
 
     it('returns metrics for admin', async () => {
@@ -77,7 +80,7 @@ describe('reports.repository', () => {
       expect(result.wonRevenue).toBe(15000.5);
       expect(result.wonDeals).toBe(4);
       expect(result.recentActivity).toHaveLength(2);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(8);
     });
 
     it('returns metrics for manager', async () => {
@@ -85,7 +88,7 @@ describe('reports.repository', () => {
       const result = await findDashboardMetrics('mgr-1', 'manager');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(3);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(8);
     });
 
     it('returns metrics for sales (no campaigns)', async () => {
@@ -95,18 +98,27 @@ describe('reports.repository', () => {
         .mockResolvedValueOnce(mockQueryResult(baseRows.outreach))
         .mockResolvedValueOnce(mockQueryResult(baseRows.conversion))
         .mockResolvedValueOnce(mockQueryResult(baseRows.revenue))
-        .mockResolvedValueOnce(mockQueryResult(baseRows.activity));
+        .mockResolvedValueOnce(mockQueryResult(baseRows.activity))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.pipeline));
 
       const result = await findDashboardMetrics('sales-1', 'sales');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(0);
       expect(result.activeOutreach).toBe(8);
       expect(result.wonRevenue).toBe(15000.5);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(6);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
     });
 
     it('returns metrics for marketing', async () => {
-      setupMocks();
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult(baseRows.totalLeads))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.qualifiedLeads))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.campaigns))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.outreach))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.conversion))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.revenue))
+        .mockResolvedValueOnce(mockQueryResult(baseRows.activity));
+
       const result = await findDashboardMetrics('mkt-1', 'marketing');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(3);
@@ -118,7 +130,7 @@ describe('reports.repository', () => {
       const result = await findDashboardMetrics('view-1', 'viewer');
       expect(result.totalLeads).toBe(10);
       expect(result.totalCampaigns).toBe(3);
-      expect(mockPoolQuery).toHaveBeenCalledTimes(7);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(8);
     });
 
     it('handles empty results gracefully', async () => {
@@ -129,6 +141,7 @@ describe('reports.repository', () => {
         .mockResolvedValueOnce(mockQueryResult([{ total: '0' }]))
         .mockResolvedValueOnce(mockQueryResult([{ rate: '0' }]))
         .mockResolvedValueOnce(mockQueryResult([{ revenue: '0', deals: '0' }]))
+        .mockResolvedValueOnce(mockQueryResult([]))
         .mockResolvedValueOnce(mockQueryResult([]));
 
       const result = await findDashboardMetrics('admin-1', 'admin');

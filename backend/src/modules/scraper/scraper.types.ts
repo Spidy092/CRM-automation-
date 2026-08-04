@@ -18,6 +18,8 @@ export interface ScraperConfigRow {
   is_active: boolean;
   config: Record<string, unknown>;
   schedule_cron: string | null;
+  webhook_url: string | null;
+  group_name: string | null;
   last_run_at: string | null;
   created_by: string;
   created_at: string;
@@ -75,6 +77,8 @@ export interface ScraperConfigInput {
   is_active?: boolean;
   config: Record<string, unknown>;
   schedule_cron?: string | null;
+  webhook_url?: string | null;
+  group_name?: string | null;
 }
 
 export interface ScraperConfigUpdate {
@@ -82,6 +86,8 @@ export interface ScraperConfigUpdate {
   is_active?: boolean;
   config?: Record<string, unknown>;
   schedule_cron?: string | null;
+  webhook_url?: string | null;
+  group_name?: string | null;
 }
 
 export interface ScraperActor {
@@ -101,6 +107,15 @@ export interface ScraperRunResult {
   status: ScraperLogStatus;
   /** Human-readable reason when status === 'failed'; null otherwise. */
   errorMessage?: string | null;
+  /**
+   * Set only when status === 'failed'. True when the failure looks transient
+   * (network error, upstream 429/5xx) and the run is worth another attempt;
+   * false for permanent misconfiguration (bad selectors, missing API key,
+   * robots.txt disallow). The scraper worker uses this to decide whether to
+   * throw — and so let BullMQ retry and eventually route to the DLQ — or to
+   * accept the run as finished-and-failed. See scraper.worker.ts.
+   */
+  retryable?: boolean;
 }
 
 /** A same-site page discovered by crawling a site's rendered nav links. */

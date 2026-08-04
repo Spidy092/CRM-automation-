@@ -2,9 +2,16 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Settings, Users, Link2, FileText, Bot, Route, SlidersHorizontal } from 'lucide-react';
+import { Settings, Users, Link2, FileText, Bot, Route, SlidersHorizontal, User } from 'lucide-react';
 
 const settingsGroups = [
+  {
+    title: 'My Account',
+    description: 'Manage profile, password, preferences, permissions, and API keys.',
+    icon: User,
+    action: 'Manage Account',
+    path: '/account',
+  },
   {
     title: 'User Management',
     description: 'Manage users, roles, and permissions.',
@@ -24,6 +31,7 @@ const settingsGroups = [
     description: 'Define CRM-specific lead and contact fields.',
     icon: FileText,
     action: 'Manage Fields',
+    path: '/settings/custom-fields',
   },
   {
     title: 'Lead Scoring',

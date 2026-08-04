@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   useCampaigns,
@@ -15,9 +15,12 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { useToast } from '@/components/ui/Toast';
+import { AlertDialog } from '@/components/ui/AlertDialog';
 import { getApiErrorMessage } from '@/lib/apiError';
 import type { CampaignStatus } from '@/api/campaigns';
-import { Plus, Play, Pause, Trash2, BarChart3, Edit, Sparkles } from 'lucide-react';
+import { Plus, Play, Pause, Trash2, BarChart3, Edit, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
+
+const PAGE_SIZE = 9;
 
 const statusTones: Record<CampaignStatus, StatusTone> = {
   draft: 'gray',
@@ -30,6 +33,9 @@ const statusTones: Record<CampaignStatus, StatusTone> = {
 export function CampaignsPage() {
   const { data: campaigns, isLoading } = useCampaigns();
   const [previewCampaignId, setPreviewCampaignId] = useState<string | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const previewCloseRef = useRef<HTMLButtonElement>(null);
   const { data: preview, isLoading: isPreviewLoading } = useAutomationPreview(
     previewCampaignId ?? '',
     !!previewCampaignId,
@@ -39,6 +45,25 @@ export function CampaignsPage() {
   const resumeCampaign = useResumeCampaign();
   const deleteCampaign = useDeleteCampaign();
   const { showToast } = useToast();
+
+  // Reset to page 0 when campaigns change
+  useEffect(() => {
+    setPage(0);
+  }, [campaigns?.length]);
+
+  // Focus trap and Escape key for launch preview modal
+  useEffect(() => {
+    if (!previewCampaignId) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setPreviewCampaignId(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [previewCampaignId]);
 
   const handleLaunch = async (id: string) => {
     try {
@@ -68,15 +93,22 @@ export function CampaignsPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this campaign?')) return;
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTargetId) return;
     try {
-      await deleteCampaign.mutateAsync(id);
+      await deleteCampaign.mutateAsync(deleteTargetId);
       showToast('Campaign deleted.', 'success');
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to delete campaign.'), 'error');
+    } finally {
+      setDeleteTargetId(null);
     }
-  };
+  }, [deleteTargetId, deleteCampaign, showToast]);
+
+  const pagedCampaigns = campaigns ? campaigns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : [];
+  const totalPages = campaigns ? Math.max(1, Math.ceil(campaigns.length / PAGE_SIZE)) : 1;
+  const canPrev = page > 0;
+  const canNext = page + 1 < totalPages;
 
   return (
     <div className="space-y-6">
@@ -100,15 +132,26 @@ export function CampaignsPage() {
         }
       />
 
+      {/* Launch Preview Modal */}
       {previewCampaignId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="launch-preview-title"
+        >
           <div className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Launch Preview</h2>
+                <h2 id="launch-preview-title" className="text-lg font-semibold text-slate-900">Launch Preview</h2>
                 <p className="text-sm text-slate-500">Eligible leads, skipped leads, and readiness checks.</p>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setPreviewCampaignId(null)}>
+              <Button
+                ref={previewCloseRef}
+                variant="outline"
+                size="sm"
+                onClick={() => setPreviewCampaignId(null)}
+              >
                 Close
               </Button>
             </div>
@@ -169,6 +212,18 @@ export function CampaignsPage() {
         </div>
       )}
 
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={!!deleteTargetId}
+        title="Delete campaign"
+        description="Are you sure you want to delete this campaign? This action cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTargetId(null)}
+      />
+
       {isLoading ? (
         <Card>
           <CardContent className="pt-5">
@@ -176,98 +231,127 @@ export function CampaignsPage() {
           </CardContent>
         </Card>
       ) : campaigns && campaigns.length > 0 ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {campaigns.map((campaign) => (
-            <Card key={campaign.id} className="hover:shadow-md transition-shadow">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{campaign.name}</CardTitle>
-                  <StatusBadge tone={statusTones[campaign.status]}>{campaign.status}</StatusBadge>
-                </div>
-                <CardDescription>
-                  {campaign.target_industries.length > 0
-                    ? `Industries: ${campaign.target_industries.join(', ')}`
-                    : 'No industry targeting'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-sm text-slate-500">
-                    <span>Tone: {campaign.tone}</span>
-                    {campaign.launched_at && (
-                      <span>
-                        Launched: {new Date(campaign.launched_at).toLocaleDateString()}
-                      </span>
-                    )}
+        <>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {pagedCampaigns.map((campaign) => (
+              <Card key={campaign.id} className="hover:shadow-md transition-shadow">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">{campaign.name}</CardTitle>
+                    <StatusBadge tone={statusTones[campaign.status]}>{campaign.status}</StatusBadge>
                   </div>
+                  <CardDescription>
+                    {campaign.target_industries.length > 0
+                      ? `Industries: ${campaign.target_industries.join(', ')}`
+                      : 'No industry targeting'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-sm text-slate-500">
+                      <span>Tone: {campaign.tone}</span>
+                      {campaign.launched_at && (
+                        <span>
+                          Launched: {new Date(campaign.launched_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
 
-                  <div className="flex justify-end space-x-2">
-                    {campaign.status === 'draft' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPreviewCampaignId(campaign.id)}
-                      >
-                        <Play className="mr-1 h-3 w-3" />
-                        Launch
-                      </Button>
-                    )}
-                    {campaign.status === 'active' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePause(campaign.id)}
-                      >
-                        <Pause className="mr-1 h-3 w-3" />
-                        Pause
-                      </Button>
-                    )}
-                    {campaign.status === 'paused' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleResume(campaign.id)}
-                      >
-                        <Play className="mr-1 h-3 w-3" />
-                        Resume
-                      </Button>
-                    )}
-                    <Button variant="outline" size="sm" asChild>
-                      <Link to={`/campaigns/${campaign.id}`}>
-                        <BarChart3 className="mr-1 h-3 w-3" />
-                        Stats
-                      </Link>
-                    </Button>
-                    {(campaign.status === 'draft' || campaign.status === 'paused') && (
+                    <div className="flex justify-end space-x-2">
+                      {campaign.status === 'draft' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPreviewCampaignId(campaign.id)}
+                        >
+                          <Play className="mr-1 h-3 w-3" />
+                          Launch
+                        </Button>
+                      )}
+                      {campaign.status === 'active' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePause(campaign.id)}
+                        >
+                          <Pause className="mr-1 h-3 w-3" />
+                          Pause
+                        </Button>
+                      )}
+                      {campaign.status === 'paused' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleResume(campaign.id)}
+                        >
+                          <Play className="mr-1 h-3 w-3" />
+                          Resume
+                        </Button>
+                      )}
                       <Button variant="outline" size="sm" asChild>
-                        <Link to={`/campaigns/${campaign.id}/edit`}>
-                          <Edit className="mr-1 h-3 w-3" />
-                          Edit
+                        <Link to={`/campaigns/${campaign.id}`}>
+                          <BarChart3 className="mr-1 h-3 w-3" />
+                          Stats
                         </Link>
                       </Button>
-                    )}
-                    {campaign.ai_personalization_enabled && (
-                      <Button variant="outline" size="sm" asChild>
-                        <Link to={`/campaigns/${campaign.id}/brief`}>
-                          <Sparkles className="mr-1 h-3 w-3 text-purple-500" />
-                          AI Brief
-                        </Link>
+                      {(campaign.status === 'draft' || campaign.status === 'paused') && (
+                        <Button variant="outline" size="sm" asChild>
+                          <Link to={`/campaigns/${campaign.id}/edit`}>
+                            <Edit className="mr-1 h-3 w-3" />
+                            Edit
+                          </Link>
+                        </Button>
+                      )}
+                      {campaign.ai_personalization_enabled && (
+                        <Button variant="outline" size="sm" asChild>
+                          <Link to={`/campaigns/${campaign.id}/brief`}>
+                            <Sparkles className="mr-1 h-3 w-3 text-purple-500" />
+                            AI Brief
+                          </Link>
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDeleteTargetId(campaign.id)}
+                        disabled={campaign.status === 'active'}
+                      >
+                        <Trash2 className="h-3 w-3 text-red-500" />
                       </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDelete(campaign.id)}
-                      disabled={campaign.status === 'active'}
-                    >
-                      <Trash2 className="h-3 w-3 text-red-500" />
-                    </Button>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(page - 1)}
+                disabled={!canPrev}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm text-slate-500">
+                Page {page + 1} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(page + 1)}
+                disabled={!canNext}
+                aria-label="Next page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+        </>
       ) : (
         <EmptyState
           icon={<BarChart3 className="h-6 w-6" />}

@@ -9,6 +9,7 @@ import { findStageById } from '../pipeline/pipeline.repository';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
 import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
 import {
+  countLeads,
   findExistingForDedup,
   findLeadById,
   findLeads,
@@ -139,17 +140,33 @@ export async function listLeads(
   actor: Actor,
 ): Promise<LeadListResult> {
   const filters = applyScope(rawFilters, actor);
-  const { rows, hasMore } = await findLeads(filters);
+  const [{ rows, hasMore }, total] = await Promise.all([
+    findLeads(filters),
+    filters.countTotal ? countLeads(filters) : Promise.resolve(undefined),
+  ]);
+
+  // A cursor is only meaningful for the default newest-first ordering; offset
+  // paging and custom sorts page by `offset` instead.
+  const isKeyset =
+    filters.offset === undefined &&
+    (filters.sortBy ?? 'created_at') === 'created_at' &&
+    (filters.sortDir ?? 'desc') === 'desc';
 
   let nextCursor: string | undefined;
-  if (hasMore && rows.length > 0) {
+  if (isKeyset && hasMore && rows.length > 0) {
     const last = rows[rows.length - 1];
     nextCursor = encodeCursor({ ts: last.created_at, id: last.id });
   }
 
   return {
     items: rows.map(toLeadResponse),
-    meta: { limit: filters.limit, hasMore, nextCursor },
+    meta: {
+      limit: filters.limit,
+      hasMore,
+      nextCursor,
+      ...(total !== undefined ? { total } : {}),
+      ...(filters.offset !== undefined ? { offset: filters.offset } : {}),
+    },
   };
 }
 

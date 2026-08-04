@@ -1,10 +1,13 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useTemplates } from '@/api/templates';
+import { useCreateTemplate, useTemplates } from '@/api/templates';
 import type { Sequence, SequenceStep } from '@/api/outreach';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
+import { extractVariables } from '@/lib/templateVars';
 import {
   Plus,
   Trash2,
@@ -12,6 +15,7 @@ import {
   ChevronUp,
   Mail,
   MessageSquare,
+  Pencil,
   Phone,
   Zap,
   AlertTriangle,
@@ -20,10 +24,10 @@ import {
 // ── Channel presentation (shared across sequence UIs) ──────────────────────
 
 export const CHANNEL_ICONS: Record<string, React.ReactNode> = {
-  whatsapp: <MessageSquare className="h-4 w-4 text-emerald-600" />,
-  email: <Mail className="h-4 w-4 text-blue-600" />,
-  sms: <Zap className="h-4 w-4 text-amber-600" />,
-  phone_call: <Phone className="h-4 w-4 text-purple-600" />,
+  whatsapp: <MessageSquare className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />,
+  email: <Mail className="h-4 w-4 text-blue-600 dark:text-blue-400" />,
+  sms: <Zap className="h-4 w-4 text-amber-600 dark:text-amber-400" />,
+  phone_call: <Phone className="h-4 w-4 text-purple-600 dark:text-purple-400" />,
 };
 
 export const CHANNEL_LABELS: Record<string, string> = {
@@ -34,15 +38,108 @@ export const CHANNEL_LABELS: Record<string, string> = {
 };
 
 export const CHANNEL_COLORS: Record<string, string> = {
-  whatsapp: 'bg-emerald-50 border-emerald-200',
-  email: 'bg-blue-50 border-blue-200',
-  sms: 'bg-amber-50 border-amber-200',
-  phone_call: 'bg-purple-50 border-purple-200',
+  whatsapp: 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200',
+  email: 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800/60 text-blue-900 dark:text-blue-200',
+  sms: 'bg-amber-50 dark:bg-amber-950/60 border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200',
+  phone_call: 'bg-purple-50 dark:bg-purple-950/60 border-purple-200 dark:border-purple-800/60 text-purple-900 dark:text-purple-200',
 };
 
 /** Every step must reference a template — the backend rejects steps without one. */
 export function stepsAreComplete(steps: SequenceStep[]): boolean {
   return steps.length > 0 && steps.every((step) => Boolean(step.templateId));
+}
+
+// ── Inline template composer ────────────────────────────────────────────────
+
+/**
+ * Writes and saves a template without leaving the sequence editor. Templates created by
+ * a role that could approve them land approved server-side, so the new message is
+ * immediately selectable here — no trip to the Templates page.
+ */
+function InlineTemplateComposer({
+  channel,
+  onCreated,
+  onCancel,
+}: {
+  channel: SequenceStep['channel'];
+  onCreated: (templateId: string) => void;
+  onCancel: () => void;
+}) {
+  const createTemplate = useCreateTemplate();
+  const { showToast } = useToast();
+  const [name, setName] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+
+  const needsSubject = channel === 'email';
+  const canSave = name.trim() !== '' && body.trim() !== '' && (!needsSubject || subject.trim() !== '');
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    try {
+      const created = await createTemplate.mutateAsync({
+        name: name.trim(),
+        channel,
+        subject: needsSubject ? subject.trim() : null,
+        body: body.trim(),
+        variables: extractVariables(body),
+      });
+      showToast('Message saved and attached to this step.', 'success');
+      onCreated(created.id);
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to save the message.'), 'error');
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-indigo-200 bg-white p-3">
+      <div className="space-y-1">
+        <Label className="text-xs text-slate-500">Name (internal)</Label>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={`${CHANNEL_LABELS[channel] ?? channel} — step message`}
+          className="h-8 text-xs"
+        />
+      </div>
+
+      {needsSubject && (
+        <div className="space-y-1">
+          <Label className="text-xs text-slate-500">Subject</Label>
+          <Input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Quick question about {{company}}"
+            className="h-8 text-xs"
+          />
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <Label className="text-xs text-slate-500">Message</Label>
+        <Textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={5}
+          placeholder={'Hi {{first_name}},\n\n...'}
+          className="text-xs"
+        />
+        <p className="text-xs text-slate-500">
+          Use <code className="rounded bg-slate-100 px-1">{'{{merge_field}}'}</code> for
+          personalisation — e.g. <code className="rounded bg-slate-100 px-1">{'{{first_name}}'}</code>.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button type="button" size="sm" onClick={handleSave} disabled={!canSave || createTemplate.isPending}>
+          {createTemplate.isPending ? 'Saving…' : 'Save & use'}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // ── Step editor ─────────────────────────────────────────────────────────────
@@ -54,7 +151,11 @@ export function SequenceStepEditor({
   steps: SequenceStep[];
   onChange: (steps: SequenceStep[]) => void;
 }) {
-  const { data: templates = [] } = useTemplates({ approval_status: 'approved' });
+  const { data: templatesData } = useTemplates({ approval_status: 'approved' });
+  const templates = templatesData?.items ?? [];
+  // Index of the step whose inline "write a new message" composer is open, if any.
+  const [composingFor, setComposingFor] = useState<number | null>(null);
+
   const addStep = () => {
     const nextNumber = steps.length + 1;
     onChange([
@@ -92,6 +193,17 @@ export function SequenceStepEditor({
   const updateStep = (index: number, field: keyof SequenceStep, value: unknown) => {
     const updated = steps.map((s, i) => (i === index ? { ...s, [field]: value } : s));
     onChange(updated);
+  };
+
+  /**
+   * Templates are channel-specific, so a step's existing template stops being valid
+   * the moment its channel changes — clear it rather than leave a stale id that the
+   * dropdown cannot display but the payload would still submit.
+   */
+  const updateChannel = (index: number, channel: SequenceStep['channel']) => {
+    const updated = steps.map((s, i) => (i === index ? { ...s, channel, templateId: null } : s));
+    onChange(updated);
+    setComposingFor(null);
   };
 
   return (
@@ -148,9 +260,7 @@ export function SequenceStepEditor({
                 <Label className="text-xs text-slate-500">Channel</Label>
                 <select
                   value={step.channel}
-                  onChange={(e) =>
-                    updateStep(i, 'channel', e.target.value as SequenceStep['channel'])
-                  }
+                  onChange={(e) => updateChannel(i, e.target.value as SequenceStep['channel'])}
                   className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   <option value="whatsapp">WhatsApp</option>
@@ -174,24 +284,15 @@ export function SequenceStepEditor({
               </div>
 
               <div className="col-span-1 space-y-1 sm:col-span-2">
-                <Label className="text-xs text-slate-500">Approved Template *</Label>
+                <Label className="text-xs text-slate-500">Message *</Label>
+
                 {channelTemplates.length === 0 ? (
-                  <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      No approved {CHANNEL_LABELS[step.channel] ?? step.channel} templates yet.{' '}
-                      <Link to="/templates/new" className="font-medium underline">
-                        Create one
-                      </Link>{' '}
-                      and get it approved on the{' '}
-                      <Link to="/templates" className="font-medium underline">
-                        Templates page
-                      </Link>
-                      .
-                    </span>
-                  </div>
+                  <p className="text-xs text-slate-500">
+                    No {CHANNEL_LABELS[step.channel] ?? step.channel} messages saved yet — write the
+                    first one below.
+                  </p>
                 ) : (
-                  <>
+                  <div className="flex items-center gap-2">
                     <select
                       value={step.templateId ?? ''}
                       onChange={(e) => updateStep(i, 'templateId', e.target.value || null)}
@@ -199,17 +300,41 @@ export function SequenceStepEditor({
                         step.templateId ? 'border-input bg-white' : 'border-amber-400 bg-amber-50'
                       }`}
                     >
-                      <option value="">Select approved template</option>
+                      <option value="">Select a saved message</option>
                       {channelTemplates.map((template) => (
                         <option key={template.id} value={template.id}>
                           {template.name}
                         </option>
                       ))}
                     </select>
-                    {!step.templateId && (
-                      <p className="text-xs text-amber-700">A template is required for this step.</p>
-                    )}
-                  </>
+                  </div>
+                )}
+
+                {composingFor === i ? (
+                  <InlineTemplateComposer
+                    channel={step.channel}
+                    onCreated={(templateId) => {
+                      updateStep(i, 'templateId', templateId);
+                      setComposingFor(null);
+                    }}
+                    onCancel={() => setComposingFor(null)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setComposingFor(i)}
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-indigo-700 underline-offset-2 hover:underline"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Write a new message
+                  </button>
+                )}
+
+                {!step.templateId && composingFor !== i && (
+                  <p className="flex items-center gap-1 text-xs text-amber-700">
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                    This step needs a message before the sequence can be saved.
+                  </p>
                 )}
               </div>
             </div>

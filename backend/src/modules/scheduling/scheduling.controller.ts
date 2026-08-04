@@ -85,12 +85,7 @@ export async function getBookingUrlHandler(
   try {
     const userId = (req as any).user.id;
     const { id } = req.params;
-    const urls = await schedulingService.listBookingUrls(userId);
-    const url = urls.find((u) => u.id === id);
-    if (!url) {
-      res.status(404).json({ success: false, error: 'Booking URL not found' });
-      return;
-    }
+    const url = await schedulingService.getBookingUrlById(id, userId);
     sendSuccess(res, url);
   } catch (err) {
     next(err);
@@ -138,11 +133,9 @@ export async function getPublicBookingPageHandler(
   try {
     const { slug } = bookingUrlSlugParamSchema.parse(req.params);
     const url = await schedulingService.getBookingUrlBySlug(slug);
-    sendSuccess(res, {
-      ...url,
-      userId: undefined,
-      isPublic: true,
-    });
+    // Strip user_id from public response
+    const publicData = Object.fromEntries(Object.entries(url).filter(([key]) => key !== 'user_id'));
+    sendSuccess(res, { ...publicData, isPublic: true });
   } catch (err) {
     next(err);
   }

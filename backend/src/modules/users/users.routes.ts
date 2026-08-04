@@ -2,18 +2,21 @@ import { Router } from 'express';
 import { wrap } from '../../shared/utils/asyncHandler';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
+import { authenticatedLimiter, passwordChangeLimiter } from '../../shared/middleware/rateLimiter';
 import {
   createUserHandler,
   listUsersHandler,
   getUserHandler,
   updateProfileHandler,
   updatePermissionsHandler,
+  changePasswordHandler,
 } from './users.controller';
 
 const router = Router();
 
-// All users routes require a valid JWT.
+// All users routes require a valid JWT and rate limiting.
 router.use(authenticate);
+router.use(authenticatedLimiter);
 
 // POST /api/v1/users — Create a new user. Admin only.
 router.post('/', authorize('admin'), wrap(createUserHandler));
@@ -39,5 +42,14 @@ router.patch(
 
 // PATCH /api/v1/users/:id/permissions — Update role and/or active status. Admin only.
 router.patch('/:id/permissions', authorize('admin'), wrap(updatePermissionsHandler));
+
+// PATCH /api/v1/users/:id/password — Change own password (current + new). All authenticated roles.
+// Protected by rateLimiter to prevent brute-forcing passwords. Service enforces ownership.
+router.patch(
+  '/:id/password',
+  passwordChangeLimiter,
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(changePasswordHandler),
+);
 
 export { router as usersRoutes };

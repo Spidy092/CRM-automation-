@@ -6,7 +6,9 @@ export interface User {
   email: string;
   role: UserRole;
   is_active: boolean;
+  is_available: boolean;
   created_at: Date;
+  updated_at: Date;
 }
 
 export interface UpdateProfileInput {

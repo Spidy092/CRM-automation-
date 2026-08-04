@@ -179,7 +179,7 @@ export async function resetPassword(token: string, newPassword: string): Promise
 // -----------------------------------------------------------------------------
 
 import { createApiKey, listApiKeys, revokeApiKey, findApiKeyByHash, touchApiKey } from './auth.repository';
-import { CreateApiKeyResult } from './auth.types';
+import { CreateApiKeyResult, ApiKeyListItem, ApiKeyIdentity } from './auth.types';
 
 export async function generateApiKey(
   userId: string,
@@ -214,7 +214,7 @@ export async function generateApiKey(
   };
 }
 
-export async function getApiKeysForUser(userId: string): Promise<any[]> {
+export async function getApiKeysForUser(userId: string): Promise<ApiKeyListItem[]> {
   return listApiKeys(userId);
 }
 
@@ -225,7 +225,7 @@ export async function removeApiKey(userId: string, id: string): Promise<void> {
   }
 }
 
-export async function validateApiKey(rawKey: string): Promise<any> {
+export async function validateApiKey(rawKey: string): Promise<ApiKeyIdentity> {
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   const record = await findApiKeyByHash(keyHash);
 

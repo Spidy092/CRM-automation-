@@ -50,3 +50,23 @@ export function normalizePhone(raw: string): string {
 export function isE164(value: string): boolean {
   return /^\+\d{6,15}$/.test(value);
 }
+
+/**
+ * True when a phone looks like the scraper's deterministic placeholder
+ * (`generatePlaceholderPhone` in scraper.service.ts): `+0` followed by 10
+ * digits. No real country code starts with 0, so this pattern is unambiguous
+ * and never collides with a genuine E.164 number.
+ */
+export function isPlaceholderPhone(value: string): boolean {
+  return /^\+0\d{9,}$/.test(value);
+}
+
+/**
+ * True when an email looks like a scraper-generated placeholder
+ * (`generatePlaceholderEmail` in scraper.service.ts uses a `*-scraped.local`
+ * domain). `.local` is a reserved, non-routable TLD, so any address ending in
+ * it is synthetic regardless of which scraper produced it.
+ */
+export function isPlaceholderEmail(value: string): boolean {
+  return /\.local$/i.test(value.trim());
+}

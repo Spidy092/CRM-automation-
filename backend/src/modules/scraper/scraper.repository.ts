@@ -7,7 +7,7 @@ import {
   ScraperConfigUpdate,
 } from './scraper.types';
 
-const CONFIG_COLS = `id, name, source_type, is_active, config, schedule_cron, last_run_at, created_by, created_at, updated_at`;
+const CONFIG_COLS = `id, name, source_type, is_active, config, schedule_cron, webhook_url, group_name, last_run_at, created_by, created_at, updated_at`;
 const LOG_COLS = `id, config_id, status, started_at, completed_at, records_found, records_imported, records_duplicate, records_failed, error_message, raw_response, failed_items, duplicate_lead_ids, created_at`;
 
 // ── Scraper Configs ────────────────────────────────────────────────────────
@@ -35,8 +35,8 @@ export async function insertScraperConfig(
   createdBy: string,
 ): Promise<ScraperConfigRow> {
   const row = await queryOne<ScraperConfigRow>(
-    `INSERT INTO scraper_configs (name, source_type, is_active, config, schedule_cron, created_by)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+    `INSERT INTO scraper_configs (name, source_type, is_active, config, schedule_cron, webhook_url, group_name, created_by)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
      RETURNING ${CONFIG_COLS}`,
     [
       input.name,
@@ -44,6 +44,8 @@ export async function insertScraperConfig(
       input.is_active ?? true,
       JSON.stringify(input.config),
       input.schedule_cron ?? null,
+      input.webhook_url ?? null,
+      input.group_name ?? null,
       createdBy,
     ],
   );
@@ -75,6 +77,14 @@ export async function updateScraperConfig(
     sets.push(`schedule_cron = $${i++}`);
     params.push(input.schedule_cron);
   }
+  if (input.webhook_url !== undefined) {
+    sets.push(`webhook_url = $${i++}`);
+    params.push(input.webhook_url);
+  }
+  if (input.group_name !== undefined) {
+    sets.push(`group_name = $${i++}`);
+    params.push(input.group_name);
+  }
 
   if (sets.length === 0) {
     return findScraperConfigById(id);
@@ -100,7 +110,39 @@ export async function updateScraperConfigLastRun(id: string, lastRunAt: string):
   );
 }
 
+export async function findDistinctGroupNames(): Promise<string[]> {
+  const rows = await query<{ group_name: string }>(
+    `SELECT DISTINCT group_name FROM scraper_configs WHERE group_name IS NOT NULL ORDER BY group_name`,
+  );
+  return rows.map((r) => r.group_name);
+}
+
 // ── Scraper Logs ────────────────────────────────────────────────────────────
+
+/**
+ * The most recent still-'running' log for a config, if any.
+ *
+ * Used to keep "Run Now" idempotent: a second click while a run is in flight
+ * should attach to that run rather than start a competing one.
+ *
+ * `staleBeforeIso` bounds how long a 'running' row is trusted. A run whose
+ * worker crashed mid-flight leaves its log stuck in 'running' forever, and
+ * without this the config could never be run again.
+ */
+export async function findRunningLogByConfig(
+  configId: string,
+  staleBeforeIso: string,
+): Promise<ScraperLogRow | null> {
+  return queryOne<ScraperLogRow>(
+    `SELECT ${LOG_COLS} FROM scraper_logs
+     WHERE config_id = $1
+       AND status = 'running'
+       AND started_at >= $2
+     ORDER BY started_at DESC
+     LIMIT 1`,
+    [configId, staleBeforeIso],
+  );
+}
 
 export async function insertScraperLog(data: {
   config_id: string;
@@ -277,4 +319,51 @@ export async function sumScraperLogsSince(sinceIso: string): Promise<{
     recordsDuplicate: row ? parseInt(row.records_duplicate, 10) : 0,
     recordsFailed: row ? parseInt(row.records_failed, 10) : 0,
   };
+}
+
+export interface ScraperTrendPoint {
+  date: string;
+  runs: number;
+  leads_imported: number;
+  leads_found: number;
+  leads_failed: number;
+  success_rate: number;
+}
+
+export async function getScraperTrends(days = 14): Promise<ScraperTrendPoint[]> {
+  const rows = await query<{
+    day: string;
+    runs: string;
+    leads_imported: string;
+    leads_found: string;
+    leads_failed: string;
+  }>(
+    `SELECT
+       DATE_TRUNC('day', created_at)::date::text AS day,
+       COUNT(*)::text                             AS runs,
+       COALESCE(SUM(records_imported), 0)::text   AS leads_imported,
+       COALESCE(SUM(records_found), 0)::text      AS leads_found,
+       COALESCE(SUM(records_failed), 0)::text     AS leads_failed
+     FROM scraper_logs
+     WHERE created_at >= NOW() - ($1 || ' days')::interval
+       AND status IN ('completed', 'partially_completed', 'failed')
+     GROUP BY day
+     ORDER BY day ASC`,
+    [String(days)],
+  );
+
+  return rows.map((r) => {
+    const runs = parseInt(r.runs, 10);
+    const imported = parseInt(r.leads_imported, 10);
+    const found = parseInt(r.leads_found, 10);
+    const failed = parseInt(r.leads_failed, 10);
+    return {
+      date: r.day,
+      runs,
+      leads_imported: imported,
+      leads_found: found,
+      leads_failed: failed,
+      success_rate: runs > 0 ? Math.round((imported / Math.max(found, 1)) * 100) : 0,
+    };
+  });
 }

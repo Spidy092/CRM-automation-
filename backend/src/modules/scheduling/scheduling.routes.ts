@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { wrap } from '../../shared/utils/asyncHandler';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
-import { authenticatedLimiter } from '../../shared/middleware/rateLimiter';
+import { authenticatedLimiter, publicLimiter } from '../../shared/middleware/rateLimiter';
 import {
   getAvailabilityHandler,
   setAvailabilityHandler,
@@ -29,10 +29,11 @@ const router = Router();
 
 router.get('/book/:slug', wrap(getPublicBookingPageHandler));
 router.get('/book/:slug/slots', wrap(getPublicAvailableSlotsHandler));
-router.post('/book/:slug', wrap(createPublicBookingHandler));
+router.post('/book/:slug', publicLimiter, wrap(createPublicBookingHandler));
 
 // ── Authenticated Routes ────────────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-misused-promises -- authenticate middleware follows Express pattern used across all modules
 router.use(authenticate, authenticatedLimiter);
 
 // Availability
@@ -43,7 +44,11 @@ router.get('/availability/slots', wrap(getAvailableSlotsHandler));
 // Date Overrides
 router.get('/overrides', wrap(listDateOverridesHandler));
 router.post('/overrides', authorize('admin', 'manager', 'sales'), wrap(setDateOverrideHandler));
-router.delete('/overrides/:overrideId', authorize('admin', 'manager', 'sales'), wrap(deleteDateOverrideHandler));
+router.delete(
+  '/overrides/:overrideId',
+  authorize('admin', 'manager', 'sales'),
+  wrap(deleteDateOverrideHandler),
+);
 
 // Booking URLs
 router.get('/urls', wrap(listBookingUrlsHandler));
@@ -53,7 +58,11 @@ router.put('/urls/:id', authorize('admin', 'manager', 'sales'), wrap(updateBooki
 
 // Bookings
 router.get('/bookings', wrap(listBookingsHandler));
-router.post('/bookings', authorize('admin', 'manager', 'sales'), wrap(createInternalBookingHandler));
+router.post(
+  '/bookings',
+  authorize('admin', 'manager', 'sales'),
+  wrap(createInternalBookingHandler),
+);
 router.post('/bookings/:bookingId/cancel', wrap(cancelBookingHandler));
 
 // Round Robin

@@ -75,9 +75,12 @@ export function FollowUpPicker({ leadId, value }: Props) {
     }
   };
 
-  const nowIsoMin = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16);
+  const now = new Date();
+  const nowIsoMin = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate(),
+  ).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(
+    now.getMinutes(),
+  ).padStart(2, '0')}`;
 
   return (
     <div className="relative inline-block" ref={containerRef}>

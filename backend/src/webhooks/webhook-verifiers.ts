@@ -85,9 +85,8 @@ export function verifySendGridSignature(
   verificationKey: string | undefined,
 ): boolean {
   if (!verificationKey) {
-    // No verification key configured — accept but warn
-    logger.warn('SendGrid verification key not configured — accepting unverified webhook');
-    return true;
+    logger.error('SendGrid verification key not configured — rejecting unverified webhook');
+    return false;
   }
 
   if (!signatureHeader) {
@@ -117,8 +116,8 @@ export function verifyGoogleAdsSecret(
   configuredSecret: string | undefined,
 ): boolean {
   if (!configuredSecret) {
-    logger.warn('Google Ads webhook secret not configured — accepting unverified webhook');
-    return true;
+    logger.error('Google Ads webhook secret not configured — rejecting unverified webhook');
+    return false;
   }
 
   if (!payloadSecret) {

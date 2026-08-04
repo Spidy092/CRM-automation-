@@ -1,0 +1,27 @@
+# CODEOWNERS — Automatic PR review assignment
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything
+* @chethan-gowda
+
+# Backend
+/backend/ @chethan-gowda
+
+# Frontend
+/frontend/ @chethan-gowda
+
+# Infrastructure & DevOps
+/docker-compose.prod.yml @chethan-gowda
+/.github/ @chethan-gowda
+/nginx/ @chethan-gowda
+/Dockerfile @chethan-gowda
+/backend/Dockerfile @chethan-gowda
+/frontend/Dockerfile @chethan-gowda
+
+# Security-sensitive files — require careful review
+/backend/src/shared/middleware/auth.ts @chethan-gowda
+/backend/src/shared/middleware/rbac.ts @chethan-gowda
+/backend/src/modules/auth/ @chethan-gowda
+
+# Database migrations — append-only, never edit
+/migrations/ @chethan-gowda

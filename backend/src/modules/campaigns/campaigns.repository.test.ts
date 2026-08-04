@@ -50,6 +50,16 @@ describe('campaigns.repository', () => {
       await expect(findCampaigns()).resolves.toEqual(rows);
       expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('deleted_at IS NULL'));
     });
+
+    it('filters non-deleted campaigns by pipeline_id', async () => {
+      const rows = [{ id: 'c1', name: 'Spring', pipeline_id: 'p1' }];
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows));
+      await expect(findCampaigns({ pipeline_id: 'p1' })).resolves.toEqual(rows);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE pipeline_id = $1 AND deleted_at IS NULL'),
+        ['p1'],
+      );
+    });
   });
 
   describe('findCampaignById', () => {

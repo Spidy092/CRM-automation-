@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useCreateForm, useUpdateForm, useForm, type FormField, type EmailSettings } from '@/api/forms';
+import { useCreateForm, useUpdateForm, useForm, useListForms, type FormField, type EmailSettings } from '@/api/forms';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
@@ -50,6 +50,7 @@ export function FormBuilderPage() {
   const { showToast } = useToast();
 
   const { data: existingForm, isLoading: loadingForm } = useForm(id ?? '');
+  const { data: allFormsData } = useListForms(100, 0);
   const createForm = useCreateForm();
   const updateForm = useUpdateForm();
 
@@ -61,6 +62,12 @@ export function FormBuilderPage() {
   const [submitMessage, setSubmitMessage] = useState('Thank you for your submission!');
   const [isActive, setIsActive] = useState(true);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>({});
+
+  const allForms = allFormsData?.data ?? [];
+  const normalizedSlug = slug.trim();
+  const isSlugTaken = Boolean(
+    normalizedSlug && allForms.some((f) => f.slug === normalizedSlug && f.id !== id),
+  );
 
   useEffect(() => {
     if (existingForm?.data) {
@@ -102,6 +109,10 @@ export function FormBuilderPage() {
   const handleSave = async () => {
     if (!name.trim()) {
       showToast('Form name is required', 'error');
+      return;
+    }
+    if (isSlugTaken) {
+      showToast(`Slug "${slug}" is already used by another form`, 'error');
       return;
     }
     if (fields.some((f) => !f.label.trim())) {
@@ -175,8 +186,13 @@ export function FormBuilderPage() {
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
                   placeholder="contact-us"
+                  className={isSlugTaken ? 'border-red-500 focus:ring-red-500' : ''}
                 />
-                <p className="text-xs text-slate-500">Your form will be at /forms/{slug || '...'}</p>
+                {isSlugTaken ? (
+                  <p className="text-xs text-red-500 font-medium">This slug is already in use by another form.</p>
+                ) : (
+                  <p className="text-xs text-slate-500">Your form will be at /forms/{slug || '...'}</p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -402,19 +418,37 @@ export function FormBuilderPage() {
                       <Input
                         value={field.placeholder ?? ''}
                         onChange={(e) => updateField(index, { placeholder: e.target.value })}
+                        placeholder="Enter value..."
                       />
                     </div>
-                    <div className="flex items-center gap-4 pt-5">
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={field.required}
-                          onChange={(e) => updateField(index, { required: e.target.checked })}
-                          className="h-4 w-4 rounded border-slate-300"
-                        />
-                        Required
-                      </label>
+                    <div className="flex items-center gap-2 pt-6">
+                      <input
+                        type="checkbox"
+                        id={`req-${index}`}
+                        checked={field.required}
+                        onChange={(e) => updateField(index, { required: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                      <Label htmlFor={`req-${index}`} className="text-xs">Required</Label>
                     </div>
+
+                    {field.type === 'select' && (
+                      <div className="sm:col-span-2 space-y-1">
+                        <Label className="text-xs">Dropdown Options (comma-separated)</Label>
+                        <Input
+                          value={(field.options ?? []).join(', ')}
+                          onChange={(e) =>
+                            updateField(index, {
+                              options: e.target.value
+                                .split(',')
+                                .map((s) => s.trim())
+                                .filter(Boolean),
+                            })
+                          }
+                          placeholder="Option 1, Option 2, Option 3"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <button

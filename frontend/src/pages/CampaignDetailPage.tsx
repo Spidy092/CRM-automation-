@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   useCampaign,
@@ -39,8 +40,12 @@ import {
   GitBranch,
   Zap,
   RotateCw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import type { CampaignStatus } from '@/api/campaigns';
+
+const LEADS_PAGE_SIZE = 25;
 
 const statusTones: Record<CampaignStatus, StatusTone> = {
   draft: 'gray',
@@ -58,17 +63,23 @@ export function CampaignDetailPage() {
   const { data: campaignLeads = [], isLoading: isLeadsLoading } = useCampaignLeads(id!);
   const { data: sequence } = useSequence(campaign?.sequence_id ?? '');
   const { data: pipeline } = usePipeline(campaign?.pipeline_id ?? '');
-  const { data: templates = [] } = useTemplates();
+  const { data: templatesData } = useTemplates();
+  const templates = templatesData?.items ?? [];
   const launchCampaign = useLaunchCampaign();
   const pauseCampaign = usePauseCampaign();
   const resumeCampaign = useResumeCampaign();
   const retryStep = useRetryLeadOutreachStep();
   const { showToast } = useToast();
+  const [leadsPage, setLeadsPage] = useState(0);
 
   const templateById = new Map(templates.map((t) => [t.id, t]));
   const triggerStageName = pipeline?.stages?.find(
     (stage) => stage.id === campaign?.trigger_stage_id,
   )?.name;
+
+  // Paginated leads
+  const leadsTotalPages = Math.max(1, Math.ceil(campaignLeads.length / LEADS_PAGE_SIZE));
+  const pagedLeads = campaignLeads.slice(leadsPage * LEADS_PAGE_SIZE, (leadsPage + 1) * LEADS_PAGE_SIZE);
 
   const handleLaunch = async () => {
     try {
@@ -449,79 +460,115 @@ export function CampaignDetailPage() {
           {isLeadsLoading ? (
             <LoadingTable rows={3} cols={4} />
           ) : campaignLeads.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Lead</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Latest Step</th>
-                    <th className="px-4 py-3 font-medium">Step Status</th>
-                    <th className="px-4 py-3 font-medium">Last Activity</th>
-                    <th className="px-4 py-3 font-medium" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {campaignLeads.map((lead) => {
-                    const failed = lead.step_status === 'failed';
-                    const isRetryingThis =
-                      retryStep.isPending && retryStep.variables?.leadId === lead.lead_id;
-                    return (
-                      <tr key={lead.lead_id} className="hover:bg-slate-50/50">
-                        <td className="px-4 py-3">
-                          <Link to={`/leads/${lead.lead_id}`} className="font-medium text-indigo-600 hover:underline">
-                            {lead.business_name || lead.contact_name || 'Unknown Lead'}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3 capitalize text-slate-600">{lead.lead_status}</td>
-                        <td className="px-4 py-3">
-                          {lead.latest_step ? `Step ${lead.latest_step}` : <span className="text-slate-400">Not started</span>}
-                        </td>
-                        <td className="px-4 py-3">
-                          {lead.step_status ? (
-                            <div className="space-y-1">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                                lead.step_status === 'sent' || lead.step_status === 'delivered' ? 'bg-green-100 text-green-700' :
-                                lead.step_status === 'failed' ? 'bg-red-100 text-red-700' :
-                                lead.step_status === 'replied' ? 'bg-purple-100 text-purple-700' :
-                                'bg-slate-100 text-slate-700'
-                              }`}>
-                                {lead.step_status}
-                              </span>
-                              {failed && lead.step_error && (
-                                <div className="flex items-start gap-1 text-xs text-red-600">
-                                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                                  <span>{lead.step_error}</span>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-slate-500">
-                          {lead.step_time ? new Date(lead.step_time).toLocaleString() : '—'}
-                        </td>
-                        <td className="px-4 py-3">
-                          {failed && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs"
-                              onClick={() => handleRetry(lead.lead_id)}
-                              disabled={isRetryingThis}
-                            >
-                              <RotateCw className={`mr-1 h-3 w-3 ${isRetryingThis ? 'animate-spin' : ''}`} />
-                              {isRetryingThis ? 'Retrying…' : 'Retry'}
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Lead</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                      <th className="px-4 py-3 font-medium">Latest Step</th>
+                      <th className="px-4 py-3 font-medium">Step Status</th>
+                      <th className="px-4 py-3 font-medium">Last Activity</th>
+                      <th className="px-4 py-3 font-medium" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {pagedLeads.map((lead) => {
+                      const failed = lead.step_status === 'failed';
+                      const isRetryingThis =
+                        retryStep.isPending && retryStep.variables?.leadId === lead.lead_id;
+                      return (
+                        <tr key={lead.lead_id} className="hover:bg-slate-50/50">
+                          <td className="px-4 py-3">
+                            <Link to={`/leads/${lead.lead_id}`} className="font-medium text-indigo-600 hover:underline">
+                              {lead.business_name || lead.contact_name || 'Unknown Lead'}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3 capitalize text-slate-600">{lead.lead_status}</td>
+                          <td className="px-4 py-3">
+                            {lead.latest_step ? `Step ${lead.latest_step}` : <span className="text-slate-400">Not started</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            {lead.step_status ? (
+                              <div className="space-y-1">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  lead.step_status === 'sent' || lead.step_status === 'delivered' ? 'bg-green-100 text-green-700' :
+                                  lead.step_status === 'failed' ? 'bg-red-100 text-red-700' :
+                                  lead.step_status === 'replied' ? 'bg-purple-100 text-purple-700' :
+                                  'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {lead.step_status}
+                                </span>
+                                {failed && lead.step_error && (
+                                  <div className="flex items-start gap-1 text-xs text-red-600">
+                                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                    <span>{lead.step_error}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-slate-500">
+                            {lead.step_time ? new Date(lead.step_time).toLocaleString() : '—'}
+                          </td>
+                          <td className="px-4 py-3">
+                            {failed && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() => handleRetry(lead.lead_id)}
+                                disabled={isRetryingThis}
+                              >
+                                <RotateCw className={`mr-1 h-3 w-3 ${isRetryingThis ? 'animate-spin' : ''}`} />
+                                {isRetryingThis ? 'Retrying…' : 'Retry'}
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Leads pagination */}
+              {leadsTotalPages > 1 && (
+                <div className="mt-4 flex items-center justify-between">
+                  <span className="text-xs text-slate-500">
+                    Showing {leadsPage * LEADS_PAGE_SIZE + 1}–{Math.min((leadsPage + 1) * LEADS_PAGE_SIZE, campaignLeads.length)} of {campaignLeads.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setLeadsPage(leadsPage - 1)}
+                      disabled={leadsPage === 0}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="px-2 text-xs text-slate-500">
+                      Page {leadsPage + 1} of {leadsTotalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setLeadsPage(leadsPage + 1)}
+                      disabled={leadsPage + 1 >= leadsTotalPages}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <EmptyState
               icon={<Users className="h-6 w-6" />}

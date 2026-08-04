@@ -4,11 +4,13 @@ jest.mock('./pipeline.repository', () => ({
   findPipelineById: jest.fn(),
   findPipelineWithStages: jest.fn(),
   insertPipeline: jest.fn(),
+  insertPipelineWithStages: jest.fn(),
   updatePipeline: jest.fn(),
   deletePipeline: jest.fn(),
   insertStage: jest.fn(),
   updateStage: jest.fn(),
   deleteStage: jest.fn(),
+  countLeadsInStage: jest.fn(),
   findStagesByPipeline: jest.fn(),
   findStageById: jest.fn(),
   moveLeadToStage: jest.fn(),
@@ -31,11 +33,13 @@ import {
   findPipelineById,
   findPipelineWithStages,
   insertPipeline,
+  insertPipelineWithStages,
   updatePipeline,
   deletePipeline,
   insertStage,
   updateStage,
   deleteStage,
+  countLeadsInStage,
   findStagesByPipeline,
   findStageById,
   moveLeadToStage,
@@ -104,10 +108,8 @@ describe('getPipelineById', () => {
 });
 
 describe('createPipeline', () => {
-  it('inserts pipeline + each stage and audits', async () => {
-    (insertPipeline as jest.Mock).mockResolvedValue(basePipeline);
-    (insertStage as jest.Mock).mockResolvedValue(baseStage);
-    (findPipelineWithStages as jest.Mock).mockResolvedValue({ ...basePipeline, stages: [baseStage] });
+  it('inserts pipeline + each stage transactionally and audits', async () => {
+    (insertPipelineWithStages as jest.Mock).mockResolvedValue({ ...basePipeline, stages: [baseStage] });
 
     const res = await createPipeline(
       {
@@ -118,8 +120,12 @@ describe('createPipeline', () => {
       actor,
     );
 
-    expect(insertPipeline).toHaveBeenCalledWith('Default', true, 'admin-1');
-    expect(insertStage).toHaveBeenCalledWith('pipe-1', 'New', 1, false, false);
+    expect(insertPipelineWithStages).toHaveBeenCalledWith(
+      'Default',
+      true,
+      [{ name: 'New', position: 1 }],
+      'admin-1',
+    );
     expect(writeAuditLog).toHaveBeenCalled();
     expect(res.id).toBe('pipe-1');
   });
@@ -181,6 +187,31 @@ describe('updateStageById', () => {
   it('throws 404 when stage missing', async () => {
     (findStageById as jest.Mock).mockResolvedValue(null);
     await expect(updateStageById('x', { name: 'x' }, actor)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('deleteStageById', () => {
+  it('throws 404 when stage missing', async () => {
+    (findStageById as jest.Mock).mockResolvedValue(null);
+    await expect(deleteStageById('stage-x', actor)).rejects.toMatchObject({ statusCode: 404 });
+    expect(deleteStage).not.toHaveBeenCalled();
+  });
+
+  it('throws 400 when stage has assigned leads', async () => {
+    (findStageById as jest.Mock).mockResolvedValue(baseStage);
+    (countLeadsInStage as jest.Mock).mockResolvedValue(3);
+    await expect(deleteStageById('stage-1', actor)).rejects.toMatchObject({ statusCode: 400 });
+    expect(deleteStage).not.toHaveBeenCalled();
+  });
+
+  it('deletes and audits on success when no leads assigned', async () => {
+    (findStageById as jest.Mock).mockResolvedValue(baseStage);
+    (countLeadsInStage as jest.Mock).mockResolvedValue(0);
+    await deleteStageById('stage-1', actor);
+    expect(deleteStage).toHaveBeenCalledWith('stage-1');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'pipeline_stage.deleted' }),
+    );
   });
 });
 
@@ -289,23 +320,6 @@ describe('createStage', () => {
     (insertStage as jest.Mock).mockResolvedValue(baseStage);
     await createStage('pipe-1', { name: 'New', position: 1 }, actor);
     expect(insertStage).toHaveBeenCalledWith('pipe-1', 'New', 1, false, false);
-  });
-});
-
-describe('deleteStageById', () => {
-  it('throws 404 when stage missing', async () => {
-    (findStageById as jest.Mock).mockResolvedValue(null);
-    await expect(deleteStageById('stage-x', actor)).rejects.toMatchObject({ statusCode: 404 });
-    expect(deleteStage).not.toHaveBeenCalled();
-  });
-
-  it('deletes and audits on success', async () => {
-    (findStageById as jest.Mock).mockResolvedValue(baseStage);
-    await deleteStageById('stage-1', actor);
-    expect(deleteStage).toHaveBeenCalledWith('stage-1');
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'pipeline_stage.deleted' }),
-    );
   });
 });
 

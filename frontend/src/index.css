@@ -31,13 +31,13 @@
 }
 
 .dark {
-  --background: 222 47% 11%;
+  --background: 224 71% 4%;
   --foreground: 210 40% 98%;
   --card: 222 47% 11%;
   --card-foreground: 210 40% 98%;
   --popover: 222 47% 11%;
   --popover-foreground: 210 40% 98%;
-  --primary: 222 47% 11%;
+  --primary: 210 40% 98%;
   --primary-foreground: 222 47% 11%;
   --secondary: 217 33% 17%;
   --secondary-foreground: 210 40% 98%;
@@ -49,8 +49,8 @@
   --destructive-foreground: 210 40% 98%;
   --border: 217 33% 17%;
   --input: 217 33% 17%;
-  --ring: 222 47% 11%;
-  --chart-1: 243 75% 59%;
+  --ring: 212.7 26.8% 83.9%;
+  --chart-1: 220 70% 50%;
   --chart-2: 160 60% 45%;
   --chart-3: 30 80% 55%;
   --chart-4: 280 65% 60%;
@@ -108,12 +108,72 @@
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    background: #f1f5f9;
   }
   
   ::selection {
     @apply bg-primary/20 text-primary;
   }
+}
+
+/* Global Dark Mode High-Contrast Utility Mappings */
+.dark .text-slate-400,
+.dark .text-slate-500,
+.dark .text-slate-600 {
+  color: #cbd5e1 !important; /* slate-300: bright, crystal-clear readable light-grey text */
+}
+
+.dark .text-slate-700,
+.dark .text-slate-800,
+.dark .text-slate-900,
+.dark .text-slate-950 {
+  color: #f8fafc !important; /* slate-50: bright white text */
+}
+
+.dark .text-muted-foreground {
+  color: #cbd5e1 !important;
+}
+
+/* Backgrounds in dark mode */
+.dark .bg-white {
+  background-color: #0f172a !important; /* slate-900 */
+}
+
+.dark .bg-slate-50 {
+  background-color: #090e1a !important; /* deep card slate */
+}
+
+.dark .bg-slate-100 {
+  background-color: #1e293b !important; /* slate-800 */
+}
+
+.dark .bg-slate-200 {
+  background-color: #334155 !important; /* slate-700 */
+}
+
+/* Borders and dividers in dark mode */
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300 {
+  border-color: #1e293b !important;
+}
+
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1e293b !important;
+}
+
+/* Form controls in dark mode */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+
+.dark select option {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
 }
 
 /* Smooth scrollbar */

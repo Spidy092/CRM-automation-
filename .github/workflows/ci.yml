@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Security audit (npm audit)
+        run: npm audit --audit-level=high
+
       - name: Lint
         run: npm run lint
 
@@ -90,18 +93,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate test JWT keys
-        # Generate fresh RSA keys, escape newlines for use as env values
-        # (matches the .replace(/\\n/g, '\n') logic in src/shared/middleware/auth.ts)
+      - name: Generate test JWT keys & encryption key
+        # Generate fresh RSA keys and random encryption key, escape newlines for use as env values
         run: |
           mkdir -p /tmp/jwt
           openssl genrsa -out /tmp/jwt/private.pem 2048
           openssl rsa -in /tmp/jwt/private.pem -pubout -out /tmp/jwt/public.pem
           PRIV=$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/jwt/private.pem)
           PUB=$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/jwt/public.pem)
+          RAND_KEY=$(openssl rand -hex 32)
           {
             echo "JWT_PRIVATE_KEY=$PRIV"
             echo "JWT_PUBLIC_KEY=$PUB"
+            echo "ENCRYPTION_KEY=$RAND_KEY"
           } >> $GITHUB_ENV
 
       - name: Run migrations against test DB
@@ -170,6 +174,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Security audit (npm audit)
+        run: npm audit --audit-level=high
+
       - name: Lint
         run: npm run lint
 
@@ -203,3 +210,57 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
           retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Frontend — Test
+  # ──────────────────────────────────────────────────────────────────────────
+  frontend-test:
+    name: Frontend · Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Docker — Build (catches broken Dockerfiles before they reach deploy)
+  # ──────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+

@@ -5,6 +5,7 @@ import {
   createCampaignHandler,
   updateCampaignHandler,
   deleteCampaignHandler,
+  automationPreviewHandler,
   launchCampaignHandler,
   pauseCampaignHandler,
   resumeCampaignHandler,
@@ -12,6 +13,8 @@ import {
   removeLeadHandler,
   listCampaignLeadsHandler,
   getCampaignStatsHandler,
+  getCampaignStepStatsHandler,
+  retryLeadOutreachStepHandler,
 } from './campaigns.controller';
 import * as service from './campaigns.service';
 import { ZodError } from 'zod';
@@ -23,9 +26,10 @@ jest.mock('../../shared/utils/logger', () => ({
 
 const mocked = service as jest.Mocked<typeof service>;
 
-function mockReq(opts: { params?: Record<string, string>; body?: Record<string, unknown>; user?: { id: string; role: string } } = {}): Partial<Request> {
+function mockReq(opts: { params?: Record<string, string>; query?: Record<string, string>; body?: Record<string, unknown>; user?: { id: string; role: string } } = {}): Partial<Request> {
   return {
     params: opts.params || {},
+    query: opts.query || {},
     body: opts.body || {},
     user: opts.user || { id: 'admin-1', role: 'admin' },
     ip: '127.0.0.1',
@@ -51,6 +55,15 @@ describe('campaigns.controller', () => {
       const res = mockRes() as Response;
       await listCampaignsHandler(mockReq() as Request, res, mockNext);
       expect(res.status).toHaveBeenCalledWith(200);
+      expect(mocked.getAllCampaigns).toHaveBeenCalledWith({ pipeline_id: undefined });
+    });
+
+    it('filters campaigns by pipeline_id query param', async () => {
+      mocked.getAllCampaigns.mockResolvedValue([] as never);
+      const res = mockRes() as Response;
+      await listCampaignsHandler(mockReq({ query: { pipeline_id: 'pipe-1' } }) as Request, res, mockNext);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(mocked.getAllCampaigns).toHaveBeenCalledWith({ pipeline_id: 'pipe-1' });
     });
 
     it('passes errors to next', async () => {
@@ -185,6 +198,74 @@ describe('campaigns.controller', () => {
       const res = mockRes() as Response;
       await getCampaignStatsHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+  });
+
+  describe('getCampaignStepStatsHandler', () => {
+    it('returns 200 with step stats', async () => {
+      mocked.getStepStats.mockResolvedValue([
+        { step_number: 1, sent: 5, delivered: 4, opened: 3, replied: 1, failed: 0 },
+      ] as never);
+      const res = mockRes() as Response;
+      await getCampaignStepStatsHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('passes errors to next', async () => {
+      mocked.getStepStats.mockRejectedValue(new Error('db'));
+      const res = mockRes() as Response;
+      await getCampaignStepStatsHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
+      expect(mockNext).toHaveBeenCalled();
+    });
+  });
+
+  describe('automationPreviewHandler', () => {
+    it('returns 200 with preview', async () => {
+      mocked.getCampaignAutomationPreview.mockResolvedValue({
+        campaignId: 'c1',
+        sequenceId: null,
+        firstStep: null,
+        eligibleLeads: [],
+        skippedLeads: [],
+        templateIssues: [],
+        connectorIssues: [],
+        expectedJobs: 0,
+        mockMode: false,
+      } as never);
+      const res = mockRes() as Response;
+      await automationPreviewHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('passes errors to next', async () => {
+      mocked.getCampaignAutomationPreview.mockRejectedValue(new Error('not found'));
+      const res = mockRes() as Response;
+      await automationPreviewHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
+      expect(mockNext).toHaveBeenCalled();
+    });
+  });
+
+  describe('retryLeadOutreachStepHandler', () => {
+    it('returns 200 with enqueue result', async () => {
+      mocked.retryLeadOutreachStep.mockResolvedValue({ enqueued: true } as never);
+      const res = mockRes() as Response;
+      await retryLeadOutreachStepHandler(
+        mockReq({ params: { id: 'c1', leadId: 'l1' } }) as Request,
+        res,
+        mockNext,
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('passes errors to next', async () => {
+      mocked.retryLeadOutreachStep.mockRejectedValue(new Error('no failed send'));
+      const res = mockRes() as Response;
+      await retryLeadOutreachStepHandler(
+        mockReq({ params: { id: 'c1', leadId: 'l1' } }) as Request,
+        res,
+        mockNext,
+      );
+      expect(mockNext).toHaveBeenCalled();
     });
   });
 });

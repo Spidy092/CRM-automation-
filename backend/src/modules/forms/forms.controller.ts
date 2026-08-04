@@ -1,7 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- TODO: refactor away from `any` casts (legacy debt) */
 import { Request, Response, NextFunction } from 'express';
 import { sendSuccess } from '../../shared/utils/response';
+import { AppError } from '../../shared/middleware/errorHandler';
 import * as formsService from './forms.service';
+import { FormActor } from './forms.types';
 import {
   createFormSchema,
   updateFormSchema,
@@ -10,9 +11,11 @@ import {
   listFormsQuerySchema,
 } from './forms.schema';
 
-function actorFromReq(req: Request) {
-  const user = (req as any).user;
-  return { id: user.id, role: user.role, ipAddress: req.ip };
+function actorFromReq(req: Request): FormActor {
+  if (!req.user) {
+    throw new AppError('Unauthorized', 401);
+  }
+  return { id: req.user.id, role: req.user.role, ipAddress: req.ip ?? null };
 }
 
 // ── Admin CRUD Handlers ───────────────────────────────────────────────────
@@ -166,6 +169,7 @@ export async function submitFormHandler(
         message: result.message,
         leadId: result.leadId,
         redirectUrl: result.redirectUrl,
+        emailStatus: result.emailStatus,
       },
       201,
     );

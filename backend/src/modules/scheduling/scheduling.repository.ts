@@ -1,4 +1,4 @@
-import { pool, query, queryOne } from '../../shared/utils/db';
+import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { Availability, BookingUrl, Booking, UserDateOverride } from './scheduling.types';
 
@@ -33,16 +33,17 @@ export async function upsertAvailability(
     isActive: boolean;
   }>,
 ): Promise<void> {
-  // Delete existing and re-insert
-  await pool.query('DELETE FROM user_availability WHERE user_id = $1', [userId]);
+  await withTransaction(async (client) => {
+    await client.query('DELETE FROM user_availability WHERE user_id = $1', [userId]);
 
-  for (const slot of slots) {
-    await pool.query(
-      `INSERT INTO user_availability (user_id, day_of_week, start_time, end_time, slot_duration_min, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [userId, slot.dayOfWeek, slot.startTime, slot.endTime, slot.slotDurationMin, slot.isActive],
-    );
-  }
+    for (const slot of slots) {
+      await client.query(
+        `INSERT INTO user_availability (user_id, day_of_week, start_time, end_time, slot_duration_min, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [userId, slot.dayOfWeek, slot.startTime, slot.endTime, slot.slotDurationMin, slot.isActive],
+      );
+    }
+  });
 }
 
 // ── Booking URLs ─────────────────────────────────────────────────────────
@@ -253,9 +254,11 @@ export async function getAllBookingUrlUsers(): Promise<{ user_id: string; slug: 
   );
 }
 
-export async function getLastBookedUser(): Promise<string | null> {
+export async function getLastBookedUser(userIds: string[]): Promise<string | null> {
+  if (userIds.length === 0) return null;
   const row = await queryOne<{ user_id: string }>(
-    `SELECT user_id FROM bookings WHERE status != 'cancelled' ORDER BY created_at DESC LIMIT 1`,
+    `SELECT user_id FROM bookings WHERE status != 'cancelled' AND user_id = ANY($1) ORDER BY created_at DESC LIMIT 1`,
+    [userIds],
   );
   return row?.user_id ?? null;
 }

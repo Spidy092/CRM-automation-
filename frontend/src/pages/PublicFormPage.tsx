@@ -28,14 +28,25 @@ function isEmptyRequiredValue(value: string | boolean | undefined): boolean {
   return !value || value.trim().length === 0;
 }
 
+function getAutoCompleteHint(field: FormField): string {
+  if (field.leadField === 'email' || field.type === 'email' || field.name.includes('email')) return 'email';
+  if (field.leadField === 'phone' || field.type === 'phone' || field.name.includes('phone') || field.name.includes('tel')) return 'tel';
+  if (field.leadField === 'contact_name' || field.name.includes('name')) return 'name';
+  if (field.leadField === 'business_name' || field.name.includes('company') || field.name.includes('org')) return 'organization';
+  return 'on';
+}
+
 export function PublicFormPage() {
   const { slug } = useParams<{ slug: string }>();
   const { showToast } = useToast();
-  const { data, isLoading } = useFormBySlug(slug ?? '');
+  const { data, isLoading, error } = useFormBySlug(slug ?? '');
   const submitForm = useSubmitForm();
   const form = data?.data;
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
+
+  const errorMessage = error ? getApiErrorMessage(error, '') : '';
+  const isInactive = errorMessage.toLowerCase().includes('inactive') || (error as any)?.response?.status === 403;
 
   const visibleFields = useMemo(
     () => form?.fields.filter((field) => field.type !== 'hidden') ?? [],
@@ -89,6 +100,7 @@ export function PublicFormPage() {
           value={typeof value === 'string' ? value : ''}
           placeholder={field.placeholder}
           required={field.required}
+          autoComplete={getAutoCompleteHint(field)}
           onChange={(event) => updateValue(field, event.target.value)}
           className="min-h-28"
         />
@@ -136,6 +148,7 @@ export function PublicFormPage() {
         value={typeof value === 'string' ? value : ''}
         placeholder={field.placeholder}
         required={field.required}
+        autoComplete={getAutoCompleteHint(field)}
         onChange={(event) => updateValue(field, event.target.value)}
       />
     );
@@ -149,13 +162,28 @@ export function PublicFormPage() {
     );
   }
 
+  if (isInactive) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <Card className="w-full max-w-md border-amber-200 bg-amber-50/50">
+          <CardContent className="p-8 text-center">
+            <h1 className="text-xl font-semibold text-amber-900">Form Inactive</h1>
+            <p className="mt-2 text-sm text-amber-700">
+              This form is currently inactive and no longer accepting submissions.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (!form) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
         <Card className="w-full max-w-md">
           <CardContent className="p-8 text-center">
-            <h1 className="text-xl font-semibold text-slate-900">Form not found</h1>
-            <p className="mt-2 text-sm text-slate-500">This form is unavailable or no longer accepting submissions.</p>
+            <h1 className="text-xl font-semibold text-slate-900">Form Not Found</h1>
+            <p className="mt-2 text-sm text-slate-500">The requested form does not exist.</p>
           </CardContent>
         </Card>
       </div>

@@ -15,6 +15,7 @@ jest.mock('./campaigns.repository', () => ({
   findEligibleTriggerLeadsForCampaign: jest.fn(),
   findLatestOutreachLogForLead: jest.fn(),
   getCampaignStats: jest.fn(),
+  getCampaignStepStatsRows: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('../../workers/queue', () => ({
@@ -52,6 +53,7 @@ import {
   findEligibleTriggerLeadsForCampaign,
   findLatestOutreachLogForLead,
   getCampaignStats,
+  getCampaignStepStatsRows,
 } from './campaigns.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { enqueueOutreachDispatch, cancelPendingOutreachJobs } from '../../workers/queue';
@@ -68,6 +70,7 @@ import {
   getCampaignAutomationPreview,
   getCampaignLeads,
   getStats,
+  getStepStats,
   launchCampaignById,
   pauseCampaignById,
   removeLead,
@@ -657,5 +660,27 @@ describe('launchCampaignById — AI brief approval requirement', () => {
       message: 'AI brief approval required before launch',
     });
     expect(launchCampaign).not.toHaveBeenCalled();
+  });
+});
+
+describe('getStepStats', () => {
+  it('returns step stats for a valid campaign', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (getCampaignStepStatsRows as jest.Mock).mockResolvedValue([
+      { step_number: 1, attempts: 10, sent: 8, delivered: 7, opened: 5, replied: 2, failed: 1 },
+    ]);
+
+    const result = await getStepStats('camp-1');
+
+    expect(result).toEqual([
+      { step_number: 1, attempts: 10, sent: 8, delivered: 7, opened: 5, replied: 2, failed: 1 },
+    ]);
+    expect(getCampaignStepStatsRows).toHaveBeenCalledWith('camp-1');
+  });
+
+  it('throws 404 when campaign missing', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(null);
+    await expect(getStepStats('x')).rejects.toMatchObject({ statusCode: 404 });
+    expect(getCampaignStepStatsRows).not.toHaveBeenCalled();
   });
 });

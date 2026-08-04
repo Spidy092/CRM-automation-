@@ -52,3 +52,38 @@ export function useUpdateUserPermissions() {
     },
   });
 }
+
+// Update own profile (name)
+export function useUpdateProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const response = await apiClient.patch<ApiResponse<User>>(`/users/${id}`, { name });
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['currentUser'] });
+    },
+  });
+}
+
+// Change own password
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: async ({
+      id,
+      currentPassword,
+      newPassword,
+    }: {
+      id: string;
+      currentPassword: string;
+      newPassword: string;
+    }) => {
+      const response = await apiClient.patch<ApiResponse<{ message: string }>>(
+        `/users/${id}/password`,
+        { currentPassword, newPassword },
+      );
+      return response.data.data;
+    },
+  });
+}

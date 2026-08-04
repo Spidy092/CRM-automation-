@@ -8,12 +8,16 @@ jest.mock('./users.repository', () => ({
   updateUserProfile: jest.fn(),
   updateUserPermissions: jest.fn(),
 }));
+jest.mock('../auth/auth.repository', () => ({
+  findUserById: jest.fn(),
+  updatePasswordHash: jest.fn(),
+}));
 jest.mock('bcrypt', () => ({ hash: jest.fn(), compare: jest.fn() }));
 jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid-v4') }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
 import bcrypt from 'bcrypt';
-import { createUser, listUsers, getUser, updateProfile, updatePermissions } from './users.service';
+import { createUser, listUsers, getUser, updateProfile, updatePermissions, changePassword } from './users.service';
 import {
   findUserByEmail,
   findAllUsers,
@@ -22,6 +26,7 @@ import {
   updateUserProfile,
   updateUserPermissions,
 } from './users.repository';
+import * as authRepository from '../auth/auth.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { User } from './users.types';
 import { AuthenticatedUser } from '../../shared/types';
@@ -46,7 +51,9 @@ const sampleUser: User = {
   email: 'alice@crm.com',
   role: 'sales',
   is_active: true,
+  is_available: true,
   created_at: new Date('2025-01-01T00:00:00Z'),
+  updated_at: new Date('2025-01-01T00:00:00Z'),
 };
 
 beforeEach(() => {
@@ -263,3 +270,56 @@ describe('updatePermissions', () => {
     expect(updateUserPermissions).not.toHaveBeenCalled();
   });
 });
+
+describe('changePassword', () => {
+  it('rejects if actor attempts to change another user password', async () => {
+    await expect(
+      changePassword('other-id', 'OldPw123', 'NewPw123', salesUser),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects if user does not exist', async () => {
+    (authRepository.findUserById as jest.Mock<any>).mockResolvedValue(null);
+    await expect(
+      changePassword('sales-1', 'OldPw123', 'NewPw123', salesUser),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('rejects if current password is wrong', async () => {
+    (authRepository.findUserById as jest.Mock<any>).mockResolvedValue({
+      id: 'sales-1',
+      password_hash: 'hashed-old',
+    });
+    (bcrypt.compare as jest.Mock<any>).mockResolvedValue(false);
+
+    await expect(
+      changePassword('sales-1', 'WrongPw123', 'NewPw123', salesUser),
+    ).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('rejects if new password equals current password', async () => {
+    (authRepository.findUserById as jest.Mock<any>).mockResolvedValue({
+      id: 'sales-1',
+      password_hash: 'hashed-old',
+    });
+    (bcrypt.compare as jest.Mock<any>).mockResolvedValue(true);
+
+    await expect(
+      changePassword('sales-1', 'SamePw123', 'SamePw123', salesUser),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('successfully updates password hash when valid', async () => {
+    (authRepository.findUserById as jest.Mock<any>).mockResolvedValue({
+      id: 'sales-1',
+      password_hash: 'hashed-old',
+    });
+    (bcrypt.compare as jest.Mock<any>).mockResolvedValue(true);
+    (bcrypt.hash as jest.Mock<any>).mockResolvedValue('hashed-new');
+
+    await changePassword('sales-1', 'OldPw123', 'NewPw123', salesUser);
+
+    expect(authRepository.updatePasswordHash).toHaveBeenCalledWith('sales-1', 'hashed-new');
+  });
+});
+

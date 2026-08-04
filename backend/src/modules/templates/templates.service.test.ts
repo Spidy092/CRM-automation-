@@ -114,6 +114,35 @@ describe('createTemplate', () => {
       expect.objectContaining({ action: 'template.created', entityId: baseRow.id }),
     );
   });
+
+  // A role that can call /approve gains nothing from a second round-trip, so skip it.
+  it.each(['admin', 'marketing'])(
+    'auto-approves a template created by %s',
+    async (role) => {
+      (insertTemplate as jest.Mock).mockResolvedValue({
+        ...baseRow,
+        approval_status: 'approved',
+      });
+      await createTemplate(
+        { name: 'Welcome Email', channel: 'email', body: 'Hello' },
+        { ...actor, role },
+      );
+      expect(insertTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ approved_by: actor.id }),
+      );
+    },
+  );
+
+  it('leaves a template created by a manager pending approval', async () => {
+    (insertTemplate as jest.Mock).mockResolvedValue(baseRow);
+    await createTemplate(
+      { name: 'Welcome Email', channel: 'email', body: 'Hello' },
+      { ...actor, role: 'manager' },
+    );
+    expect(insertTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ approved_by: null }),
+    );
+  });
 });
 
 describe('updateTemplate', () => {
@@ -134,12 +163,25 @@ describe('updateTemplate', () => {
     expect(result.name).toBe('Updated');
   });
 
-  it('forbids non-admin from editing approved template', async () => {
+  it('forbids a non-admin who is not the author from editing approved template', async () => {
     const approved = { ...baseRow, approval_status: 'approved' as const };
     (findTemplateById as jest.Mock).mockResolvedValue(approved);
     await expect(
       updateTemplate(approved.id, { name: 'Updated' }, { id: 'u2', role: 'marketing' }),
     ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  // Templates now land approved on create, so the author must stay able to fix their own copy.
+  it('allows the original author to edit their own approved template', async () => {
+    const approved = { ...baseRow, approval_status: 'approved' as const, created_by: 'u2' };
+    (findTemplateById as jest.Mock).mockResolvedValue(approved);
+    (updateTemplateRepo as jest.Mock).mockResolvedValue({ ...approved, name: 'Updated' });
+    const result = await updateTemplate(
+      approved.id,
+      { name: 'Updated' },
+      { id: 'u2', role: 'marketing' },
+    );
+    expect(result.name).toBe('Updated');
   });
 
   it('allows marketing to edit pending template', async () => {
@@ -151,6 +193,41 @@ describe('updateTemplate', () => {
       { id: 'u2', role: 'marketing' },
     );
     expect(result.name).toBe('Updated');
+  });
+
+  it('resets approval status to pending when body changes on an approved template', async () => {
+    const approved = { ...baseRow, approval_status: 'approved' as const, approved_by: 'u1', approved_at: '2026-06-19T00:00:00Z' };
+    (findTemplateById as jest.Mock).mockResolvedValue(approved);
+    (updateTemplateRepo as jest.Mock).mockResolvedValue({ ...approved, body: 'New body' });
+    (setApprovalStatus as jest.Mock).mockResolvedValue({ ...approved, approval_status: 'pending', body: 'New body' });
+
+    const result = await updateTemplate(approved.id, { body: 'New body' }, actor);
+
+    expect(setApprovalStatus).toHaveBeenCalledWith(approved.id, 'pending', null, null);
+    expect(result.approval_status).toBe('pending');
+  });
+
+  it('resets approval status to pending when subject changes on an approved template', async () => {
+    const approved = { ...baseRow, approval_status: 'approved' as const, subject: 'Old Subject' };
+    (findTemplateById as jest.Mock).mockResolvedValue(approved);
+    (updateTemplateRepo as jest.Mock).mockResolvedValue({ ...approved, subject: 'New Subject' });
+    (setApprovalStatus as jest.Mock).mockResolvedValue({ ...approved, approval_status: 'pending', subject: 'New Subject' });
+
+    const result = await updateTemplate(approved.id, { subject: 'New Subject' }, actor);
+
+    expect(setApprovalStatus).toHaveBeenCalledWith(approved.id, 'pending', null, null);
+    expect(result.approval_status).toBe('pending');
+  });
+
+  it('does not reset approval when only name changes on an approved template', async () => {
+    const approved = { ...baseRow, approval_status: 'approved' as const };
+    (findTemplateById as jest.Mock).mockResolvedValue(approved);
+    (updateTemplateRepo as jest.Mock).mockResolvedValue({ ...approved, name: 'New Name' });
+
+    const result = await updateTemplate(approved.id, { name: 'New Name' }, actor);
+
+    expect(setApprovalStatus).not.toHaveBeenCalled();
+    expect(result.approval_status).toBe('approved');
   });
 });
 
@@ -276,7 +353,7 @@ describe('addTemplateAttachment', () => {
   it('rejects edits to an approved template from a non-admin', async () => {
     (findTemplateById as jest.Mock).mockResolvedValue({ ...baseRow, approval_status: 'approved' });
     await expect(
-      addTemplateAttachment(baseRow.id, file, { ...actor, role: 'marketing' }),
+      addTemplateAttachment(baseRow.id, file, { ...actor, id: 'u2', role: 'marketing' }),
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 
@@ -364,7 +441,11 @@ describe('addTemplateAttachmentFromLibrary', () => {
   it('rejects edits to an approved template from a non-admin', async () => {
     (findTemplateById as jest.Mock).mockResolvedValue({ ...baseRow, approval_status: 'approved' });
     await expect(
-      addTemplateAttachmentFromLibrary(baseRow.id, 'lib-1', { ...actor, role: 'marketing' }),
+      addTemplateAttachmentFromLibrary(baseRow.id, 'lib-1', {
+        ...actor,
+        id: 'u2',
+        role: 'marketing',
+      }),
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { sendSuccess } from '../../shared/utils/response';
+import { AuthenticatedUser } from '../../shared/types';
 import {
   getAllPipelines,
   getPipelineById,
@@ -21,9 +22,16 @@ import {
   moveLeadSchema,
 } from './pipeline.schema';
 
-function actorFromReq(req: Request) {
-  if (!req.user) throw new AppError('Unauthorized', 401);
-  return { id: req.user.id, role: req.user.role, ipAddress: req.ip ?? null };
+interface Actor {
+  id: string;
+  role: string;
+  ipAddress?: string | null;
+}
+
+function actorFromReq(req: Request): Actor {
+  const user = req.user as AuthenticatedUser | undefined;
+  if (!user) throw new AppError('Unauthorized', 401);
+  return { id: user.id, role: user.role, ipAddress: req.ip ?? null };
 }
 
 export async function listPipelinesHandler(

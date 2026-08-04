@@ -19,15 +19,23 @@ const router = Router();
 
 // ── Admin Routes (authenticated) ──────────────────────────────────────────
 
-router.use('/admin', authenticate, authenticatedLimiter);
+router.use('/admin', wrap(authenticate), authenticatedLimiter);
 
-router.get('/admin', wrap(listFormsHandler));
-router.get('/admin/:formId', wrap(getFormHandler));
+router.get('/admin', authorize('admin', 'manager', 'marketing'), wrap(listFormsHandler));
+router.get('/admin/:formId', authorize('admin', 'manager', 'marketing'), wrap(getFormHandler));
 router.post('/admin', authorize('admin', 'manager', 'marketing'), wrap(createFormHandler));
 router.put('/admin/:formId', authorize('admin', 'manager', 'marketing'), wrap(updateFormHandler));
 router.delete('/admin/:formId', authorize('admin', 'manager'), wrap(deleteFormHandler));
-router.get('/admin/:formId/analytics', wrap(getFormAnalyticsHandler));
-router.get('/admin/:formId/embed', wrap(getEmbedSnippetHandler));
+router.get(
+  '/admin/:formId/analytics',
+  authorize('admin', 'manager', 'marketing'),
+  wrap(getFormAnalyticsHandler),
+);
+router.get(
+  '/admin/:formId/embed',
+  authorize('admin', 'manager', 'marketing'),
+  wrap(getEmbedSnippetHandler),
+);
 
 // ── Public Routes (no auth) ──────────────────────────────────────────────
 

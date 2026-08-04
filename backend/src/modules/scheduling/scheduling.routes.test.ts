@@ -29,6 +29,7 @@ jest.mock('../../shared/middleware/rbac', () => ({
 }));
 jest.mock('../../shared/middleware/rateLimiter', () => ({
   authenticatedLimiter: (req: Request, res: Response, next: NextFunction) => next(),
+  publicLimiter: (req: Request, res: Response, next: NextFunction) => next(),
 }));
 
 const app = express();

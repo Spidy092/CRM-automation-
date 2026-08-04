@@ -2,39 +2,54 @@ import { describe, it, expect, vi } from 'vitest';
 import { renderWithProviders } from '@/lib/test-utils';
 import { TemplatesPage } from '../TemplatesPage';
 
+const { mockApproveMutateAsync, mockDeleteMutateAsync } = vi.hoisted(() => ({
+  mockApproveMutateAsync: vi.fn().mockResolvedValue({}),
+  mockDeleteMutateAsync: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock('@/store/authStore', () => ({
+  useAuthStore: (selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ user: { id: 'u1', role: 'admin', name: 'Admin', email: 'a@b.com' } }),
+}));
+
 vi.mock('@/api/templates', () => ({
   useTemplates: vi.fn().mockReturnValue({
-    data: [
-      {
-        id: '1',
-        name: 'Welcome Email',
-        channel: 'email',
-        subject: 'Welcome to our platform',
-        body: 'Hi {{first_name}}, welcome!',
-        variables: ['first_name'],
-        approval_status: 'approved',
-        rejection_reason: null,
-      },
-      {
-        id: '2',
-        name: 'WhatsApp Follow-up',
-        channel: 'whatsapp',
-        subject: null,
-        body: 'Hi {{first_name}}, just following up...',
-        variables: ['first_name'],
-        approval_status: 'pending',
-        rejection_reason: null,
-      },
-    ],
+    data: {
+      items: [
+        {
+          id: '1',
+          name: 'Welcome Email',
+          channel: 'email',
+          subject: 'Welcome to our platform',
+          body: 'Hi {{first_name}}, welcome!',
+          variables: ['first_name'],
+          attachments: [],
+          approval_status: 'approved',
+          rejection_reason: null,
+        },
+        {
+          id: '2',
+          name: 'WhatsApp Follow-up',
+          channel: 'whatsapp',
+          subject: null,
+          body: 'Hi {{first_name}}, just following up...',
+          variables: ['first_name'],
+          attachments: [],
+          approval_status: 'pending',
+          rejection_reason: null,
+        },
+      ],
+      meta: { hasMore: false },
+    },
     isLoading: false,
     error: null,
   }),
   useApproveTemplate: vi.fn().mockReturnValue({
-    mutateAsync: vi.fn().mockResolvedValue({}),
+    mutateAsync: mockApproveMutateAsync,
     isPending: false,
   }),
   useDeleteTemplate: vi.fn().mockReturnValue({
-    mutateAsync: vi.fn().mockResolvedValue({}),
+    mutateAsync: mockDeleteMutateAsync,
     isPending: false,
   }),
 }));
@@ -63,7 +78,7 @@ describe('TemplatesPage', () => {
     expect(document.body.textContent).toContain('pending');
   });
 
-  it('renders new template button', () => {
+  it('renders new template button for admin', () => {
     renderWithProviders(<TemplatesPage />);
     expect(document.body.textContent).toContain('New Template');
   });
@@ -77,5 +92,10 @@ describe('TemplatesPage', () => {
   it('renders channel filter', () => {
     renderWithProviders(<TemplatesPage />);
     expect(document.body.textContent).toContain('All Channels');
+  });
+
+  it('renders pagination controls', () => {
+    renderWithProviders(<TemplatesPage />);
+    expect(document.body.textContent).toContain('Rows per page');
   });
 });

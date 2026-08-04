@@ -11,6 +11,8 @@ import {
   updateTemplate,
   setApprovalStatus,
   deleteTemplate,
+  appendTemplateAttachment,
+  removeTemplateAttachment,
 } from './templates.repository';
 
 const mockQuery = query as jest.Mock;
@@ -135,5 +137,48 @@ describe('deleteTemplate', () => {
   it('throws 404 when not found', async () => {
     mockQueryOne.mockResolvedValue(null);
     await expect(deleteTemplate('x')).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('appendTemplateAttachment', () => {
+  const attachment = {
+    id: 'a1',
+    filename: 'test.png',
+    mimeType: 'image/png',
+    sizeBytes: 1024,
+    url: 'http://localhost:3000/uploads/templates/a1.png',
+    storagePath: '/tmp/a1.png',
+  };
+
+  it('appends attachment and returns updated template', async () => {
+    mockQueryOne.mockResolvedValue({ id: 't1', attachments: [attachment] });
+    const result = await appendTemplateAttachment('t1', attachment);
+    expect(result.id).toBe('t1');
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining('attachments'),
+      [JSON.stringify([attachment]), 't1'],
+    );
+  });
+
+  it('throws 404 when template not found', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await expect(appendTemplateAttachment('x', attachment)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('removeTemplateAttachment', () => {
+  it('removes attachment and returns updated template', async () => {
+    mockQueryOne.mockResolvedValue({ id: 't1', attachments: [] });
+    const result = await removeTemplateAttachment('t1', 'a1');
+    expect(result.id).toBe('t1');
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining('jsonb_agg'),
+      ['t1', 'a1'],
+    );
+  });
+
+  it('throws 404 when template not found', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await expect(removeTemplateAttachment('x', 'a1')).rejects.toMatchObject({ statusCode: 404 });
   });
 });

@@ -21,9 +21,9 @@ const router = Router();
 
 router.use('/admin', authenticate, authenticatedLimiter);
 
-router.get('/admin', wrap(listPagesHandler));
-router.get('/admin/:id', wrap(getPageHandler));
-router.get('/admin/:id/views', wrap(getPageViewsHandler));
+router.get('/admin', authorize('admin', 'marketing'), wrap(listPagesHandler));
+router.get('/admin/:id', authorize('admin', 'marketing'), wrap(getPageHandler));
+router.get('/admin/:id/views', authorize('admin', 'marketing'), wrap(getPageViewsHandler));
 router.post('/admin', authorize('admin', 'marketing'), wrap(createPageHandler));
 router.put('/admin/:id', authorize('admin', 'marketing'), wrap(updatePageHandler));
 router.post('/admin/:id/publish', authorize('admin', 'marketing'), wrap(publishPageHandler));

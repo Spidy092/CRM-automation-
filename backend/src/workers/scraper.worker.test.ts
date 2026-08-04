@@ -53,7 +53,7 @@ describe('scraper.worker', () => {
   it('processes a scheduled scraper:run job (no logId) via runScrape', async () => {
     startScraperWorker();
     const job = { id: 'job-1', name: SCRAPER_RUN, data: { configId: 'cfg-1', triggeredBy: 'u1' } };
-    (runScrape as jest.Mock).mockResolvedValue(undefined);
+    (runScrape as jest.Mock).mockResolvedValue({ logId: 'log-1', status: 'completed' });
     await mockWorkerInstance.processor(job);
     expect(runScrape).toHaveBeenCalledWith('cfg-1', { id: 'u1', role: 'admin', ipAddress: null });
     expect(runScrapeForJob).not.toHaveBeenCalled();
@@ -66,7 +66,7 @@ describe('scraper.worker', () => {
       name: SCRAPER_RUN,
       data: { configId: 'cfg-1', triggeredBy: 'u1', logId: 'log-1' },
     };
-    (runScrapeForJob as jest.Mock).mockResolvedValue(undefined);
+    (runScrapeForJob as jest.Mock).mockResolvedValue({ logId: 'log-1', status: 'completed' });
     await mockWorkerInstance.processor(job);
     expect(runScrapeForJob).toHaveBeenCalledWith('cfg-1', 'log-1');
     expect(runScrape).not.toHaveBeenCalled();
@@ -85,6 +85,66 @@ describe('scraper.worker', () => {
     (runScrape as jest.Mock).mockRejectedValue(new Error('boom'));
     await expect(mockWorkerInstance.processor(job)).rejects.toThrow('boom');
     expect(incJobsFailed).toHaveBeenCalled();
+  });
+
+  it('throws on a retryable run failure so BullMQ retries it (C1)', async () => {
+    const { incJobsFailed, incJobsProcessed } = require('../shared/utils/metrics');
+    startScraperWorker();
+    const job = {
+      id: 'job-5',
+      name: SCRAPER_RUN,
+      data: { configId: 'cfg-1', triggeredBy: 'u1', logId: 'log-1' },
+    };
+    (runScrapeForJob as jest.Mock).mockResolvedValue({
+      logId: 'log-1',
+      status: 'failed',
+      errorMessage: 'socket hang up',
+      retryable: true,
+    });
+
+    // The service writes the log row and returns rather than throwing. Left as
+    // a clean return this would count as a success and never retry.
+    await expect(mockWorkerInstance.processor(job)).rejects.toThrow('socket hang up');
+    expect(incJobsFailed).toHaveBeenCalled();
+    expect(incJobsProcessed).not.toHaveBeenCalled();
+  });
+
+  it('does NOT retry a permanent failure, but still counts it as failed (C1)', async () => {
+    const { incJobsFailed, incJobsProcessed } = require('../shared/utils/metrics');
+    startScraperWorker();
+    const job = {
+      id: 'job-6',
+      name: SCRAPER_RUN,
+      data: { configId: 'cfg-1', triggeredBy: 'u1', logId: 'log-1' },
+    };
+    (runScrapeForJob as jest.Mock).mockResolvedValue({
+      logId: 'log-1',
+      status: 'failed',
+      errorMessage: 'CSS selectors are required',
+      retryable: false,
+    });
+
+    await expect(mockWorkerInstance.processor(job)).resolves.toBeUndefined();
+    expect(incJobsFailed).toHaveBeenCalled();
+    // A failed run must never be reported as a processed success.
+    expect(incJobsProcessed).not.toHaveBeenCalled();
+  });
+
+  it('counts a genuinely successful run as a success', async () => {
+    const { incJobsProcessed, incJobsFailed } = require('../shared/utils/metrics');
+    startScraperWorker();
+    const job = {
+      id: 'job-7',
+      name: SCRAPER_RUN,
+      data: { configId: 'cfg-1', triggeredBy: 'u1', logId: 'log-1' },
+    };
+    (runScrapeForJob as jest.Mock).mockResolvedValue({ logId: 'log-1', status: 'completed' });
+
+    await mockWorkerInstance.processor(job);
+    expect(incJobsProcessed).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'success' }),
+    );
+    expect(incJobsFailed).not.toHaveBeenCalled();
   });
 
   it('routes failed job to DLQ after max attempts', () => {

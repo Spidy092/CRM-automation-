@@ -38,13 +38,24 @@ describe('pipeline.repository', () => {
   });
 
   describe('findPipelines', () => {
-    it('returns rows', async () => {
+    it('returns rows and filters stages by pipeline IDs', async () => {
       const rows = [{ id: 'p1', name: 'Default' }];
       const stageRows = [{ id: 's1', pipeline_id: 'p1', name: 'Stage 1' }];
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows)).mockResolvedValueOnce(mockQueryResult(stageRows));
       const result = await findPipelines();
       expect(result).toEqual([{ ...rows[0], stages: stageRows }]);
       expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('SELECT * FROM pipelines'));
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE pipeline_id = ANY($1)'),
+        [['p1']],
+      );
+    });
+
+    it('returns empty array when no pipelines exist', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+      const result = await findPipelines();
+      expect(result).toEqual([]);
+      expect(mockPoolQuery).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -104,7 +115,9 @@ describe('pipeline.repository', () => {
 
     it('updates is_default only', async () => {
       const row = { id: 'p1', name: 'X', is_default: true };
-      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([row]));
+      mockPoolQuery
+        .mockResolvedValueOnce(mockQueryResult([]))
+        .mockResolvedValueOnce(mockQueryResult([row]));
       await updatePipeline('p1', { is_default: true });
       expect(mockPoolQuery).toHaveBeenCalledWith(
         expect.stringContaining('is_default = $1'),

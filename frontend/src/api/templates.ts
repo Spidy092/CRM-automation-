@@ -16,19 +16,29 @@ interface TemplateFilters {
   approval_status?: TemplateApprovalStatus;
   search?: string;
   limit?: number;
+  cursor?: string;
+}
+
+interface TemplateListResponse {
+  items: Template[];
+  meta: { nextCursor?: string; hasMore: boolean };
 }
 
 export function useTemplates(filters: TemplateFilters = {}) {
   return useQuery({
     queryKey: ['templates', filters],
-    queryFn: async () => {
+    queryFn: async (): Promise<TemplateListResponse> => {
       const params = new URLSearchParams();
-      params.set('limit', String(filters.limit ?? 100));
+      params.set('limit', String(filters.limit ?? 20));
       if (filters.channel) params.set('channel', filters.channel);
       if (filters.approval_status) params.set('approval_status', filters.approval_status);
       if (filters.search) params.set('search', filters.search);
+      if (filters.cursor) params.set('cursor', filters.cursor);
       const response = await apiClient.get<ApiResponse<Template[]>>(`/templates?${params.toString()}`);
-      return response.data.data ?? [];
+      return {
+        items: response.data.data ?? [],
+        meta: (response.data.meta as { nextCursor?: string; hasMore: boolean }) ?? { hasMore: false },
+      };
     },
   });
 }

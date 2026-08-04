@@ -62,14 +62,14 @@ function InboxItemCard({ item, pendingId, onAction, hideApprove }: InboxItemCard
               <StatusBadge tone="gray">Confidence {item.ai_draft_confidence}</StatusBadge>
             )}
           </div>
-          <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-          {item.summary && <p className="text-sm text-slate-600">{item.summary}</p>}
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.title}</p>
+          {item.summary && <p className="text-sm text-slate-600 dark:text-slate-400">{item.summary}</p>}
           {item.action_result && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">Action result</p>
+            <div className="rounded-lg border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Action result</p>
               {/* Structured result display — shows status, key fields, avoids leaking internal structures */}
               {typeof item.action_result === 'object' && item.action_result !== null ? (
-                <div className="mt-1 space-y-1 text-sm text-emerald-800">
+                <div className="mt-1 space-y-1 text-sm text-emerald-800 dark:text-emerald-200">
                   {(item.action_result as Record<string, unknown>).status !== undefined && (
                     <p>
                       <span className="font-medium">Status:</span>{' '}
@@ -84,11 +84,11 @@ function InboxItemCard({ item, pendingId, onAction, hideApprove }: InboxItemCard
                   )}
                   {(item.action_result as Record<string, unknown>).status === undefined &&
                     (item.action_result as Record<string, unknown>).message === undefined && (
-                      <p className="text-xs italic text-emerald-600">Action completed</p>
+                      <p className="text-xs italic text-emerald-600 dark:text-emerald-400">Action completed</p>
                     )}
                 </div>
               ) : (
-                <p className="mt-1 break-words text-sm text-emerald-800">
+                <p className="mt-1 break-words text-sm text-emerald-800 dark:text-emerald-200">
                   {String(item.action_result)}
                 </p>
               )}
@@ -96,8 +96,8 @@ function InboxItemCard({ item, pendingId, onAction, hideApprove }: InboxItemCard
           )}
           {item.agent_action_id && <StatusBadge tone="gray">Agent action linked</StatusBadge>}
           {item.ai_draft_response && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">AI draft</p>
+            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 px-3 py-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">AI draft</p>
               <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{item.ai_draft_response}</p>
             </div>
           )}

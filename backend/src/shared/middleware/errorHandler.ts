@@ -40,15 +40,16 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return;
   }
 
-  // Handle PostgreSQL constraints
-  const pgError = err as { code?: string; constraint?: string };
+  // Handle PostgreSQL constraints — log only the code, never the full
+  // error object which may contain schema-revealing constraint names.
+  const pgError = err as { code?: string };
   if (pgError.code === '23P01') {
-    logger.warn('Exclusion constraint violation', { error: err });
+    logger.warn('Exclusion constraint violation', { pgCode: pgError.code, path: req.originalUrl });
     sendError(res, 'Conflict: Only one stage can be marked as Won/Lost per pipeline.', 409);
     return;
   }
   if (pgError.code === '23505') {
-    logger.warn('Unique constraint violation', { error: err });
+    logger.warn('Unique constraint violation', { pgCode: pgError.code, path: req.originalUrl });
     sendError(res, 'Conflict: Resource already exists or violates a unique constraint.', 409);
     return;
   }
@@ -57,7 +58,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   Sentry.captureException(err instanceof Error ? err : new Error(String(err)));
   logger.error('Unhandled error', {
     error: message,
-    stack: err instanceof Error ? err.stack : undefined,
+    path: req.originalUrl,
   });
   sendError(res, 'Internal server error', 500);
 }

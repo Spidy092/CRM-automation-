@@ -8,6 +8,7 @@ jest.mock('../../shared/utils/db', () => ({
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import {
   findLeads,
+  countLeads,
   findLeadById,
   findExistingForDedup,
   findLeadsByScraperLogId,
@@ -186,6 +187,64 @@ describe('findExistingForDedup', () => {
   it('returns null when no duplicate', async () => {
     mockQueryOne.mockResolvedValue(null);
     expect(await findExistingForDedup('a@b.c', '1', 'manual')).toBeNull();
+  });
+});
+
+describe('findLeads sorting and offset paging', () => {
+  it('orders by a whitelisted column with the requested direction', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    await findLeads({ limit: 10, sortBy: 'business_name', sortDir: 'asc' });
+
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain('ORDER BY business_name ASC NULLS LAST, id DESC');
+  });
+
+  it('appends OFFSET and ignores the cursor when offset paging', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    await findLeads({
+      limit: 25,
+      offset: 50,
+      cursorTs: '2026-01-01T00:00:00Z',
+      cursorId: 'lead-0',
+    });
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('OFFSET $2');
+    expect(sql).not.toContain('(created_at, id) <');
+    expect(params).toEqual([26, 50]);
+  });
+
+  it('keeps keyset cursor paging for the default ordering', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    await findLeads({ limit: 25, cursorTs: '2026-01-01T00:00:00Z', cursorId: 'lead-0' });
+
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain('(created_at, id) <');
+    expect(sql).not.toContain('OFFSET');
+  });
+});
+
+describe('countLeads', () => {
+  it('counts rows for the same filters, ignoring the cursor', async () => {
+    mockQueryOne.mockResolvedValue({ count: '137' });
+    const total = await countLeads({
+      limit: 25,
+      status: 'active',
+      cursorTs: '2026-01-01T00:00:00Z',
+      cursorId: 'lead-0',
+    });
+
+    expect(total).toBe(137);
+    const [sql, params] = mockQueryOne.mock.calls[0];
+    expect(sql).toContain('SELECT COUNT(*)::text AS count');
+    expect(sql).toContain('status = $1');
+    expect(sql).not.toContain('(created_at, id) <');
+    expect(params).toEqual(['active']);
+  });
+
+  it('returns 0 when the count query yields no row', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    expect(await countLeads({ limit: 25 })).toBe(0);
   });
 });
 

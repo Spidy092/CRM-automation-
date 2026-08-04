@@ -26,12 +26,13 @@ function actorFromReq(req: Request) {
 }
 
 export async function listCampaignsHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const campaigns = await getAllCampaigns();
+    const pipeline_id = req.query?.pipeline_id as string | undefined;
+    const campaigns = await getAllCampaigns({ pipeline_id });
     sendSuccess(res, campaigns);
   } catch (err) {
     next(err);

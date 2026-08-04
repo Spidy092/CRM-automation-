@@ -5,16 +5,24 @@ import { LeadAiProfileRow } from '../ai-intelligence/ai-intelligence.types';
 
 // ── Outreach Sequences ─────────────────────────────────────────────────────
 
-const SEQ_COLS = `id, name, description, is_active, steps, created_by, created_at, updated_at`;
+const SEQ_COLS = `id, name, description, is_active, steps, created_by, created_at, updated_at, deleted_at`;
 
 export async function findSequences(limit: number, offset: number): Promise<SequenceRow[]> {
   return query<SequenceRow>(
-    `SELECT ${SEQ_COLS} FROM outreach_sequences ORDER BY updated_at DESC LIMIT $1 OFFSET $2`,
+    `SELECT ${SEQ_COLS} FROM outreach_sequences WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT $1 OFFSET $2`,
     [limit, offset],
   );
 }
 
 export async function findSequenceById(id: string): Promise<SequenceRow | null> {
+  return queryOne<SequenceRow>(
+    `SELECT ${SEQ_COLS} FROM outreach_sequences WHERE id = $1 AND deleted_at IS NULL`,
+    [id],
+  );
+}
+
+/** Finds a sequence even if soft-deleted — used by workers processing in-flight jobs. */
+export async function findSequenceByIdIncludingDeleted(id: string): Promise<SequenceRow | null> {
   return queryOne<SequenceRow>(`SELECT ${SEQ_COLS} FROM outreach_sequences WHERE id = $1`, [id]);
 }
 
@@ -140,7 +148,7 @@ export async function getSequenceEnrollmentStats(
 
 export async function deleteSequence(id: string): Promise<void> {
   const result = await queryOne<{ id: string }>(
-    'DELETE FROM outreach_sequences WHERE id = $1 RETURNING id',
+    'UPDATE outreach_sequences SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
     [id],
   );
   if (!result) throw new AppError('Sequence not found', 404);
@@ -260,7 +268,8 @@ export async function insertTask(data: {
   title: string;
   description: string | null;
   due_at: string | null;
-  created_by: string;
+  /** NULL marks a system-generated task (e.g. inbound-reply follow-up). */
+  created_by: string | null;
 }): Promise<TaskRow> {
   const row = await queryOne<TaskRow>(
     `INSERT INTO tasks
@@ -286,6 +295,49 @@ export async function insertTask(data: {
 
 export async function findTaskById(id: string): Promise<TaskRow | null> {
   return queryOne<TaskRow>(`SELECT ${TASK_COLS} FROM tasks WHERE id = $1`, [id]);
+}
+
+/**
+ * Resolves who a system-generated task for this lead should go to.
+ *
+ * Falls back to the owner of the lead's active campaign when the lead has no
+ * rep assigned. Previously an unassigned lead produced no task at all, so a
+ * hot inbound reply could land with nobody owning it.
+ *
+ * Returns `null` only when neither exists — the caller still creates the task,
+ * unassigned, so it surfaces in triage rather than vanishing.
+ */
+export async function findTaskAssigneeForLead(leadId: string): Promise<string | null> {
+  const row = await queryOne<{ assignee: string | null }>(
+    `SELECT COALESCE(l.assigned_to, c.created_by) AS assignee
+     FROM leads l
+     LEFT JOIN campaign_leads cl ON cl.lead_id = l.id
+     LEFT JOIN campaigns c ON c.id = cl.campaign_id AND c.status = 'active'
+     WHERE l.id = $1 AND l.deleted_at IS NULL
+     ORDER BY (l.assigned_to IS NOT NULL) DESC, c.launched_at DESC NULLS LAST
+     LIMIT 1`,
+    [leadId],
+  );
+  return row?.assignee ?? null;
+}
+
+/**
+ * Finds the lead's open system-generated task, if any.
+ *
+ * `created_by IS NULL` is what distinguishes a system task from one a rep
+ * created by hand — it lets the reply pipeline update its own placeholder in
+ * place without ever overwriting a rep's manual task.
+ */
+export async function findOpenSystemTaskByLead(leadId: string): Promise<TaskRow | null> {
+  return queryOne<TaskRow>(
+    `SELECT ${TASK_COLS} FROM tasks
+     WHERE lead_id = $1
+       AND created_by IS NULL
+       AND status IN ('pending', 'in_progress')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [leadId],
+  );
 }
 
 export async function findTasks(filters: {
@@ -323,6 +375,7 @@ export async function updateTask(
     title: string;
     description: string | null;
     completed_at: string | null;
+    type: string;
   }>,
 ): Promise<TaskRow> {
   const sets: string[] = [];
@@ -351,6 +404,10 @@ export async function updateTask(
   if (fields.description !== undefined) {
     sets.push(`description = $${i++}`);
     params.push(fields.description);
+  }
+  if (fields.type !== undefined) {
+    sets.push(`type = $${i++}`);
+    params.push(fields.type);
   }
 
   if (sets.length === 0) {

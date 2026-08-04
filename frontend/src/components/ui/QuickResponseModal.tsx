@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from './button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
@@ -50,6 +50,16 @@ function interpolateTemplate(templateText: string, lead: Lead): string {
 }
 
 export function QuickResponseModal({ lead, onClose }: Props) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const availableChannels = useMemo(
     () => channelOptions.filter((opt) => !!opt.destination(lead)),
     [lead],
@@ -60,11 +70,11 @@ export function QuickResponseModal({ lead, onClose }: Props) {
   const [skipReview, setSkipReview] = useState(false);
   const [reviewTemplate, setReviewTemplate] = useState<Template | null>(null);
 
-  const { data: templatesPage, isLoading: templatesLoading } = useTemplates({
+  const { data: templatesData, isLoading: templatesLoading } = useTemplates({
     channel: channel ?? undefined,
     approval_status: 'approved',
   });
-  const templates = (templatesPage ?? []).filter((t) => {
+  const templates = (templatesData?.items ?? []).filter((t) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return t.name.toLowerCase().includes(q) || t.body.toLowerCase().includes(q);

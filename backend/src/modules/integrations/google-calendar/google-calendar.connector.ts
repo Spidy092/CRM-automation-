@@ -219,3 +219,39 @@ export async function testConnection(
     };
   }
 }
+
+// ── Delete event ─────────────────────────────────────────────────────────────
+
+export async function deleteEvent(eventId: string): Promise<{ ok: boolean; error?: string }> {
+  let creds: GoogleCalendarCredentials;
+  try {
+    creds = await loadCredentials();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown error';
+    return { ok: false, error: message };
+  }
+
+  const calendarId = encodeURIComponent(creds.calendarId ?? 'primary');
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(eventId)}`;
+
+  const headers = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+  });
+
+  let res = await fetch(url, { method: 'DELETE', headers: headers(creds.accessToken) });
+
+  if (!res.ok && res.status === 401) {
+    try {
+      const freshToken = await refreshAccessToken(creds);
+      res = await fetch(url, { method: 'DELETE', headers: headers(freshToken) });
+    } catch {
+      return { ok: false, error: 'Token refresh failed' };
+    }
+  }
+
+  if (!res.ok && res.status !== 410) {
+    return { ok: false, error: `HTTP ${res.status}` };
+  }
+
+  return { ok: true };
+}

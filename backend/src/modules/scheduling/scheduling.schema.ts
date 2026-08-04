@@ -67,8 +67,14 @@ export const availabilityQuerySchema = z.object({
 export const createDateOverrideSchema = z.object({
   overrideDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format: YYYY-MM-DD'),
   isBlocked: z.boolean().default(true),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  endTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  startTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(),
+  endTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(),
   reason: z.string().max(255).optional(),
 });
 

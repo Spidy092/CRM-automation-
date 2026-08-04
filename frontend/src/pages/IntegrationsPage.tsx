@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   useIntegrations,
@@ -9,172 +9,31 @@ import {
 import type { Integration, BulkTestResult } from '@/api/integrations';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
+import { AlertDialog } from '@/components/ui/AlertDialog';
 import { IntegrationSetupWizard } from '@/components/IntegrationSetupWizard';
+import {
+  CATEGORY_ORDER,
+  INTEGRATION_DESCRIPTIONS,
+  groupByCategory,
+  getCategory,
+  timeAgo,
+} from '@/lib/integrations.config';
 import {
   CheckCircle,
   XCircle,
   AlertCircle,
   RefreshCw,
-  Settings,
-  Link2,
+  Search,
   X,
   Loader2,
+  Link2,
 } from 'lucide-react';
-
-// ── Credential field schemas per provider ──────────────────────────────────
-
-interface FieldDef {
-  key: string;
-  label: string;
-  type?: 'text' | 'password' | 'secret' | 'number' | 'list';
-  placeholder?: string;
-  required?: boolean;
-  helpText?: string;
-}
-
-const CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
-  whatsapp: [
-    { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: '12345678901234' },
-    { key: 'apiToken', label: 'API Token', type: 'password', placeholder: 'EAAG...' },
-    { key: 'apiVersion', label: 'API Version', placeholder: 'v20.0' },
-    { key: 'appSecret', label: 'App Secret (for webhook verification)', type: 'password' },
-  ],
-  twilio: [
-    { key: 'accountSid', label: 'Account SID', placeholder: 'ACxxxxxxxxxxxxxxxx' },
-    { key: 'authToken', label: 'Auth Token', type: 'password' },
-    { key: 'fromNumber', label: 'From Number (E.164)', placeholder: '+12025551234' },
-  ],
-  sendgrid: [
-    { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'SG.xxxxx' },
-    { key: 'fromEmail', label: 'From Email', placeholder: 'outreach@example.com' },
-    { key: 'fromName', label: 'From Name', placeholder: 'My Company' },
-  ],
-  smtp: [
-    { key: 'host', label: 'SMTP Host', placeholder: 'smtp.example.com' },
-    { key: 'port', label: 'Port', type: 'number', placeholder: '587' },
-    { key: 'user', label: 'Username' },
-    { key: 'pass', label: 'Password', type: 'password' },
-    { key: 'fromEmail', label: 'From Email', placeholder: 'outreach@example.com' },
-    { key: 'fromName', label: 'From Name', placeholder: 'My Company' },
-  ],
-  google_ads: [
-    { key: 'developerToken', label: 'Developer Token', type: 'password' },
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'refreshToken', label: 'Refresh Token', type: 'password' },
-    { key: 'loginCustomerId', label: 'MCC Customer ID (optional)', placeholder: '1234567890' },
-  ],
-  facebook: [
-    { key: 'appId', label: 'App ID' },
-    { key: 'appSecret', label: 'App Secret', type: 'password' },
-    { key: 'accessToken', label: 'Access Token', type: 'password' },
-    { key: 'pageId', label: 'Page ID (optional)' },
-    { key: 'formId', label: 'Lead Form ID (optional)' },
-  ],
-  openwa: [
-    { key: 'baseUrl', label: 'OpenWA Base URL', type: 'text', required: true, placeholder: 'https://openwa.example.com', helpText: 'The root URL of your external OpenWA HTTP server.' },
-    { key: 'apiKey', label: 'API Key', type: 'secret', required: true, helpText: 'OpenWA API key used in the x-api-key header.' },
-    { key: 'sessionId', label: 'Session ID', type: 'text', required: true, helpText: 'WhatsApp session identifier managed by the OpenWA server.' },
-    { key: 'numbers', label: 'Phone Numbers', type: 'list', required: true, helpText: 'One or more WhatsApp sender numbers for rotation (E.164 format).' },
-  ],
-  slack: [
-    { key: 'webhookUrl', label: 'Slack Webhook URL', placeholder: 'https://hooks.slack.com/...' },
-  ],
-  teams: [
-    { key: 'webhookUrl', label: 'Teams Webhook URL', placeholder: 'https://...webhook.office.com/...' },
-  ],
-  google_sheets: [
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'refreshToken', label: 'Refresh Token', type: 'password' },
-    { key: 'spreadsheetId', label: 'Spreadsheet ID (optional)' },
-  ],
-  google_calendar: [
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'refreshToken', label: 'Refresh Token', type: 'password' },
-    { key: 'calendarId', label: 'Calendar ID', placeholder: 'primary' },
-  ],
-  outlook: [
-    { key: 'tenantId', label: 'Tenant ID' },
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret', type: 'password' },
-    { key: 'fromEmail', label: 'From Email' },
-  ],
-  hunter: [
-    { key: 'api_key', label: 'Hunter.io API Key', type: 'password', required: true, helpText: 'Get your free API key at hunter.io' },
-  ],
-  apify: [
-    { key: 'apiToken', label: 'API Token', type: 'password', required: true, helpText: 'Get your personal API token from Apify Settings -> Integrations.' },
-  ],
-  mailchimp: [
-    { key: 'apiKey',       label: 'API Key',       type: 'password', required: true, placeholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-us1', helpText: 'Found in Mailchimp → Account → Extras → API keys.' },
-    { key: 'serverPrefix', label: 'Server Prefix', required: true, placeholder: 'us1', helpText: 'The part after the dash in your API key (e.g. us1, us6).' },
-    { key: 'listId',       label: 'Audience / List ID', helpText: 'The default audience to sync leads into. Found in Audience → Settings → Audience name and defaults.' },
-  ],
-  stripe: [
-    { key: 'secretKey',     label: 'Secret Key',     type: 'password', required: true, placeholder: 'sk_live_...', helpText: 'From Stripe Dashboard → Developers → API keys. Use sk_test_... for testing.' },
-    { key: 'webhookSecret', label: 'Webhook Secret', type: 'password', helpText: 'Optional — from Stripe Dashboard → Webhooks → your endpoint → Signing secret.' },
-  ],
-  zapier: [
-    { key: 'webhookUrl', label: 'Zapier Catch Hook URL', required: true, placeholder: 'https://hooks.zapier.com/hooks/catch/...', helpText: 'Create a Zap with "Webhooks by Zapier" trigger → Catch Hook, then paste the webhook URL here.' },
-  ],
-  linkedin: [
-    { key: 'accessToken',    label: 'Access Token',    type: 'password', required: true, helpText: 'OAuth 2.0 access token from LinkedIn Developer portal → Auth tab.' },
-    { key: 'organizationId', label: 'Organization ID', helpText: 'Your LinkedIn Company Page numeric ID (found in the page URL).' },
-  ],
-  telegram: [
-    { key: 'botToken',      label: 'Bot Token',         type: 'password', required: true, placeholder: '123456789:ABCdef...', helpText: 'Create a bot via @BotFather on Telegram. The token is shown after /newbot.' },
-    { key: 'defaultChatId', label: 'Default Chat ID',   helpText: 'Optional — the default chat/group ID to send messages to when no chatId is specified on a lead.' },
-  ],
-};
-
-// ── Category mapping ───────────────────────────────────────────────────────
-
-const CATEGORY_MAP: Record<string, string> = {
-  whatsapp:        'Messaging',
-  twilio:          'Messaging',
-  sendgrid:        'Messaging',
-  smtp:            'Messaging',
-  openwa:          'Messaging',
-  telegram:        'Messaging',
-  google_sheets:   'Productivity',
-  google_calendar: 'Productivity',
-  outlook:         'Productivity',
-  zapier:          'Automation',
-  google_ads:      'Advertising',
-  facebook:        'Advertising',
-  linkedin:        'Lead Generation',
-  hunter:          'Data Enrichment',
-  apify:           'Data Enrichment',
-  mailchimp:       'Email Marketing',
-  stripe:          'Payments',
-  google_drive:    'Storage',
-};
-
-const CATEGORY_ORDER = ['Messaging', 'Email Marketing', 'Lead Generation', 'Advertising', 'Automation', 'Productivity', 'Payments', 'Data Enrichment', 'Storage', 'Other'];
-
-function getCategory(name: string): string {
-  return CATEGORY_MAP[name] ?? 'Other';
-}
-
-function groupByCategory(integrations: Integration[]): Record<string, Integration[]> {
-  return integrations.reduce<Record<string, Integration[]>>((acc, integration) => {
-    const category = getCategory(integration.name);
-    if (!acc[category]) {
-      acc[category] = [];
-    }
-    acc[category].push(integration);
-    return acc;
-  }, {});
-}
 
 // ── Status badge ───────────────────────────────────────────────────────────
 
@@ -238,166 +97,31 @@ function ResultStatusBadge({ status, ok }: { status: string; ok: boolean }) {
   );
 }
 
-// ── Credential form ────────────────────────────────────────────────────────
-
-function CredentialForm({
-  integration,
-  onClose,
-}: {
-  integration: Integration;
-  onClose: () => void;
-}) {
-  const fields = CREDENTIAL_FIELDS[integration.name] ?? [];
-  const updateIntegration = useUpdateIntegration();
-  const { showToast } = useToast();
-  const [values, setValues] = useState<Record<string, string>>({});
-
-  const handleSave = async () => {
-    if (fields.length === 0) {
-      showToast('No credential fields defined for this integration.', 'success');
-      onClose();
-      return;
-    }
-
-    const credentials: Record<string, unknown> = {};
-    for (const f of fields) {
-      const raw = values[f.key];
-      if (raw === undefined || raw === '') continue;
-      if (f.type === 'list') {
-        credentials[f.key] = raw
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-      } else if (f.type === 'number') {
-        credentials[f.key] = Number(raw);
-      } else {
-        credentials[f.key] = raw;
-      }
-    }
-
-    try {
-      await updateIntegration.mutateAsync({ id: integration.id, input: { credentials } });
-      showToast('Credentials saved.', 'success');
-      onClose();
-    } catch {
-      showToast('Failed to save credentials.', 'error');
-    }
-  };
-
-  if (fields.length === 0) {
-    return (
-      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
-        No credential configuration available for this integration yet.
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <p className="text-sm font-medium text-slate-700">Configure credentials</p>
-      {fields.map((f) => {
-        const inputType =
-          f.type === 'number' ? 'number' : f.type === 'password' || f.type === 'secret' ? 'password' : 'text';
-        return (
-          <div key={f.key} className="space-y-1">
-            <Label htmlFor={`cred-${integration.id}-${f.key}`} className="text-xs">
-              {f.label}
-              {f.required && <span className="ml-0.5 text-red-500">*</span>}
-            </Label>
-            {f.helpText && (
-              <p className="text-xs text-muted-foreground">{f.helpText}</p>
-            )}
-            <Input
-              id={`cred-${integration.id}-${f.key}`}
-              type={inputType}
-              placeholder={f.placeholder}
-              value={values[f.key] ?? ''}
-              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-              className="h-8 text-sm"
-            />
-          </div>
-        );
-      })}
-      <div className="flex gap-2 pt-1">
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={updateIntegration.isPending}
-        >
-          {updateIntegration.isPending ? 'Saving…' : 'Save Credentials'}
-        </Button>
-        <Button size="sm" variant="outline" onClick={onClose}>
-          Cancel
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 // ── Health summary ─────────────────────────────────────────────────────────
 
-interface HealthSummaryProps {
-  integrations: Integration[];
-}
-
-function HealthSummary({ integrations }: HealthSummaryProps) {
-  const total = integrations.length;
+function HealthSummary({ integrations }: { integrations: Integration[] }) {
   const enabled = integrations.filter((i) => i.is_enabled).length;
   const ok = integrations.filter((i) => i.last_test_status === 'ok').length;
   const failed = integrations.filter((i) => i.last_test_status === 'failed').length;
-  const noCredentials = integrations.filter((i) => i.last_test_status === 'no_credentials').length;
-  const untested = integrations.filter((i) => !i.last_test_status).length;
+  const noCreds = integrations.filter((i) => i.last_test_status === 'no_credentials').length;
 
   const enabledFailed = integrations.some((i) => i.is_enabled && i.last_test_status === 'failed');
-  const statusLabel = enabledFailed ? 'Needs attention' : total > 0 ? 'Healthy' : 'No integrations';
+  const statusLabel = enabledFailed ? 'Needs attention' : 'Healthy';
   const statusClass = enabledFailed
     ? 'text-red-600 bg-red-50 border-red-200'
-    : total > 0
-      ? 'text-green-600 bg-green-50 border-green-200'
-      : 'text-slate-600 bg-slate-50 border-slate-200';
+    : 'text-green-600 bg-green-50 border-green-200';
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Integration health summary</CardTitle>
-            <CardDescription className="text-xs">Overview of provider status and readiness</CardDescription>
-          </div>
-          <span className={`rounded-full border px-3 py-1 text-xs font-medium ${statusClass}`}>
-            {statusLabel}
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-slate-500">Total</p>
-            <p className="text-xl font-semibold">{total}</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-slate-500">Enabled</p>
-            <p className="text-xl font-semibold text-green-600">{enabled}</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-slate-500">Connected</p>
-            <p className="text-xl font-semibold text-green-600">{ok}</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-slate-500">Failed</p>
-            <p className="text-xl font-semibold text-red-600">{failed}</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-slate-500">No credentials</p>
-            <p className="text-xl font-semibold text-amber-600">{noCredentials}</p>
-          </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-slate-500">Untested</p>
-            <p className="text-xl font-semibold text-slate-600">{untested}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-4 py-3">
+      <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusClass}`}>
+        {statusLabel}
+      </span>
+      <span className="text-xs text-slate-400">|</span>
+      <span className="text-xs text-slate-600"><strong>{enabled}</strong> enabled</span>
+      <span className="text-xs text-green-600"><strong>{ok}</strong> connected</span>
+      {failed > 0 && <span className="text-xs text-red-600"><strong>{failed}</strong> failed</span>}
+      {noCreds > 0 && <span className="text-xs text-amber-600"><strong>{noCreds}</strong> no credentials</span>}
+    </div>
   );
 }
 
@@ -413,17 +137,34 @@ function IntegrationCard({
   const updateIntegration = useUpdateIntegration();
   const testIntegration = useTestIntegration();
   const { showToast } = useToast();
-  const [showForm, setShowForm] = useState(false);
+  const [showDisableConfirm, setShowDisableConfirm] = useState(false);
 
   const handleToggle = async () => {
+    if (integration.is_enabled) {
+      setShowDisableConfirm(true);
+      return;
+    }
     try {
       await updateIntegration.mutateAsync({
         id: integration.id,
-        input: { is_enabled: !integration.is_enabled },
+        input: { is_enabled: true },
       });
-      showToast(`${integration.display_name} ${integration.is_enabled ? 'disabled' : 'enabled'}.`, 'success');
+      showToast(`${integration.display_name} enabled.`, 'success');
     } catch {
-      showToast('Failed to update integration.', 'error');
+      showToast('Failed to enable integration.', 'error');
+    }
+  };
+
+  const confirmDisable = async () => {
+    setShowDisableConfirm(false);
+    try {
+      await updateIntegration.mutateAsync({
+        id: integration.id,
+        input: { is_enabled: false },
+      });
+      showToast(`${integration.display_name} disabled.`, 'success');
+    } catch {
+      showToast('Failed to disable integration.', 'error');
     }
   };
 
@@ -436,76 +177,77 @@ function IntegrationCard({
     }
   };
 
+  const description = INTEGRATION_DESCRIPTIONS[integration.name];
+
   return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2">
-            <Link2 className="h-4 w-4 text-slate-400 shrink-0" />
-            <div>
-              <CardTitle className="text-base">{integration.display_name}</CardTitle>
-              <CardDescription className="text-xs mt-0.5 font-mono text-slate-400">
-                {integration.name}
-              </CardDescription>
+    <>
+      <Card className="hover:shadow-md transition-shadow">
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-slate-400 shrink-0" />
+              <div>
+                <CardTitle className="text-base">{integration.display_name}</CardTitle>
+                {description && (
+                  <CardDescription className="text-xs mt-0.5">{description}</CardDescription>
+                )}
+              </div>
             </div>
+            <StatusBadge status={integration.last_test_status} />
           </div>
-          <StatusBadge status={integration.last_test_status} />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {integration.last_tested_at && (
-          <p className="text-xs text-slate-400">
-            Tested {new Date(integration.last_tested_at).toLocaleString()}
-          </p>
-        )}
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {integration.last_tested_at && (
+            <p className="text-xs text-slate-400">
+              Tested {timeAgo(integration.last_tested_at)}
+            </p>
+          )}
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant={integration.is_enabled ? 'default' : 'outline'}
-            onClick={handleToggle}
-            disabled={updateIntegration.isPending}
-            className="h-7 text-xs"
-          >
-            {integration.is_enabled ? 'Enabled' : 'Disabled'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={integration.is_enabled ? 'default' : 'outline'}
+              onClick={handleToggle}
+              disabled={updateIntegration.isPending}
+              className="h-7 text-xs"
+            >
+              {integration.is_enabled ? 'Enabled' : 'Disabled'}
+            </Button>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleTest}
-            disabled={testIntegration.isPending}
-            className="h-7 text-xs"
-          >
-            <RefreshCw className={`mr-1 h-3 w-3 ${testIntegration.isPending ? 'animate-spin' : ''}`} />
-            Test
-          </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleTest}
+              disabled={testIntegration.isPending}
+              className="h-7 text-xs"
+            >
+              <RefreshCw className={`mr-1 h-3 w-3 ${testIntegration.isPending ? 'animate-spin' : ''}`} />
+              Test
+            </Button>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setShowForm((v) => !v)}
-            className="h-7 text-xs"
-          >
-            <Settings className="mr-1 h-3 w-3" />
-            Credentials
-          </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onSetup(integration)}
+              className="h-7 text-xs"
+            >
+              Configure
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onSetup(integration)}
-            className="h-7 text-xs"
-          >
-            Setup
-          </Button>
-        </div>
-
-        {showForm && (
-          <CredentialForm integration={integration} onClose={() => setShowForm(false)} />
-        )}
-      </CardContent>
-    </Card>
+      <AlertDialog
+        open={showDisableConfirm}
+        title={`Disable ${integration.display_name}?`}
+        description="This will stop all automated outreach through this integration. Active campaigns may be affected."
+        confirmLabel="Disable"
+        cancelLabel="Keep enabled"
+        variant="destructive"
+        onConfirm={confirmDisable}
+        onCancel={() => setShowDisableConfirm(false)}
+      />
+    </>
   );
 }
 
@@ -562,7 +304,7 @@ function BulkTestResultsDialog({
                       <p className="mt-1 break-words text-xs text-slate-600">{item.message}</p>
                     )}
                     <p className="mt-1 text-xs text-slate-400">
-                      Tested {new Date(item.tested_at).toLocaleString()}
+                      Tested {timeAgo(item.tested_at)}
                     </p>
                   </div>
                   <div className="shrink-0">
@@ -594,6 +336,35 @@ export function IntegrationsPage() {
   const [isBulkTesting, setIsBulkTesting] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardIntegration, setWizardIntegration] = useState<Integration | undefined>(undefined);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string>('All');
+
+  const list = useMemo(() => integrations ?? [], [integrations]);
+
+  const filteredList = useMemo(() => {
+    let result = list;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (i) =>
+          i.display_name.toLowerCase().includes(q) ||
+          i.name.toLowerCase().includes(q) ||
+          (INTEGRATION_DESCRIPTIONS[i.name] ?? '').toLowerCase().includes(q),
+      );
+    }
+    if (activeCategory !== 'All') {
+      result = result.filter((i) => getCategory(i.name) === activeCategory);
+    }
+    return result;
+  }, [list, searchQuery, activeCategory]);
+
+  const grouped = groupByCategory(filteredList);
+  const categories = CATEGORY_ORDER.filter((category) => grouped[category]?.length > 0);
+
+  const availableCategories = useMemo(() => {
+    const cats = new Set(list.map((i) => getCategory(i.name)));
+    return ['All', ...CATEGORY_ORDER.filter((c) => cats.has(c))];
+  }, [list]);
 
   if (isLoading) {
     return (
@@ -613,53 +384,36 @@ export function IntegrationsPage() {
     );
   }
 
-  const list = integrations ?? [];
-  const grouped = groupByCategory(list);
-  const categories = CATEGORY_ORDER.filter((category) => grouped[category]?.length > 0);
-
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Channel readiness"
         title="Integrations"
-        description="Enable providers, save credentials, and test each connection before running automation."
+        description="Connect and validate outbound channels and lead sources."
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setWizardIntegration(undefined);
-                setWizardOpen(true);
-              }}
-            >
-              Add Integration
-            </Button>
-            <Button
-              size="sm"
-              onClick={async () => {
-                setIsBulkTesting(true);
-                try {
-                  const result = await bulkTestIntegrations();
-                  setBulkResult(result);
-                  queryClient.invalidateQueries({ queryKey: ['integrations'] });
-                } catch (err) {
-                  const message = err instanceof Error ? err.message : 'Bulk connection test failed.';
-                  showToast(message, 'error');
-                } finally {
-                  setIsBulkTesting(false);
-                }
-              }}
-              disabled={isBulkTesting}
-            >
-              {isBulkTesting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-2 h-4 w-4" />
-              )}
-              Test Connections
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            onClick={async () => {
+              setIsBulkTesting(true);
+              try {
+                const result = await bulkTestIntegrations();
+                setBulkResult(result);
+                queryClient.invalidateQueries({ queryKey: ['integrations'] });
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Bulk connection test failed.';
+                showToast(message, 'error');
+              } finally {
+                setIsBulkTesting(false);
+              }
+            }}
+            disabled={isBulkTesting}
+          >
+            {isBulkTesting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            Test All
+          </Button>
         }
       />
 
@@ -670,26 +424,62 @@ export function IntegrationsPage() {
           description="Provider records are created by the backend seed/configuration layer."
         />
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-4">
           <HealthSummary integrations={list} />
 
-          {categories.map((category) => (
-            <section key={category} className="space-y-3">
-              <h2 className="text-lg font-semibold text-slate-900">{category}</h2>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {grouped[category].map((integration) => (
-                  <IntegrationCard
-                    key={integration.id}
-                    integration={integration}
-                    onSetup={(i) => {
-                      setWizardIntegration(i);
-                      setWizardOpen(true);
-                    }}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Search integrations..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 pl-9 text-sm"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {availableCategories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setActiveCategory(cat)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    activeCategory === cat
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {categories.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500">
+              No integrations match your search.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {categories.map((category) => (
+                <section key={category} className="space-y-3">
+                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">{category}</h2>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {grouped[category].map((integration) => (
+                      <IntegrationCard
+                        key={integration.id}
+                        integration={integration}
+                        onSetup={(i) => {
+                          setWizardIntegration(i);
+                          setWizardOpen(true);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -701,9 +491,6 @@ export function IntegrationsPage() {
         open={wizardOpen}
         onOpenChange={setWizardOpen}
         integration={wizardIntegration}
-        onComplete={() => {
-          // query invalidation already handled inside the wizard
-        }}
       />
     </div>
   );

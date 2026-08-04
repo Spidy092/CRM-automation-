@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useDecisionLog, type DecisionType } from '@/api/aiDecisions';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { AdminToolsTabs } from '@/components/AdminToolsTabs';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -58,6 +59,8 @@ export function AIDecisionLogPage() {
         description="Full chain-of-thought audit trail of every AI reasoning step."
         metrics={[{ label: 'Total decisions', value: total }]}
       />
+
+      <AdminToolsTabs />
 
       <div className="flex flex-wrap gap-2">
         {decisionTypes.map((t) => (

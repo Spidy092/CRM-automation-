@@ -53,6 +53,14 @@ export interface FormRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
+}
+
+export interface FormEmailStatus {
+  success: boolean;
+  sentCount: number;
+  failedCount: number;
+  errors?: string[];
 }
 
 // ── Form Submission Row ───────────────────────────────────────────────────

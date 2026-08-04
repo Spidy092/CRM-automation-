@@ -1,12 +1,17 @@
+import { createHash } from 'crypto';
 import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { fetchFormLeads } from '../integrations/facebook/facebook.connector';
-import { loadCredentials as loadApifyCredentials, runActorSync } from '../integrations/apify/apify.connector';
+import {
+  loadCredentials as loadApifyCredentials,
+  runActorSync,
+} from '../integrations/apify/apify.connector';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
 import { normalizePhone } from '../../shared/utils/phone';
+import { validateSafeUrl } from '../../shared/utils/ssrf';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import {
   ScraperConfigInput,
@@ -25,15 +30,25 @@ import {
   updateScraperConfig,
   deleteScraperConfig,
   insertScraperLog,
+  findRunningLogByConfig,
   updateScraperLog,
   findScraperLogById,
   findScraperLogsByConfig,
   countScraperLogsByConfig,
   updateScraperConfigLastRun,
   sumScraperLogsSince,
+  getScraperTrends,
+  findDistinctGroupNames,
 } from './scraper.repository';
+import { parseSourceConfig } from './scraper.schema';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
+import { pushToUser } from '../notifications/notifications.emitter';
+import {
+  verifyEmail,
+  logVerificationStats,
+  type EmailVerificationResult,
+} from '../../shared/utils/email';
 
 interface ScrapedLead {
   business_name: string;
@@ -99,14 +114,17 @@ function generatePlaceholderEmail(
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '')
       .slice(0, 8) || 'noloc';
-      
+
   if (fallbackId && fallbackId !== 'undefined') {
-    const idSlug = fallbackId.toLowerCase().replace(/[^a-z0-9]/g, '').slice(-15);
+    const idSlug = fallbackId
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(-15);
     if (idSlug) {
       return `${slug}-${locSlug}-${idSlug}@${sourcePlatform}-scraped.local`;
     }
   }
-  
+
   return `${slug}-${locSlug}@${sourcePlatform}-scraped.local`;
 }
 
@@ -128,6 +146,58 @@ function assertEnvVarConfigured(ref: unknown, label: string): string {
     );
   }
   return value;
+}
+
+// ── Network helpers ────────────────────────────────────────────────────────
+
+/** Upstream API calls (Places, Graph, YouTube) — these should answer quickly. */
+const DEFAULT_API_TIMEOUT_MS = 20_000;
+/** Arbitrary third-party pages, which can legitimately be slow to render. */
+const DEFAULT_PAGE_TIMEOUT_MS = 30_000;
+/** robots.txt is tiny; a slow one should not hold up the whole crawl. */
+const ROBOTS_TIMEOUT_MS = 10_000;
+
+/**
+ * How long a log row left in 'running' is trusted as a genuinely in-flight
+ * run. A worker that crashes mid-run leaves its row stuck in 'running'
+ * forever; past this window we assume it is dead and allow a new run.
+ * Generous, because a deep crawl at a 3 s crawl delay is legitimately slow.
+ */
+const RUNNING_LOG_STALE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * `fetch` with a hard deadline.
+ *
+ * Node's fetch has no default timeout: a target that accepts the connection
+ * and then never responds hangs forever. The scraper worker runs at
+ * concurrency 2, so two such targets stall the entire queue — including
+ * scheduled runs for every other source. Every outbound call in this module
+ * goes through here.
+ *
+ * A timeout surfaces as a 504 AppError, which `isRetryableScrapeError`
+ * classifies as retryable — a hung target is exactly the transient case
+ * BullMQ's backoff exists for.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
+): Promise<Response> {
+  try {
+    // AbortSignal.timeout rather than a hand-rolled AbortController +
+    // setTimeout: it needs no clearTimeout in a finally block, cannot leak a
+    // pending timer, and is not intercepted by Jest's fake timers (which the
+    // crawl-delay tests install, and which would otherwise deadlock waiting on
+    // a timer this function scheduled).
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    // AbortSignal.timeout rejects with a TimeoutError; an externally-aborted
+    // request rejects with AbortError. Treat both as a timeout for the caller.
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new AppError(`Request to ${url} timed out after ${timeoutMs}ms`, 504);
+    }
+    throw err;
+  }
 }
 
 // ── CRUD ───────────────────────────────────────────────────────────────────
@@ -208,7 +278,15 @@ export async function createConfig(
   // not raw key values, so misconfigurations are caught at save time.
   validateApiKeyRefs(input.source_type, input.config);
 
-  const config = await insertScraperConfig(input, actor.id);
+  // Validate the source-specific config blob (and apply its defaults) BEFORE
+  // the insert, so an out-of-range maxPages or a missing required field can
+  // never reach the database.
+  const validated: ScraperConfigInput = {
+    ...input,
+    config: parseSourceConfig(input.source_type, input.config),
+  };
+
+  const config = await insertScraperConfig(validated, actor.id);
   await writeAuditLog({
     userId: actor.id,
     action: 'scraper_config.created',
@@ -217,7 +295,26 @@ export async function createConfig(
     newValue: { name: config.name, source_type: config.source_type },
     ipAddress: actor.ipAddress ?? null,
   });
-  await syncSchedule(config.id, config.schedule_cron, config.is_active);
+  // The cron string is validated by the schema before we get here, so this
+  // should not throw — but if BullMQ rejects it anyway, delete the row we just
+  // wrote rather than leaving a config that shows a schedule in the UI with no
+  // repeatable job behind it.
+  try {
+    await syncSchedule(config.id, config.schedule_cron, config.is_active);
+  } catch (err) {
+    await deleteScraperConfig(config.id);
+    logger.error('scraper config rolled back: schedule registration failed', {
+      configId: config.id,
+      schedule_cron: config.schedule_cron,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new AppError(
+      `Could not register the schedule "${config.schedule_cron}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      400,
+    );
+  }
   return config;
 }
 
@@ -233,7 +330,14 @@ export async function updateConfig(
     validateApiKeyRefs(before.source_type, input.config);
   }
 
-  const updated = await updateScraperConfig(id, input);
+  // Source-specific validation has to happen here rather than in the schema:
+  // an update body carries no `source_type`, so the shape to validate against
+  // is only knowable once the existing row has been loaded.
+  const patch: ScraperConfigUpdate = input.config
+    ? { ...input, config: parseSourceConfig(before.source_type, input.config) }
+    : input;
+
+  const updated = await updateScraperConfig(id, patch);
   if (!updated) throw new AppError('Scraper config not found', 404);
   await writeAuditLog({
     userId: actor.id,
@@ -244,7 +348,25 @@ export async function updateConfig(
     newValue: { name: updated.name, is_active: updated.is_active },
     ipAddress: actor.ipAddress ?? null,
   });
-  await syncSchedule(updated.id, updated.schedule_cron, updated.is_active);
+  try {
+    await syncSchedule(updated.id, updated.schedule_cron, updated.is_active);
+  } catch (err) {
+    // Restore the previously-working schedule rather than leaving the config
+    // with a cron string the queue never accepted.
+    await updateScraperConfig(id, { schedule_cron: before.schedule_cron });
+    await syncSchedule(id, before.schedule_cron, before.is_active).catch(() => undefined);
+    logger.error('scraper schedule update reverted: registration failed', {
+      configId: id,
+      schedule_cron: updated.schedule_cron,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new AppError(
+      `Could not register the schedule "${updated.schedule_cron}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      400,
+    );
+  }
   return updated;
 }
 
@@ -324,7 +446,7 @@ async function finalizeSuccessfulRun(
     status,
   });
 
-  return {
+  const runResult: ScraperRunResult = {
     logId,
     recordsFound: result.recordsFound,
     recordsImported: result.recordsImported,
@@ -333,6 +455,46 @@ async function finalizeSuccessfulRun(
     status,
     errorMessage: null,
   };
+
+  // Fire SSE notification + external webhook (best-effort, non-blocking)
+  const config = await findScraperConfigById(configId);
+  if (config) {
+    void pushToUser(config.created_by, {
+      id: `scraper-${logId}`,
+      type: 'scraper_complete',
+      title: `Scraper run ${status}`,
+      message: `${config.name}: ${result.recordsImported} new, ${result.recordsDuplicate} dup, ${result.recordsFailed} failed`,
+      data: { configId, logId, status, recordsImported: result.recordsImported },
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+
+    if (config.webhook_url) {
+      void fireWebhook(config.webhook_url, buildRunWebhookPayload(config, runResult));
+    }
+  }
+
+  return runResult;
+}
+
+/**
+ * Decides whether a failed run is worth retrying.
+ *
+ * Retrying only helps for transient conditions. A misconfigured scraper
+ * (missing API key, selectors that match nothing, a robots.txt disallow)
+ * fails identically on every attempt, so retrying it just triples the load
+ * on the target site and delays the failure reaching the operator.
+ *
+ * Retryable:     network/DNS/timeout errors (any non-AppError), upstream 429
+ *                (rate limited) and 5xx (upstream broken).
+ * Not retryable: every other AppError — these are 4xx-class configuration and
+ *                policy problems raised by our own validation.
+ */
+export function isRetryableScrapeError(err: unknown): boolean {
+  const isAppError =
+    err instanceof AppError || (!!err && typeof err === 'object' && 'isAppError' in err);
+  if (!isAppError) return true;
+  const status = (err as AppError).statusCode;
+  return status === 429 || status >= 500;
 }
 
 /**
@@ -343,10 +505,7 @@ async function finalizeSuccessfulRun(
  * branch, whose log row was created up front by `queueScrapeRun` so the UI
  * can see a "running" entry the instant the run is triggered).
  */
-async function runScrapeCore(
-  config: ScraperConfigRow,
-  logId: string,
-): Promise<ScraperRunResult> {
+async function runScrapeCore(config: ScraperConfigRow, logId: string): Promise<ScraperRunResult> {
   try {
     const result = await executeScraper(config, logId);
     return await finalizeSuccessfulRun(logId, config.id, config.source_type, result);
@@ -358,11 +517,39 @@ async function runScrapeCore(
       error_message: message,
     });
 
+    const retryable = isRetryableScrapeError(err);
+
     logger.error('scraper run failed', {
       configId: config.id,
       source_type: config.source_type,
       error: message,
+      retryable,
     });
+
+    // Fire SSE notification + external webhook on failure (best-effort)
+    void pushToUser(config.created_by, {
+      id: `scraper-${logId}`,
+      type: 'scraper_complete',
+      title: 'Scraper run failed',
+      message: `${config.name}: ${message}`,
+      data: { configId: config.id, logId, status: 'failed' },
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+
+    if (config.webhook_url) {
+      void fireWebhook(
+        config.webhook_url,
+        buildRunWebhookPayload(config, {
+          logId,
+          recordsFound: 0,
+          recordsImported: 0,
+          recordsDuplicate: 0,
+          recordsFailed: 0,
+          status: 'failed',
+          errorMessage: message,
+        }),
+      );
+    }
 
     return {
       logId,
@@ -374,6 +561,11 @@ async function runScrapeCore(
       // Surface the reason to the caller (HTTP layer) so the UI can show it,
       // instead of a silent "success with 0 records".
       errorMessage: message,
+      // The log row is already written at this point, so the worker must not
+      // re-run the write — it only needs to know whether to throw so BullMQ
+      // retries. Carrying the decision on the result keeps this function's
+      // "never throws" contract intact for the HTTP path.
+      retryable,
     };
   }
 }
@@ -396,6 +588,30 @@ export async function runScrape(configId: string, _actor: ScraperActor): Promise
  */
 export async function runScrapeForJob(configId: string, logId: string): Promise<ScraperRunResult> {
   const config = await getConfigById(configId);
+
+  // The config can be paused in the window between "Run Now" enqueueing the job
+  // and the worker picking it up. Pausing is a deliberate operator action, so
+  // honour it rather than running anyway — and close out the 'running' log row
+  // that queueScrapeRun already created, or the UI would poll it forever.
+  if (!config.is_active) {
+    const message = 'Scraper config was paused before this run started';
+    await updateScraperLog(logId, {
+      status: 'failed',
+      completed_at: new Date().toISOString(),
+      error_message: message,
+    });
+    logger.info('scraper run skipped: config paused after enqueue', { configId, logId });
+    return {
+      logId,
+      recordsFound: 0,
+      recordsImported: 0,
+      recordsDuplicate: 0,
+      recordsFailed: 0,
+      status: 'failed',
+      errorMessage: message,
+    };
+  }
+
   return runScrapeCore(config, logId);
 }
 
@@ -415,10 +631,40 @@ export async function queueScrapeRun(
     throw new AppError('Scraper config is not active', 400);
   }
 
+  // Idempotency: attach to the in-flight run instead of starting a competing
+  // one. Without this, double-clicking "Run Now" creates two log rows and two
+  // concurrent crawls of the same target — doubling the request rate against
+  // a site we deliberately rate-limit ourselves for.
+  const staleBefore = new Date(Date.now() - RUNNING_LOG_STALE_MS).toISOString();
+  const inFlight = await findRunningLogByConfig(configId, staleBefore);
+  if (inFlight) {
+    logger.info('scraper run already in progress; reusing existing run', {
+      configId,
+      logId: inFlight.id,
+    });
+    return {
+      logId: inFlight.id,
+      recordsFound: 0,
+      recordsImported: 0,
+      recordsDuplicate: 0,
+      recordsFailed: 0,
+      status: 'running',
+    };
+  }
+
   const log = await insertScraperLog({ config_id: configId, status: 'running' });
   await enqueueScraperRun({ configId, logId: log.id, triggeredBy: actor.id });
 
   logger.info('scraper run enqueued', { configId, logId: log.id, triggeredBy: actor.id });
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'scraper_run.triggered',
+    entityType: 'scraper_config',
+    entityId: configId,
+    newValue: { logId: log.id, source_type: config.source_type },
+    ipAddress: actor.ipAddress ?? null,
+  });
 
   return {
     logId: log.id,
@@ -568,7 +814,7 @@ async function geocodeLocation(location: string, apiKey: string): Promise<string
     trimmed,
   )}&key=${apiKey}`;
 
-  const resp = await fetch(url);
+  const resp = await fetchWithTimeout(url);
   if (!resp.ok) {
     logger.warn('scraper google_places: geocoding HTTP error, running without location bias', {
       status: resp.status,
@@ -665,7 +911,7 @@ async function scrapeGooglePlaces(
         : `https://maps.googleapis.com/maps/api/place/textsearch/json?${baseParams.toString()}`;
 
       // Check HTTP-level errors before parsing the response body
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url);
       if (!response.ok) {
         throw new AppError(
           `Google Places Text Search HTTP error: ${response.status} ${response.statusText}`,
@@ -692,7 +938,7 @@ async function scrapeGooglePlaces(
           let tokenReady = false;
           for (let attempt = 0; attempt < 3; attempt++) {
             await new Promise((r) => setTimeout(r, 3000));
-            const retryResp = await fetch(url);
+            const retryResp = await fetchWithTimeout(url);
             if (!retryResp.ok) break;
             const retryData = (await retryResp.json()) as Record<string, unknown>;
             const retryStatus = String(retryData.status ?? '');
@@ -721,9 +967,12 @@ async function scrapeGooglePlaces(
           }
           if (!tokenReady) {
             // Token never activated — stop pagination but keep results so far
-            logger.warn('scraper google_places: next_page_token never activated, stopping pagination', {
-              rawResultsSoFar: rawResults.length,
-            });
+            logger.warn(
+              'scraper google_places: next_page_token never activated, stopping pagination',
+              {
+                rawResultsSoFar: rawResults.length,
+              },
+            );
             nextPageToken = null;
           }
           // Skip the normal bottom-of-loop processing since we handled it above
@@ -767,6 +1016,23 @@ async function scrapeGooglePlaces(
   // Fix: Text Search does NOT return formatted_phone_number or website in its results.
   // Call Place Details per result to fetch real contact data before importing.
   const leads: ScrapedLead[] = [];
+  // Enrichment (reviews/photos/hours) has no lead-level column yet (see leads
+  // migration) so it is captured onto the run log's raw_response, keyed by
+  // place_id, instead of being silently discarded. A future migration can
+  // promote this onto the lead row for AI research / personalized outreach.
+  const placesEnrichment: Array<{
+    placeId: string;
+    businessName: string;
+    openingHours: string | null;
+    topReviews: Array<{
+      author: string;
+      rating: number | null;
+      text: string;
+      relativeTime: string;
+    }>;
+    /** Opaque Places photo references — not URLs. See the assignment below. */
+    photoRefs: string[];
+  }> = [];
 
   for (const place of rawResults.slice(0, maxResults)) {
     const p = place as Record<string, unknown>;
@@ -780,19 +1046,57 @@ async function scrapeGooglePlaces(
       try {
         const detailsParams = new URLSearchParams({
           place_id: placeId,
-          fields: 'formatted_phone_number,website',
+          fields: 'formatted_phone_number,website,opening_hours,reviews,photos',
           key: apiKey,
         });
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?${detailsParams.toString()}`;
-        const detailsResp = await fetch(detailsUrl);
+        const detailsResp = await fetchWithTimeout(detailsUrl);
 
         if (detailsResp.ok) {
           const detailsData = (await detailsResp.json()) as Record<string, unknown>;
-          const detail = detailsData.result as Record<string, string> | undefined;
-          const rawPhone = detail?.formatted_phone_number?.trim();
-          const rawWebsite = detail?.website?.trim();
+          const detail = detailsData.result as Record<string, unknown> | undefined;
+          const rawPhone = (detail?.formatted_phone_number as string | undefined)?.trim();
+          const rawWebsite = (detail?.website as string | undefined)?.trim();
           if (rawPhone) phone = rawPhone;
           if (rawWebsite) website = rawWebsite;
+
+          const openingHoursObj = detail?.opening_hours as { weekday_text?: unknown } | undefined;
+          const weekdayText = Array.isArray(openingHoursObj?.weekday_text)
+            ? (openingHoursObj.weekday_text as unknown[]).map(String)
+            : [];
+
+          const rawReviews = Array.isArray(detail?.reviews) ? (detail.reviews as unknown[]) : [];
+          const topReviews = rawReviews.slice(0, 3).map((r) => {
+            const review = r as Record<string, unknown>;
+            return {
+              author: String(review.author_name ?? ''),
+              rating: typeof review.rating === 'number' ? review.rating : null,
+              text: String(review.text ?? ''),
+              relativeTime: String(review.relative_time_description ?? ''),
+            };
+          });
+
+          const rawPhotos = Array.isArray(detail?.photos) ? (detail.photos as unknown[]) : [];
+          // Store the opaque photo_reference only — NEVER a ready-made photo
+          // URL. The Places photo endpoint requires the API key as a query
+          // param, so building the URL here would persist a billable
+          // credential into scraper_logs.raw_response, which is readable by
+          // every manager via GET /scraper/:configId/logs and lives on in
+          // backups. Callers mint the signed URL at read time instead.
+          const photoRefs = rawPhotos
+            .slice(0, 3)
+            .map((ph) => (ph as Record<string, unknown>).photo_reference)
+            .filter((ref): ref is string => typeof ref === 'string' && ref.length > 0);
+
+          if (weekdayText.length > 0 || topReviews.length > 0 || photoRefs.length > 0) {
+            placesEnrichment.push({
+              placeId,
+              businessName,
+              openingHours: weekdayText.length > 0 ? weekdayText.join(' | ') : null,
+              topReviews,
+              photoRefs,
+            });
+          }
         }
       } catch {
         // Non-fatal: log and continue — the place will still be imported with placeholders
@@ -848,7 +1152,7 @@ async function scrapeGooglePlaces(
   const stats = await importLeads(leads, logId);
   return {
     ...stats,
-    rawResponse: { total_results: rawResults.length },
+    rawResponse: { total_results: rawResults.length, places_enrichment: placesEnrichment },
   };
 }
 
@@ -989,14 +1293,13 @@ function leadFromApifyItem(item: Record<string, unknown>, sourcePlatform: string
     getApifyField(item, ['title', 'name', 'businessName', 'companyName', 'fullName', 'username']) ||
     'Unknown Business';
   const website = getApifyField(item, ['website', 'url', 'websiteUrl', 'externalUrl']) ?? null;
-  const location =
-    getApifyField(item, ['address', 'location', 'formattedAddress', 'city']) ?? '';
+  const location = getApifyField(item, ['address', 'location', 'formattedAddress', 'city']) ?? '';
   const ratingRaw = item.totalScore ?? item.rating ?? item.averageRating;
   const reviewsRaw = item.reviewsCount ?? item.userRatingsTotal ?? item.reviewCount;
-  
+
   let fallbackId = String(getApifyField(item, ['id', 'url', 'shortCode', 'ownerId']) ?? '');
   if (!fallbackId || fallbackId === 'undefined') {
-    fallbackId = require('crypto').createHash('md5').update(JSON.stringify(item)).digest('hex').substring(0, 15);
+    fallbackId = createHash('md5').update(JSON.stringify(item)).digest('hex').substring(0, 15);
   }
 
   return {
@@ -1038,9 +1341,10 @@ async function scrapeApifyActor(
   const actorId = String(_config.actorId ?? '').trim();
   if (!actorId) throw new AppError('actorId is required for an Apify Actor source', 400);
 
-  const input = (_config.input && typeof _config.input === 'object'
-    ? (_config.input as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
+  const input =
+    _config.input && typeof _config.input === 'object'
+      ? (_config.input as Record<string, unknown>)
+      : {};
   const maxResults = Number(_config.maxResults) || 100;
 
   const creds = await loadApifyCredentials();
@@ -1050,14 +1354,16 @@ async function scrapeApifyActor(
     throw new AppError(`Apify run failed: ${result.error}`, 502);
   }
 
-  const leads = result.items
-    .slice(0, maxResults)
-    .map((item) => leadFromApifyItem(item, 'apify'));
+  const leads = result.items.slice(0, maxResults).map((item) => leadFromApifyItem(item, 'apify'));
 
   const stats = await importLeads(leads, logId);
   return {
     ...stats,
-    rawResponse: { actor_id: actorId, items_returned: result.items.length, latency_ms: result.latencyMs },
+    rawResponse: {
+      actor_id: actorId,
+      items_returned: result.items.length,
+      latency_ms: result.latencyMs,
+    },
   };
 }
 
@@ -1180,7 +1486,8 @@ async function scrapeBrowser(
   // Accepts a single URL or a list (one per line in the UI), so one source
   // can scrape many sites in a single run instead of needing one config per URL.
   const urls = normalizeQueries(_config.url);
-  if (urls.length === 0) throw new AppError('At least one URL is required for browser scraping', 400);
+  if (urls.length === 0)
+    throw new AppError('At least one URL is required for browser scraping', 400);
 
   const mode = _config.mode === 'selectors' ? 'selectors' : 'smart';
   const selectors = _config.selectors as Record<string, string> | undefined;
@@ -1243,6 +1550,10 @@ async function scrapeBrowser(
       while (queue.length > 0 && pagesFetched < maxPages) {
         const { url: pageUrl, depth } = queue.shift()!;
         try {
+          // Same SSRF guard the fetch-based crawler applies. It matters more
+          // here, not less: this drives a real browser with --no-sandbox, so an
+          // unchecked URL is a link-local/loopback read primitive.
+          await validateSafeUrl(pageUrl);
           if (respectRobotsTxt) await assertRobotsAllowed(pageUrl, userAgent, robotsCache);
           const response = await page.goto(pageUrl, {
             waitUntil: 'networkidle2',
@@ -1312,10 +1623,12 @@ async function scrapeBrowser(
     }
 
     for (const url of urls) {
+      await validateSafeUrl(url);
       if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
 
       for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
         const pageUrl = pageNum === 1 ? url : `${url}?page=${pageNum}`;
+        await validateSafeUrl(pageUrl);
         const response = await page.goto(pageUrl, {
           waitUntil: 'networkidle2',
           timeout: DEFAULT_BROWSER_TIMEOUT_MS,
@@ -1414,7 +1727,7 @@ async function scrapeFacebook(
 
   // Fetch page info
   const pageUrl = `https://graph.facebook.com/v18.0/${pageId}?fields=${fields}&access_token=${accessToken}`;
-  const pageResponse = await fetch(pageUrl);
+  const pageResponse = await fetchWithTimeout(pageUrl);
   // Fix: check HTTP status before parsing
   if (!pageResponse.ok) {
     throw new AppError(
@@ -1448,7 +1761,7 @@ async function scrapeFacebook(
 
   // Fetch recent posts to surface mentioned businesses
   const postsUrl = `https://graph.facebook.com/v18.0/${pageId}/posts?fields=message,created_time&limit=${maxPosts}&access_token=${accessToken}`;
-  const postsResponse = await fetch(postsUrl);
+  const postsResponse = await fetchWithTimeout(postsUrl);
   // Fix: check HTTP status
   if (!postsResponse.ok) {
     logger.warn('scraper facebook: posts fetch failed', {
@@ -1497,7 +1810,7 @@ async function scrapeYouTube(
   });
 
   const url = `https://www.googleapis.com/youtube/v3/search?${params.toString()}`;
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url);
   // Fix: check HTTP status before parsing
   if (!response.ok) {
     throw new AppError(`YouTube API HTTP error: ${response.status} ${response.statusText}`, 502);
@@ -1521,7 +1834,7 @@ async function scrapeYouTube(
     };
   });
 
-  const stats = await importLeads(leads);
+  const stats = await importLeads(leads, _logId);
   return {
     ...stats,
     rawResponse: { query, results_count: items.length },
@@ -1660,7 +1973,12 @@ export async function detectSelectors(
     );
   }
 
-  const response = await fetch(url);
+  // Same SSRF guard as the crawlers — this fetches a caller-supplied URL and
+  // then ships the response body to an external LLM, so an unchecked internal
+  // address would be exfiltrated as well as read.
+  await validateSafeUrl(url);
+
+  const response = await fetchWithTimeout(url, {}, DEFAULT_PAGE_TIMEOUT_MS);
   if (!response.ok) {
     throw new AppError(`Could not fetch the page for analysis (HTTP ${response.status}).`, 400);
   }
@@ -1762,6 +2080,9 @@ export async function discoverPages(
   url: string,
 ): Promise<import('./scraper.types').DiscoveredPage[]> {
   const userAgent = DEFAULT_CRAWLER_USER_AGENT;
+  // Guard before launching Chrome: this navigates a real browser to a
+  // caller-supplied URL, the same primitive scrapeBrowser guards against.
+  await validateSafeUrl(url);
   await assertRobotsAllowed(url, userAgent);
 
   const executablePath = assertEnvVarConfigured(
@@ -1869,7 +2190,11 @@ async function assertRobotsAllowed(
   } else {
     const robotsUrl = `${parsed.origin}/robots.txt`;
     try {
-      const response = await fetch(robotsUrl, { headers: { 'User-Agent': userAgent } });
+      const response = await fetchWithTimeout(
+        robotsUrl,
+        { headers: { 'User-Agent': userAgent } },
+        ROBOTS_TIMEOUT_MS,
+      );
       text = response.ok ? await response.text() : null;
     } catch (err) {
       logger.warn('scraper web_scrape: robots.txt fetch failed, allowing crawl', {
@@ -1948,7 +2273,10 @@ function deepCrawlSettings(config: Record<string, unknown>): DeepCrawlSettings {
 /** Substring filters applied to discovered links (never to the listed seed URLs). */
 function urlPassesPatterns(url: string, settings: DeepCrawlSettings): boolean {
   if (settings.excludePatterns.some((p) => url.includes(p))) return false;
-  if (settings.includePatterns.length > 0 && !settings.includePatterns.some((p) => url.includes(p))) {
+  if (
+    settings.includePatterns.length > 0 &&
+    !settings.includePatterns.some((p) => url.includes(p))
+  ) {
     return false;
   }
   return true;
@@ -1959,7 +2287,8 @@ function urlPassesPatterns(url: string, settings: DeepCrawlSettings): boolean {
  * normalized so equivalent links dedupe cleanly. Non-HTML asset links are
  * skipped by extension since a deep crawl only wants navigable pages.
  */
-const NON_HTML_EXT_RE = /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|zip|gz|mp4|mp3|webm|woff2?|ttf|eot)$/i;
+const NON_HTML_EXT_RE =
+  /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|zip|gz|mp4|mp3|webm|woff2?|ttf|eot)$/i;
 
 function extractSameOriginLinks(html: string, pageUrl: string): string[] {
   let origin: string;
@@ -2050,8 +2379,12 @@ async function scrapeWeb(
       : DEFAULT_CRAWLER_USER_AGENT;
   const respectRobotsTxt = _config.respectRobotsTxt !== false;
   const crawlDelayMs = Number(_config.crawlDelayMs) || 3000;
-  // 'smart' mode is opt-in: a config without an explicit mode keeps the
-  // original selector-required behaviour (backward compatible).
+  // Every config saved since per-source validation was wired up carries an
+  // explicit `mode` (webScrapeConfigSchema defaults it to 'smart'). This
+  // fallback therefore only applies to rows written before that, which were
+  // created under the original selector-required behaviour — so 'selectors'
+  // is the correct default for them and changing it would silently alter what
+  // those existing sources scrape.
   const mode = _config.mode === 'smart' ? 'smart' : 'selectors';
 
   if (urls.length === 0) throw new AppError('At least one URL is required for web scraping', 400);
@@ -2077,8 +2410,9 @@ async function scrapeWeb(
     while (queue.length > 0 && pagesFetched < maxPages) {
       const { url: pageUrl, depth } = queue.shift()!;
       try {
+        await validateSafeUrl(pageUrl);
         if (respectRobotsTxt) await assertRobotsAllowed(pageUrl, userAgent, robotsCache);
-        const response = await fetch(pageUrl, fetchOpts);
+        const response = await fetchWithTimeout(pageUrl, fetchOpts, DEFAULT_PAGE_TIMEOUT_MS);
         assertNotBlockedResponse(response, pageUrl);
         if (!response.ok) {
           throw new AppError(`Page fetch failed for ${pageUrl} (HTTP ${response.status})`, 502);
@@ -2134,11 +2468,13 @@ async function scrapeWeb(
   }
 
   for (const url of urls) {
+    await validateSafeUrl(url);
     if (respectRobotsTxt) await assertRobotsAllowed(url, userAgent);
 
     for (let page = 1; page <= maxPages; page++) {
       const pageUrl = page === 1 ? url : `${url}?page=${page}`;
-      const response = await fetch(pageUrl, fetchOpts);
+      await validateSafeUrl(pageUrl);
+      const response = await fetchWithTimeout(pageUrl, fetchOpts, DEFAULT_PAGE_TIMEOUT_MS);
       // Fix: check HTTP status
       if (!response.ok) {
         assertNotBlockedResponse(response, pageUrl);
@@ -2258,11 +2594,49 @@ async function importLeads(
     const phone = lead.phone || generatePlaceholderPhone(phoneSeed);
     const email =
       lead.email ||
-      generatePlaceholderEmail(lead.business_name, lead.location, lead.source_platform, lead.fallback_id);
+      generatePlaceholderEmail(
+        lead.business_name,
+        lead.location,
+        lead.source_platform,
+        lead.fallback_id,
+      );
 
     const { normalizePhone } = await import('../../shared/utils/phone');
     const normalizedPhone = normalizePhone(phone);
     const normalizedEmail = email.trim().toLowerCase();
+
+    // Verify email deliverability (skip for placeholder/generated emails)
+    const isPlaceholder =
+      normalizedEmail.includes('scraped.local') || normalizedEmail.startsWith('no-reply-');
+    if (!isPlaceholder && lead.email) {
+      try {
+        const verification = await verifyEmail(lead.email);
+        if (!verification.valid && verification.reason !== 'invalid_syntax') {
+          // Disposable or no-MX domain — skip this lead as failed
+          failed++;
+          const reasonMsg =
+            verification.reason === 'disposable_domain'
+              ? 'Disposable email domain'
+              : verification.reason === 'no_mx_record'
+                ? 'Email domain has no MX record'
+                : 'Email domain DNS lookup failed';
+          failedItems.push({
+            lead: lead as unknown as Record<string, unknown>,
+            error: `${reasonMsg}: ${normalizedEmail}${verification.suggestion ? ` (did you mean ${verification.suggestion}?)` : ''}`,
+          });
+          continue;
+        }
+        if (verification.suggestion) {
+          logger.info('scraper email typo suggestion', {
+            email: normalizedEmail,
+            suggestion: verification.suggestion,
+            business_name: lead.business_name,
+          });
+        }
+      } catch {
+        // Verification failed non-fatally — proceed with the lead
+      }
+    }
 
     try {
       const actor: {
@@ -2344,6 +2718,79 @@ async function importLeads(
   };
 }
 
+// ── CSV Export ─────────────────────────────────────────────────────────────
 
+function escapeCsvValue(val: unknown): string {
+  const str = val == null ? '' : String(val);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
 
+export async function exportRunLeadsCsv(logId: string): Promise<string> {
+  const { newLeads, duplicateLeads } = await getLeadsForRun(logId);
+  const allLeads = [
+    ...newLeads.map((l) => ({ ...l, _import_status: 'new' })),
+    ...duplicateLeads.map((l) => ({ ...l, _import_status: 'duplicate' })),
+  ];
+  if (allLeads.length === 0) return '';
 
+  const headers = Object.keys(allLeads[0]);
+  const lines: string[] = [headers.join(',')];
+  for (const row of allLeads) {
+    const values = headers.map((h) => escapeCsvValue((row as Record<string, unknown>)[h]));
+    lines.push(values.join(','));
+  }
+  return lines.join('\n') + '\n';
+}
+
+// ── Webhook Notifications ──────────────────────────────────────────────────
+
+async function fireWebhook(webhookUrl: string, payload: Record<string, unknown>): Promise<void> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    logger.info('scraper webhook fired', { webhookUrl, status: 'ok' });
+  } catch (err) {
+    logger.warn('scraper webhook failed', {
+      webhookUrl,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+export async function getDistinctGroups(): Promise<string[]> {
+  return findDistinctGroupNames();
+}
+
+export async function getScraperTrendsData(days = 14) {
+  return getScraperTrends(days);
+}
+
+export function buildRunWebhookPayload(
+  config: ScraperConfigRow,
+  result: ScraperRunResult,
+): Record<string, unknown> {
+  return {
+    event: 'scraper.run.completed',
+    config_id: config.id,
+    config_name: config.name,
+    source_type: config.source_type,
+    status: result.status,
+    records_found: result.recordsFound,
+    records_imported: result.recordsImported,
+    records_duplicate: result.recordsDuplicate,
+    records_failed: result.recordsFailed,
+    error_message: result.errorMessage ?? null,
+    log_id: result.logId,
+    timestamp: new Date().toISOString(),
+  };
+}

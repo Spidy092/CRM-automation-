@@ -20,6 +20,7 @@ export interface Sequence {
   created_by: string;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 }
 
 export interface CreateSequenceInput {
@@ -77,7 +78,9 @@ export interface OutreachLog {
   sent_at: string | null;
   delivered_at: string | null;
   opened_at: string | null;
+  clicked_at: string | null;
   replied_at: string | null;
+  click_url: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
@@ -232,6 +235,20 @@ export function useManualOutreachSend() {
     mutationFn: async (input: ManualSendInput) => {
       const response = await apiClient.post<ApiResponse<{ enqueued: boolean }>>('/outreach/send', input);
       return response.data.data;
+    },
+  });
+}
+
+export function useUpdateTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, input }: { id: string; input: Partial<{ status: OutreachTask['status']; title: string; description: string }> }) => {
+      const response = await apiClient.put<ApiResponse<OutreachTask>>(`/outreach/tasks/${id}`, input);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['outreach', 'tasks'] });
     },
   });
 }

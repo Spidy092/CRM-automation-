@@ -10,6 +10,7 @@ import {
   statsSummaryQuerySchema,
 } from './scraper.schema';
 import * as scraperService from './scraper.service';
+import { findScraperLogById } from './scraper.repository';
 
 function actorFromReq(req: Request): {
   id: string;
@@ -186,6 +187,56 @@ export async function getStatsSummaryHandler(
     const { hours } = statsSummaryQuerySchema.parse(req.query);
     const summary = await scraperService.getStatsSummary(hours);
     sendSuccess(res, summary);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function exportRunLeadsCsvHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const logId = req.params.logId;
+    const log = await findScraperLogById(logId);
+    if (!log) {
+      res.status(404).json({ success: false, error: 'Scraper log not found' });
+      return;
+    }
+    const csv = await scraperService.exportRunLeadsCsv(logId);
+    const config = await scraperService.getConfigById(log.config_id);
+    const filename = `${config.name.replace(/[^a-zA-Z0-9]/g, '_')}_${logId.slice(0, 8)}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getGroupsHandler(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const groups = await scraperService.getDistinctGroups();
+    sendSuccess(res, groups);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getTrendsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days as string) || 14, 1), 90);
+    const trends = await scraperService.getScraperTrendsData(days);
+    sendSuccess(res, trends);
   } catch (err) {
     next(err);
   }

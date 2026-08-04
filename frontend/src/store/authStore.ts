@@ -32,12 +32,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAccessToken: (accessToken) => set({ accessToken }),
 
   login: (user, accessToken, refreshToken) => {
-    // Only refreshToken is persisted — access token stays in memory only
+    sessionStorage.setItem('session_active', '1');
     localStorage.setItem('refreshToken', refreshToken);
     set({ user, accessToken, isAuthenticated: true });
   },
 
   logout: () => {
+    sessionStorage.removeItem('session_active');
     localStorage.removeItem('refreshToken');
     set({ user: null, accessToken: null, isAuthenticated: false });
   },

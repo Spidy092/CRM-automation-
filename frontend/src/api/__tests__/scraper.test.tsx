@@ -23,7 +23,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 
 describe('scraper API', () => {
   it('renders useScraperConfigs successfully', () => {
-    const { result } = renderHook(() => useScraperConfigs({} as any), { wrapper });
+    const { result } = renderHook(() => useScraperConfigs(), { wrapper });
     expect(result.current).toBeDefined();
   });
   it('renders useCreateScraperConfig successfully', () => {

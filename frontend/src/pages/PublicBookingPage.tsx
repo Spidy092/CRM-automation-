@@ -27,6 +27,7 @@ export function PublicBookingPage() {
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [bookingMeetingUrl, setBookingMeetingUrl] = useState<string | null>(null);
 
   const { data: pageData, isLoading: loadingPage } = usePublicBookingPage(slug ?? '');
   const { data: slotsData, isLoading: loadingSlots } = usePublicSlots(slug ?? '', selectedDate);
@@ -42,7 +43,7 @@ export function PublicBookingPage() {
     }
 
     try {
-      await createBooking.mutateAsync({
+      const result = await createBooking.mutateAsync({
         slug: slug ?? '',
         data: {
           bookerName: name.trim(),
@@ -52,6 +53,7 @@ export function PublicBookingPage() {
           notes: notes.trim() || undefined,
         },
       });
+      setBookingMeetingUrl(result.data?.meeting_url ?? null);
       setSubmitted(true);
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Failed to book meeting'), 'error');
@@ -99,9 +101,19 @@ export function PublicBookingPage() {
                 })}
               </strong>
             </p>
-            {page.meeting_url && (
+            {page.location_details && (
               <a
-                href={page.meeting_url}
+                href={page.location_details}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-block text-sm text-indigo-600 underline"
+              >
+                Open Meeting Link
+              </a>
+            )}
+            {bookingMeetingUrl && (
+              <a
+                href={bookingMeetingUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-4 inline-block text-sm text-indigo-600 underline"
@@ -215,7 +227,7 @@ export function PublicBookingPage() {
                     })}
                 </div>
               ) : (
-                <p className="text-sm text-slate-500">No available times on this date.</p>
+                <p className="text-sm text-slate-500">No available times on this date. The host may not be available on this day of the week.</p>
               )}
             </CardContent>
           </Card>

@@ -34,9 +34,33 @@ export const createLeadSchema = baseLeadSchema;
 
 export const updateLeadSchema = baseLeadSchema.partial();
 
+const sortByEnum = z.enum([
+  'created_at',
+  'updated_at',
+  'business_name',
+  'contact_name',
+  'email',
+  'industry',
+  'location',
+  'lead_score',
+  'deal_value',
+  'status',
+  'classification',
+  'next_follow_up_at',
+]);
+
 export const listLeadsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(1000).optional(),
   cursor: z.string().optional(),
+  /** Offset paging — mutually exclusive with `cursor`; used by the leads table pager. */
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
+  sort_by: sortByEnum.optional(),
+  sort_dir: z.enum(['asc', 'desc']).optional(),
+  /** When "true", meta includes the total row count for the current filters. */
+  count_total: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
   status: statusEnum.optional(),
   classification: classificationEnum.optional(),
   source_platform: z.string().max(100).optional(),

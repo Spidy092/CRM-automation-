@@ -1,14 +1,20 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTemplates, useApproveTemplate, useDeleteTemplate } from '@/api/templates';
+import { useAuthStore } from '@/store/authStore';
+import { ROLE_PERMISSIONS } from '@/types/account';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { AlertDialog } from '@/components/ui/AlertDialog';
+import { TablePagination } from '@/components/ui/TablePagination';
 import { useToast } from '@/components/ui/Toast';
 import type { MessageChannel, TemplateApprovalStatus } from '@/types';
 import { Plus, Search, Check, X, Trash2, Edit, FileText, Paperclip } from 'lucide-react';
@@ -27,35 +33,87 @@ const channelLabels: Record<MessageChannel, string> = {
 };
 
 export function TemplatesPage() {
+  const user = useAuthStore((s) => s.user);
+  const canWrite = user ? ROLE_PERMISSIONS[user.role]?.Templates?.write : false;
+
   const [search, setSearch] = useState('');
   const [channelFilter, setChannelFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
-  const { data: templates = [], isLoading, error } = useTemplates({
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [cursors, setCursors] = useState<string[]>([]);
+
+  const { data, isLoading, error } = useTemplates({
     search: search || undefined,
     channel: (channelFilter as MessageChannel) || undefined,
     approval_status: (statusFilter as TemplateApprovalStatus) || undefined,
+    limit: pageSize,
+    cursor: cursors[page] || undefined,
   });
+
+  const templates = data?.items ?? [];
+  const hasMore = data?.meta?.hasMore ?? false;
+  const nextCursor = data?.meta?.nextCursor;
+
   const approveTemplate = useApproveTemplate();
   const deleteTemplate = useDeleteTemplate();
   const { showToast } = useToast();
 
-  const handleApprove = async (id: string, approved: boolean) => {
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const handleApprove = async (id: string) => {
     try {
-      await approveTemplate.mutateAsync({ id, approved });
-      showToast(approved ? 'Template approved.' : 'Template rejected.', 'success');
+      await approveTemplate.mutateAsync({ id, approved: true });
+      showToast('Template approved.', 'success');
     } catch {
-      showToast('Failed to update approval status.', 'error');
+      showToast('Failed to approve template.', 'error');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this template?')) return;
+  const handleRejectConfirm = async () => {
+    if (!rejectTarget) return;
     try {
-      await deleteTemplate.mutateAsync(id);
+      await approveTemplate.mutateAsync({
+        id: rejectTarget,
+        approved: false,
+        rejection_reason: rejectReason.trim() || undefined,
+      });
+      showToast('Template rejected.', 'success');
+    } catch {
+      showToast('Failed to reject template.', 'error');
+    }
+    setRejectTarget(null);
+    setRejectReason('');
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteTemplate.mutateAsync(deleteTarget);
       showToast('Template deleted.', 'success');
     } catch {
       showToast('Failed to delete template.', 'error');
     }
+    setDeleteTarget(null);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage > page && nextCursor) {
+      setCursors((prev) => {
+        const next = [...prev];
+        next[newPage] = nextCursor;
+        return next;
+      });
+    }
+    setPage(newPage);
+  };
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setPage(0);
+    setCursors([]);
   };
 
   return (
@@ -71,12 +129,14 @@ export function TemplatesPage() {
           { label: 'Rejected', value: templates.filter((t) => t.approval_status === 'rejected').length, tone: 'danger' },
         ]}
         actions={
-          <Button asChild>
-            <Link to="/templates/new">
-              <Plus className="mr-2 h-4 w-4" />
-              New Template
-            </Link>
-          </Button>
+          canWrite ? (
+            <Button asChild>
+              <Link to="/templates/new">
+                <Plus className="mr-2 h-4 w-4" />
+                New Template
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -88,13 +148,13 @@ export function TemplatesPage() {
               <Input
                 placeholder="Search templates…"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0); setCursors([]); }}
                 className="pl-10"
               />
             </div>
             <select
               value={channelFilter}
-              onChange={(e) => setChannelFilter(e.target.value)}
+              onChange={(e) => { setChannelFilter(e.target.value); setPage(0); setCursors([]); }}
               className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">All Channels</option>
@@ -105,7 +165,7 @@ export function TemplatesPage() {
             </select>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(0); setCursors([]); }}
               className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">All Statuses</option>
@@ -129,12 +189,14 @@ export function TemplatesPage() {
               title="No templates yet"
               description="Create your first message template to use in outreach sequences."
               action={
-                <Button asChild size="sm">
-                  <Link to="/templates/new">
-                    <Plus className="mr-2 h-4 w-4" />
-                    New Template
-                  </Link>
-                </Button>
+                canWrite ? (
+                  <Button asChild size="sm">
+                    <Link to="/templates/new">
+                      <Plus className="mr-2 h-4 w-4" />
+                      New Template
+                    </Link>
+                  </Button>
+                ) : undefined
               }
             />
           )}
@@ -179,13 +241,13 @@ export function TemplatesPage() {
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1">
-                    {template.approval_status === 'pending' && (
+                    {canWrite && template.approval_status === 'pending' && (
                       <>
                         <Button
                           variant="ghost"
                           size="icon"
                           title="Approve"
-                          onClick={() => handleApprove(template.id, true)}
+                          onClick={() => handleApprove(template.id)}
                           className="text-emerald-600 hover:text-emerald-700"
                         >
                           <Check className="h-4 w-4" />
@@ -194,33 +256,93 @@ export function TemplatesPage() {
                           variant="ghost"
                           size="icon"
                           title="Reject"
-                          onClick={() => handleApprove(template.id, false)}
+                          onClick={() => { setRejectTarget(template.id); setRejectReason(''); }}
                           className="text-red-500 hover:text-red-600"
                         >
                           <X className="h-4 w-4" />
                         </Button>
                       </>
                     )}
-                    <Button variant="ghost" size="icon" asChild title="Edit">
-                      <Link to={`/templates/${template.id}/edit`}>
-                        <Edit className="h-4 w-4" />
-                      </Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="Delete"
-                      onClick={() => handleDelete(template.id)}
-                    >
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
+                    {canWrite && (
+                      <>
+                        <Button variant="ghost" size="icon" asChild title="Edit">
+                          <Link to={`/templates/${template.id}/edit`}>
+                            <Edit className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Delete"
+                          onClick={() => setDeleteTarget(template.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
+
+              <TablePagination
+                page={page}
+                pageSize={pageSize}
+                rowCount={templates.length}
+                hasMore={hasMore}
+                isLoading={isLoading}
+                onPageChange={handlePageChange}
+                onPageSizeChange={handlePageSizeChange}
+              />
             </div>
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        title="Delete template"
+        description="Are you sure you want to delete this template? This action cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      {rejectTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setRejectTarget(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-900">Reject template</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Optionally provide a reason so the author knows what to fix.
+            </p>
+            <div className="mt-4 space-y-1.5">
+              <Label htmlFor="reject-reason">Rejection reason</Label>
+              <Textarea
+                id="reject-reason"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                rows={3}
+                placeholder="e.g. Tone is too informal for our brand…"
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setRejectTarget(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={handleRejectConfirm}>
+                Reject template
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

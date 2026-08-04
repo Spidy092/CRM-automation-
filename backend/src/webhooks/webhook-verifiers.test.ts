@@ -65,8 +65,8 @@ describe('verifySendGridSignature', () => {
     expect(verifySendGridSignature('payload', 'invalid', verificationKey)).toBe(false);
   });
 
-  it('returns true when no verification key configured', () => {
-    expect(verifySendGridSignature('payload', undefined, undefined)).toBe(true);
+  it('returns false when no verification key configured', () => {
+    expect(verifySendGridSignature('payload', undefined, undefined)).toBe(false);
   });
 
   it('returns false when header missing but key configured', () => {
@@ -85,8 +85,8 @@ describe('verifyGoogleAdsSecret', () => {
     expect(verifyGoogleAdsSecret('wrong', configuredSecret)).toBe(false);
   });
 
-  it('returns true when no configured secret', () => {
-    expect(verifyGoogleAdsSecret('any', undefined)).toBe(true);
+  it('returns false when no configured secret', () => {
+    expect(verifyGoogleAdsSecret('any', undefined)).toBe(false);
   });
 
   it('returns false when payload secret missing but configured', () => {

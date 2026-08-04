@@ -54,12 +54,23 @@ export async function insertTemplate(data: {
   body: string;
   variables: string[];
   created_by: string;
+  /**
+   * When set, the template is created already approved and attributed to this user.
+   * Callers pass this only for actors who could immediately approve it anyway — it
+   * removes a redundant round-trip, never a permission check. Leave null to fall back
+   * to the column default of 'pending'.
+   */
+  approved_by?: string | null;
 }): Promise<TemplateRow> {
+  const approvedBy = data.approved_by ?? null;
   const row = await queryOne<TemplateRow>(
-    `INSERT INTO templates (name, channel, subject, body, variables, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO templates (name, channel, subject, body, variables, created_by, approval_status, approved_by, approved_at)
+     VALUES ($1, $2, $3, $4, $5, $6,
+             (CASE WHEN $7::uuid IS NULL THEN 'pending' ELSE 'approved' END)::template_approval_status,
+             $7::uuid,
+             CASE WHEN $7::uuid IS NULL THEN NULL ELSE NOW() END)
      RETURNING ${COLS}`,
-    [data.name, data.channel, data.subject, data.body, data.variables, data.created_by],
+    [data.name, data.channel, data.subject, data.body, data.variables, data.created_by, approvedBy],
   );
   if (!row) throw new AppError('Failed to create template', 500);
   return row;
@@ -145,7 +156,7 @@ export async function updateTemplate(
 
 export async function setApprovalStatus(
   id: string,
-  status: 'approved' | 'rejected',
+  status: 'pending' | 'approved' | 'rejected',
   approvedBy: string | null,
   rejectionReason: string | null,
 ): Promise<TemplateRow> {
@@ -153,11 +164,11 @@ export async function setApprovalStatus(
     `UPDATE templates
      SET approval_status = $1,
          approved_by = $2,
-         approved_at = CASE WHEN $5 THEN NOW() ELSE NULL END,
+         approved_at = CASE WHEN $5 = 'approved' THEN NOW() ELSE NULL END,
          rejection_reason = $3
      WHERE id = $4
      RETURNING ${COLS}`,
-    [status, approvedBy, rejectionReason, id, status === 'approved'],
+    [status, approvedBy, rejectionReason, id, status],
   );
   if (!row) throw new AppError('Template not found', 404);
   return row;

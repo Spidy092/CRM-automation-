@@ -9,6 +9,7 @@ import {
   listTemplatesQuerySchema,
   approveTemplateSchema,
   attachFromLibrarySchema,
+  attachmentIdParamSchema,
 } from './templates.schema';
 import * as templatesService from './templates.service';
 import { TemplateActor } from './templates.types';
@@ -161,10 +162,10 @@ export async function removeTemplateAttachmentHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { id } = templateIdParamSchema.parse(req.params);
+    const { id, attachmentId } = attachmentIdParamSchema.parse(req.params);
     const updated = await templatesService.removeTemplateAttachment(
       id,
-      req.params.attachmentId,
+      attachmentId,
       actorFromReq(req),
     );
     sendSuccess(res, updated);

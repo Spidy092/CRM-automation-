@@ -5,6 +5,7 @@ import { AuthenticatedUser } from '../../shared/types';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { UpdateProfileInput, CreateUserInput, UpdatePermissionsInput, User } from './users.types';
 import * as usersRepository from './users.repository';
+import * as authRepository from '../auth/auth.repository';
 
 const BCRYPT_COST_FACTOR = 12;
 
@@ -109,4 +110,39 @@ export async function updatePermissions(
   });
 
   return updated;
+}
+
+/**
+ * Changes the authenticated user's own password after verifying their current password.
+ * RBAC: any authenticated role — only allowed on their own account.
+ */
+export async function changePassword(
+  id: string,
+  currentPassword: string,
+  newPassword: string,
+  actor: AuthenticatedUser,
+): Promise<void> {
+  // Ownership check — users may only change their own password.
+  if (actor.id !== id) {
+    throw new AppError('Forbidden: you may only change your own password', 403);
+  }
+
+  // Fetch the full user record including password_hash.
+  const record = await authRepository.findUserById(id);
+  if (!record) {
+    throw new AppError('User not found', 404);
+  }
+
+  // Verify current password with timing-safe bcrypt compare.
+  const isMatch = await bcrypt.compare(currentPassword, record.password_hash);
+  if (!isMatch) {
+    throw new AppError('Current password is incorrect', 401);
+  }
+
+  if (currentPassword === newPassword) {
+    throw new AppError('New password must be different from your current password', 400);
+  }
+
+  const newHash = await bcrypt.hash(newPassword, BCRYPT_COST_FACTOR);
+  await authRepository.updatePasswordHash(id, newHash);
 }

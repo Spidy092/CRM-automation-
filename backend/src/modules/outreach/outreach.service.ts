@@ -12,12 +12,15 @@ import {
   TaskRow,
   TimelineEntry,
 } from './outreach.types';
-import { MessageChannel, OutreachStatus } from '../../shared/types';
+import { MessageChannel, OutreachStatus, TaskType } from '../../shared/types';
 import {
   deleteSequence,
   findLogsByLead,
   findSequenceById,
+  findSequenceByIdIncludingDeleted,
   findSequences,
+  findOpenSystemTaskByLead,
+  findTaskAssigneeForLead,
   findTaskById,
   findTasks,
   findTimelineByLead,
@@ -217,6 +220,78 @@ export async function createTask(input: TaskInput, actor: OutreachActor): Promis
   return toTaskResponse(row);
 }
 
+export interface ReplyTaskUpsert {
+  leadId: string;
+  campaignId?: string | null;
+  type: TaskType;
+  title: string;
+  description?: string | null;
+  dueAt?: string | null;
+}
+
+/**
+ * Creates — or updates in place — the single open system task for a lead's
+ * inbound reply.
+ *
+ * Called twice per reply, by design:
+ *   1. the webhook, immediately, with a generic placeholder so the rep sees
+ *      something even if OpenAI is slow, down, or unconfigured;
+ *   2. the AI classifier, once the intent is known, which sharpens the same
+ *      task's title/type/due date rather than adding a second one.
+ *
+ * Dedup is keyed on "the lead's open task with `created_by IS NULL`", so a
+ * lead who sends three messages in a row ends up with one current task, and a
+ * rep's own manually-created tasks are never touched.
+ *
+ * The assignee is resolved here (rep → campaign owner → unassigned) so callers
+ * cannot accidentally drop the task by passing a lead that has no rep.
+ */
+export async function upsertReplyTask(input: ReplyTaskUpsert): Promise<TaskRow> {
+  const assignee = await findTaskAssigneeForLead(input.leadId);
+  const existing = await findOpenSystemTaskByLead(input.leadId);
+
+  if (existing) {
+    const row = await updateTaskRepo(existing.id, {
+      title: input.title,
+      description: input.description ?? null,
+      due_at: input.dueAt ?? null,
+      type: input.type,
+      // Re-assert the assignee: the lead may have been assigned to a rep
+      // between the placeholder insert and classification finishing.
+      assigned_to: assignee,
+    });
+    return toTaskResponse(row);
+  }
+
+  const row = await insertTask({
+    lead_id: input.leadId,
+    campaign_id: input.campaignId ?? null,
+    sequence_id: null,
+    step_number: null,
+    assigned_to: assignee,
+    type: input.type,
+    title: input.title,
+    description: input.description ?? null,
+    due_at: input.dueAt ?? null,
+    // NULL marks this as system-generated — the dedup key above depends on it.
+    created_by: null,
+  });
+  return toTaskResponse(row);
+}
+
+/**
+ * Cancels the lead's open system reply task, if one exists.
+ *
+ * Used on opt-out: the placeholder task the webhook created must not outlive
+ * the classification that told us to stop contacting this lead. No-ops when
+ * there is nothing open, and never touches rep-created tasks.
+ */
+export async function resolveOpenReplyTask(leadId: string): Promise<void> {
+  const existing = await findOpenSystemTaskByLead(leadId);
+  if (!existing) return;
+  await updateTaskRepo(existing.id, { status: 'cancelled' });
+}
+
 export async function updateTask(
   id: string,
   fields: Partial<{
@@ -261,7 +336,7 @@ export async function updateTask(
 async function enqueueNextStepAfterTask(task: TaskRow): Promise<void> {
   if (!task.campaign_id || !task.sequence_id || task.step_number === null) return;
 
-  const sequence = await findSequenceById(task.sequence_id);
+  const sequence = await findSequenceByIdIncludingDeleted(task.sequence_id);
   if (!sequence) return;
 
   const nextStep = sequence.steps.find((step) => step.stepNumber === (task.step_number ?? 0) + 1);

@@ -63,3 +63,27 @@ export interface CreateApiKeyResult {
   rawKey: string;
   apiKey: ApiKeyRecord;
 }
+
+/** Shape returned by listApiKeys — excludes the hash for security. */
+export type ApiKeyListItem = Pick<ApiKeyRecord, 'id' | 'name' | 'prefix' | 'last_used_at' | 'expires_at' | 'created_at'>;
+
+/** User identity extracted from a validated API key. */
+export interface ApiKeyIdentity {
+  id: string;
+  email: string;
+  role: UserRole;
+  name: string;
+}
+
+/** Raw row from the api_keys JOIN users query used by findApiKeyByHash. */
+export interface ApiKeyRecordRow {
+  id: string;
+  user_id: string;
+  expires_at: Date | string | null;
+  deleted_at: Date | string | null;
+  u_id: string;
+  email: string;
+  role: UserRole;
+  name: string;
+  is_active: boolean;
+}

@@ -59,7 +59,7 @@ export async function forgotPasswordHandler(
 
     // TODO(integrations team): wire to SendGrid/SMTP module to actually email resetToken.
     if (result) {
-      logger.info('Password reset token generated', { email });
+      logger.info('Password reset token generated', { userFound: true });
     }
 
     // Always return a generic success message to prevent email enumeration.
@@ -91,7 +91,10 @@ export async function getMeHandler(req: Request, res: Response, next: NextFuncti
       throw new AppError('Unauthorized', 401);
     }
     await Promise.resolve();
-    sendSuccess(res, req.user);
+    // Only return safe, non-internal user fields — never leak JWT internals
+    // like iat, exp, or any future fields added to the token payload.
+    const { id, email, role, name } = req.user;
+    sendSuccess(res, { id, email, role, name });
   } catch (err) {
     next(err);
   }

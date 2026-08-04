@@ -26,6 +26,8 @@ import {
   getLeadCampaignContext,
 } from './ai-reply.repository';
 import { enqueueAiClassifyReply } from '../../workers/queue';
+import { upsertReplyTask, resolveOpenReplyTask } from '../outreach/outreach.service';
+import { buildReplyTaskSpec, resolveDueAt } from './ai-reply.tasks';
 import type { ClassifyReplyInput, ReplyClassification, AiReplyOutput } from './ai-reply.types';
 
 const REPLY_MAX_TOKENS = 300;
@@ -242,6 +244,45 @@ export async function classifyReply(input: ClassifyReplyInput): Promise<ReplyCla
     logger.error('ai reply: smart tagging failed', {
       leadId,
       error: tagErr instanceof Error ? tagErr.message : String(tagErr),
+    });
+  }
+
+  // ── Rep task: sharpen the placeholder into an intent-aware task ───────
+  // The webhook already created a generic placeholder the moment the reply
+  // landed; this upgrades that same task in place (no duplicate) so the rep
+  // sees "…— send quotation" rather than "Follow up on inbound reply".
+  // Never blocks classification: a task failure is logged, not thrown.
+  try {
+    const taskSpec = buildReplyTaskSpec(
+      raw.intent_class,
+      raw.intent_subtype,
+      lead.business_name ?? lead.contact_name ?? 'Lead',
+    );
+    if (taskSpec) {
+      await upsertReplyTask({
+        leadId,
+        campaignId: context?.campaignId ?? null,
+        type: taskSpec.type,
+        title: taskSpec.title,
+        description: `AI classified this reply as "${raw.intent_class}" (confidence ${raw.confidence}). Next best action: ${raw.next_best_action}`,
+        dueAt: resolveDueAt(taskSpec),
+      });
+      logger.info('ai reply: rep task upserted', {
+        leadId,
+        intent: raw.intent_class,
+        taskType: taskSpec.type,
+      });
+    } else {
+      // opt_out — resolve the placeholder instead of leaving follow-up work
+      // pointing at a lead we have just promised to stop contacting.
+      await resolveOpenReplyTask(leadId);
+      logger.info('ai reply: opt_out — reply task resolved, none created', { leadId });
+    }
+  } catch (taskErr) {
+    logger.error('ai reply: rep task upsert failed', {
+      leadId,
+      intent: raw.intent_class,
+      error: taskErr instanceof Error ? taskErr.message : String(taskErr),
     });
   }
 

@@ -1,6 +1,22 @@
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { LeadStatus } from '../../shared/types';
-import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
+import { LeadInput, LeadListFilters, LeadRow, LeadSortBy } from './leads.types';
+
+/** Whitelist of sortable columns — the only place a column name reaches the SQL string. */
+const SORT_COLUMNS: Record<LeadSortBy, string> = {
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  business_name: 'business_name',
+  contact_name: 'contact_name',
+  email: 'email',
+  industry: 'industry',
+  location: 'location',
+  lead_score: 'lead_score',
+  deal_value: 'deal_value',
+  status: 'status',
+  classification: 'classification',
+  next_follow_up_at: 'next_follow_up_at',
+};
 
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
@@ -12,9 +28,15 @@ function jsonArray(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
-export async function findLeads(
+/**
+ * Shared WHERE builder for the list and count queries so both always see the
+ * identical filter set. The keyset cursor is only applied when `includeCursor`
+ * is true (the count must span every page, not just the ones after the cursor).
+ */
+function buildLeadFilterClauses(
   filters: LeadListFilters,
-): Promise<{ rows: LeadRow[]; hasMore: boolean }> {
+  includeCursor: boolean,
+): { conditions: string[]; params: unknown[] } {
   const conditions: string[] = ['deleted_at IS NULL'];
   const params: unknown[] = [];
   let i = 1;
@@ -71,23 +93,58 @@ export async function findLeads(
   if (filters.unclassified) {
     conditions.push(`classification IS NULL`);
   }
-  if (filters.cursorTs && filters.cursorId) {
+  if (includeCursor && filters.cursorTs && filters.cursorId) {
     conditions.push(`(created_at, id) < ($${i}, $${i + 1})`);
     params.push(filters.cursorTs, filters.cursorId);
     i += 2;
   }
 
+  return { conditions, params };
+}
+
+/** Keyset cursors are only valid for the default newest-first ordering. */
+function usesKeysetCursor(filters: LeadListFilters): boolean {
+  const sortBy = filters.sortBy ?? 'created_at';
+  const sortDir = filters.sortDir ?? 'desc';
+  return filters.offset === undefined && sortBy === 'created_at' && sortDir === 'desc';
+}
+
+export async function findLeads(
+  filters: LeadListFilters,
+): Promise<{ rows: LeadRow[]; hasMore: boolean }> {
+  const keyset = usesKeysetCursor(filters);
+  const { conditions, params } = buildLeadFilterClauses(filters, keyset);
+
+  const sortColumn = SORT_COLUMNS[filters.sortBy ?? 'created_at'];
+  const sortDir = filters.sortDir === 'asc' ? 'ASC' : 'DESC';
+  // `id` is the tiebreaker so ordering is total and paging never repeats a row.
+  const orderBy = `ORDER BY ${sortColumn} ${sortDir} NULLS LAST, id DESC`;
+
   // Fetch one extra row to determine hasMore without a separate COUNT.
   const fetchLimit = filters.limit + 1;
-  conditions.push(`TRUE`); // keep join clean
-  const sql = `SELECT ${COLS} FROM leads WHERE ${conditions.join(' AND ')}
-    ORDER BY created_at DESC, id DESC LIMIT $${i}`;
+  let sql = `SELECT ${COLS} FROM leads WHERE ${conditions.join(' AND ')}
+    ${orderBy} LIMIT $${params.length + 1}`;
   params.push(fetchLimit);
+
+  if (!keyset && filters.offset) {
+    sql += ` OFFSET $${params.length + 1}`;
+    params.push(filters.offset);
+  }
 
   const rows = await query<LeadRow>(sql, params);
   const hasMore = rows.length > filters.limit;
   const trimmed = hasMore ? rows.slice(0, filters.limit) : rows;
   return { rows: trimmed, hasMore };
+}
+
+/** Total number of non-deleted leads matching the same filters, ignoring paging. */
+export async function countLeads(filters: LeadListFilters): Promise<number> {
+  const { conditions, params } = buildLeadFilterClauses(filters, false);
+  const row = await queryOne<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM leads WHERE ${conditions.join(' AND ')}`,
+    params,
+  );
+  return row ? Number(row.count) : 0;
 }
 
 export async function findLeadById(id: string): Promise<LeadRow | null> {

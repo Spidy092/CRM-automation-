@@ -20,17 +20,19 @@ const router = Router();
 
 router.use(authenticate, authenticatedLimiter);
 
-router.get('/', wrap(listPipelinesHandler));
-router.get('/:id', wrap(getPipelineHandler));
-router.post('/', authorize('admin', 'manager'), wrap(createPipelineHandler));
-router.put('/:id', authorize('admin', 'manager'), wrap(updatePipelineHandler));
-router.delete('/:id', authorize('admin'), wrap(deletePipelineHandler));
+router.post('/move-lead', authorize('admin', 'manager', 'sales'), wrap(moveLeadHandler));
 
-router.get('/:pipelineId/stages', wrap(listStagesHandler));
-router.post('/:pipelineId/stages', authorize('admin', 'manager'), wrap(createStageHandler));
+router.get('/stages/:id', wrap(listStagesHandler));
 router.put('/stages/:id', authorize('admin', 'manager'), wrap(updateStageHandler));
 router.delete('/stages/:id', authorize('admin', 'manager'), wrap(deleteStageHandler));
 
-router.post('/move-lead', authorize('admin', 'manager', 'sales'), wrap(moveLeadHandler));
+router.get('/:pipelineId/stages', wrap(listStagesHandler));
+router.post('/:pipelineId/stages', authorize('admin', 'manager'), wrap(createStageHandler));
+
+router.get('/', wrap(listPipelinesHandler));
+router.post('/', authorize('admin', 'manager'), wrap(createPipelineHandler));
+router.get('/:id', wrap(getPipelineHandler));
+router.put('/:id', authorize('admin', 'manager'), wrap(updatePipelineHandler));
+router.delete('/:id', authorize('admin'), wrap(deletePipelineHandler));
 
 export { router as pipelineRoutes };

@@ -42,6 +42,11 @@ export const attachFromLibrarySchema = z.object({
   file_id: z.string().uuid('file_id must be a valid UUID'),
 });
 
+export const attachmentIdParamSchema = z.object({
+  id: z.string().uuid('Template id must be a valid UUID'),
+  attachmentId: z.string().uuid('Attachment id must be a valid UUID'),
+});
+
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;
 export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
 export type ApproveTemplateInput = z.infer<typeof approveTemplateSchema>;

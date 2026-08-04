@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { ScraperConfigPage } from '../ScraperConfigPage';
 

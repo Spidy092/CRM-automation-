@@ -20,7 +20,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     token = authHeader.slice(7);
-  } else if (req.query.apiKey && typeof req.query.apiKey === 'string') {
+  } else if (req.query?.apiKey && typeof req.query.apiKey === 'string') {
     // Allow API key via query string for simpler MCP SSE client integrations (like Claude Web)
     token = req.query.apiKey;
   }

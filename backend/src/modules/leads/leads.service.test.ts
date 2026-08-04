@@ -3,6 +3,7 @@ import { LeadRow } from './leads.types';
 jest.mock('../../workers/queue');
 jest.mock('./leads.repository', () => ({
   findLeads: jest.fn(),
+  countLeads: jest.fn(),
   findLeadById: jest.fn(),
   findExistingForDedup: jest.fn(),
   findLeadsByScraperLogId: jest.fn(),
@@ -53,6 +54,7 @@ import {
   insertActivity,
 } from '../activities/activities.repository';
 import {
+  countLeads,
   findExistingForDedup,
   findLeadById,
   findLeads,
@@ -270,6 +272,37 @@ describe('listLeads', () => {
     const result = await listLeads({ limit: 25 }, { id: 'mgr-1', role: 'manager' });
     expect(result.meta.hasMore).toBe(true);
     expect(result.meta.nextCursor).toBeDefined();
+  });
+
+  it('includes the total row count only when asked', async () => {
+    (findLeads as jest.Mock).mockResolvedValue({ rows: [baseRow], hasMore: true });
+    (countLeads as jest.Mock).mockResolvedValue(212);
+
+    const withCount = await listLeads(
+      { limit: 25, countTotal: true },
+      { id: 'mgr-1', role: 'manager' },
+    );
+    expect(withCount.meta.total).toBe(212);
+
+    const withoutCount = await listLeads({ limit: 25 }, { id: 'mgr-1', role: 'manager' });
+    expect(withoutCount.meta.total).toBeUndefined();
+    expect(countLeads as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('echoes the offset and omits the cursor when offset paging', async () => {
+    (findLeads as jest.Mock).mockResolvedValue({ rows: [baseRow], hasMore: true });
+    const result = await listLeads({ limit: 25, offset: 25 }, { id: 'mgr-1', role: 'manager' });
+    expect(result.meta.offset).toBe(25);
+    expect(result.meta.nextCursor).toBeUndefined();
+  });
+
+  it('omits the cursor when a non-default sort is applied', async () => {
+    (findLeads as jest.Mock).mockResolvedValue({ rows: [baseRow], hasMore: true });
+    const result = await listLeads(
+      { limit: 25, sortBy: 'lead_score', sortDir: 'asc' },
+      { id: 'mgr-1', role: 'manager' },
+    );
+    expect(result.meta.nextCursor).toBeUndefined();
   });
 });
 

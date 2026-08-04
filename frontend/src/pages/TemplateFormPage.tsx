@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
+import { extractVariables } from '@/lib/templateVars';
 import type { MessageChannel, TemplateAttachment } from '@/types';
 import { ArrowLeft, FileStack, FileText, FolderOpen, Image as ImageIcon, Link as LinkIcon, Paperclip, Save, Trash2, Upload, X } from 'lucide-react';
 
@@ -329,18 +330,6 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
   );
 }
 
-const VARIABLE_PATTERN = /\{\{(\w+)\}\}/g;
-
-function extractVariables(body: string): string[] {
-  const found = new Set<string>();
-  let m: RegExpExecArray | null;
-  VARIABLE_PATTERN.lastIndex = 0;
-  while ((m = VARIABLE_PATTERN.exec(body)) !== null) {
-    found.add(m[1]);
-  }
-  return Array.from(found);
-}
-
 export function TemplateFormPage() {
   const { id } = useParams<{ id?: string }>();
   const isEdit = !!id;
@@ -428,7 +417,7 @@ export function TemplateFormPage() {
       <PageHeader
         eyebrow="Outreach"
         title={isEdit ? 'Edit Template' : 'New Template'}
-        description={isEdit ? 'Update this message template.' : 'Create a new message template. It will require approval before use.'}
+        description={isEdit ? 'Update this message template.' : 'Create a new message template. It is ready to use in a sequence straight away.'}
         actions={
           <Button variant="outline" size="sm" asChild>
             <Link to="/templates">

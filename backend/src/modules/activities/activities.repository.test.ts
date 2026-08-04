@@ -40,7 +40,7 @@ describe('activities.repository', () => {
       expect(res).toEqual(baseActivity);
       expect(mockedQueryOne).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO activities'),
-        ['lead-1', 'user-1', 'note', { note: 'hello' }],
+        ['lead-1', 'user-1', 'note', JSON.stringify({ note: 'hello' })],
       );
     });
 

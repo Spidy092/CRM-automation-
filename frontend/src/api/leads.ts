@@ -23,6 +23,13 @@ interface LeadFilters {
   created_after?: string;
   /** When true, only return leads where classification is null */
   unclassified?: boolean;
+  /** Offset paging — alternative to `cursor`, used by the customizable leads table */
+  offset?: number;
+  /** Whitelisted sort column (see backend `listLeadsQuerySchema`) */
+  sort_by?: string;
+  sort_dir?: 'asc' | 'desc';
+  /** Ask the server for the total row count so page numbers can be rendered */
+  count_total?: boolean;
 }
 
 interface LeadsPageResult {
@@ -43,9 +50,40 @@ function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams
   if (filters.limit) params.append('limit', filters.limit.toString());
   if (filters.created_after) params.append('created_after', filters.created_after);
   if (filters.unclassified) params.append('unclassified', 'true');
+  if (filters.offset !== undefined) params.append('offset', filters.offset.toString());
+  if (filters.sort_by) params.append('sort_by', filters.sort_by);
+  if (filters.sort_dir) params.append('sort_dir', filters.sort_dir);
+  if (filters.count_total) params.append('count_total', 'true');
   const actualCursor = cursor || filters.cursor;
   if (actualCursor) params.append('cursor', actualCursor);
   return params;
+}
+
+export interface LeadsTablePage {
+  items: Lead[];
+  meta: { limit: number; hasMore: boolean; total?: number; offset?: number };
+}
+
+/**
+ * Offset-paginated, sortable leads for the customizable leads table. Keeps the
+ * previous page on screen while the next one loads so the table doesn't flash.
+ */
+export function useLeadsTable(
+  filters: Omit<LeadFilters, 'cursor'> & { limit: number; offset: number },
+) {
+  return useQuery({
+    queryKey: ['leads', 'table', filters],
+    queryFn: async (): Promise<LeadsTablePage> => {
+      const params = buildLeadParams({ ...filters, count_total: true });
+      const response = await apiClient.get<ApiResponse<Lead[]>>('/leads', { params });
+      const meta = response.data.meta as LeadsTablePage['meta'] | undefined;
+      return {
+        items: response.data.data ?? [],
+        meta: meta ?? { limit: filters.limit, hasMore: false },
+      };
+    },
+    placeholderData: (previous) => previous,
+  });
 }
 
 /**

@@ -16,6 +16,9 @@ import {
   getRunLeadsHandler,
   retryFailedHandler,
   getStatsSummaryHandler,
+  exportRunLeadsCsvHandler,
+  getGroupsHandler,
+  getTrendsHandler,
 } from './scraper.controller';
 
 const router = Router();
@@ -64,5 +67,14 @@ router.get('/logs/:logId/leads', authorize('admin', 'manager'), wrap(getRunLeads
 
 // Retry just the records that failed on a run — admin only (triggers a new run)
 router.post('/logs/:logId/retry-failed', authorize('admin'), wrap(retryFailedHandler));
+
+// Export leads from a run as CSV — admin and manager
+router.get('/logs/:logId/export', authorize('admin', 'manager'), wrap(exportRunLeadsCsvHandler));
+
+// List distinct group names — all authenticated roles
+router.get('/groups', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), wrap(getGroupsHandler));
+
+// Trend data for charts — all authenticated roles
+router.get('/trends', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), wrap(getTrendsHandler));
 
 export { router as scraperRoutes };

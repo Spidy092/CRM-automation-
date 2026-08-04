@@ -21,6 +21,17 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/gif',
   'application/pdf',
 ]);
+// Client-supplied mimetype (from the multipart Content-Type field) is not
+// trustworthy on its own — it can be set to anything by the uploader. Cross-check
+// the on-disk extension against the same allowlist so a spoofed mimetype can't
+// land an executable file (e.g. `.php`, `.exe`) inside the served /uploads dir.
+const ALLOWED_EXTENSIONS_BY_MIME: Record<string, string[]> = {
+  'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/webp': ['.webp'],
+  'image/gif': ['.gif'],
+  'application/pdf': ['.pdf'],
+};
 
 function publicBaseUrl(): string {
   return process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
@@ -73,8 +84,16 @@ export async function uploadFile(
     );
   }
 
+  const ext = (path.extname(file.originalname) || '').toLowerCase();
+  const allowedExtensions = ALLOWED_EXTENSIONS_BY_MIME[file.mimetype] ?? [];
+  if (!allowedExtensions.includes(ext)) {
+    throw new AppError(
+      `File extension "${ext}" does not match declared type "${file.mimetype}".`,
+      400,
+    );
+  }
+
   const fileId = randomUUID();
-  const ext = path.extname(file.originalname) || '';
   const diskFilename = `${fileId}${ext}`;
   await mkdir(UPLOAD_DIR, { recursive: true });
   const storagePath = path.join(UPLOAD_DIR, diskFilename);

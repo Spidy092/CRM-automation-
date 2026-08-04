@@ -3,7 +3,14 @@ import { logger } from '../../shared/utils/logger';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { Campaign, CampaignLead, CampaignStats, CampaignStepStats } from './campaigns.types';
 
-export async function findCampaigns(): Promise<Campaign[]> {
+export async function findCampaigns(filter?: { pipeline_id?: string }): Promise<Campaign[]> {
+  if (filter?.pipeline_id) {
+    const result = await pool.query<Campaign>(
+      'SELECT * FROM campaigns WHERE pipeline_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC',
+      [filter.pipeline_id],
+    );
+    return result.rows;
+  }
   const result = await pool.query<Campaign>(
     'SELECT * FROM campaigns WHERE deleted_at IS NULL ORDER BY created_at DESC',
   );

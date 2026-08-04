@@ -26,6 +26,9 @@ describe('buildPageContext', () => {
         created_by: 'user-1',
         created_at: '2026-06-29T00:00:00.000Z',
         updated_at: '2026-06-29T00:00:00.000Z',
+        health: 'unknown',
+        webhook_url: null,
+        group_name: null,
       },
       {
         id: '22222222-2222-4222-8222-222222222222',
@@ -38,6 +41,9 @@ describe('buildPageContext', () => {
         created_by: 'user-1',
         created_at: '2026-06-29T00:00:00.000Z',
         updated_at: '2026-06-29T00:00:00.000Z',
+        health: 'healthy',
+        webhook_url: null,
+        group_name: null,
       },
     ];
     queryClient.setQueryData(['scraper', 'configs'], configs);
