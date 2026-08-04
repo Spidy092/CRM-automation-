@@ -3,7 +3,7 @@
 # Stage 1 — builder
 # Compiles TypeScript → dist/
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ RUN npm prune --omit=dev
 # Stage 2 — production
 # Runs as non-root, includes migrations entrypoint
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:26-alpine AS production
 
 # wget is used by the HEALTHCHECK below
 RUN apk add --no-cache wget chromium nss freetype harfbuzz ca-certificates ttf-freefont
