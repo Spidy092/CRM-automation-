@@ -58,6 +58,16 @@ function quickRange(days: number): { start: string; end: string } {
   };
 }
 
+function formatReportDate(value: string, compact = false): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat('en-US', compact
+    ? { month: 'short', day: 'numeric' }
+    : { month: 'short', day: 'numeric', year: 'numeric' }
+  ).format(date);
+}
+
 // ── KPI Card ───────────────────────────────────────────────────────────────
 
 interface KpiCardProps {
@@ -306,7 +316,7 @@ export function ReportsPage() {
             <Section title="Daily Lead Volume" description="Leads created per day">
               {leadItems.length ? (
                 <BarChartGeneric
-                  data={leadItems.map((r) => ({ date: String(r.date).slice(5), count: Number(r.count) }))}
+                  data={leadItems.map((r) => ({ date: formatReportDate(r.date, true), count: Number(r.count) }))}
                   xKey="date" yKey="count" color="#6366f1" />
               ) : <EmptyState icon={<BarChart3 className="h-5 w-5" />} title="No data" description="Select a date range." />}
             </Section>
@@ -321,7 +331,7 @@ export function ReportsPage() {
               <Table
                 headers={['Date', 'Source', 'Count', 'Qualified', 'Conv. Rate']}
                 rows={leadItems.map((r) => [
-                  r.date,
+                  formatReportDate(r.date),
                   r.source ?? '—',
                   r.count,
                   r.qualifiedCount ?? '—',
