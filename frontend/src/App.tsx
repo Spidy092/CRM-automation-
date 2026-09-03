@@ -8,6 +8,7 @@ import type { User, UserRole } from '@/types';
 import { Layout } from '@/components/Layout';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { ToastProvider } from '@/components/ui/Toast';
 import { initTheme } from '@/lib/theme';
 
@@ -71,13 +72,29 @@ const queryClient = new QueryClient({
   },
 });
 
-/** Minimal loading spinner shown while lazy chunks load. */
+/** Layout-preserving loading state shown while lazy chunks load. */
 function PageLoader() {
   return (
-    <div className="flex min-h-[50vh] items-center justify-center">
-      <div className="flex flex-col items-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-        <p className="text-sm text-slate-400">Loading…</p>
+    <div className="space-y-6" role="status" aria-label="Loading page">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-2">
+          <Skeleton className="h-3 w-28 bg-slate-200 dark:bg-slate-800" />
+          <Skeleton className="h-8 w-48 bg-slate-200 dark:bg-slate-800" />
+          <Skeleton className="h-4 w-full max-w-xl bg-slate-200 dark:bg-slate-800" />
+        </div>
+        <Skeleton className="h-9 w-28 bg-slate-200 dark:bg-slate-800" />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((item) => (
+          <Skeleton key={item} className="h-20 w-full rounded-lg bg-slate-200 dark:bg-slate-800" />
+        ))}
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {[0, 1].map((item) => (
+          <Skeleton key={item} className="h-64 w-full rounded-xl bg-slate-200 dark:bg-slate-800" />
+        ))}
       </div>
     </div>
   );
