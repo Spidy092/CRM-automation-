@@ -16,6 +16,8 @@ const metricTone = {
 };
 
 export function PageHeader({ title, description, eyebrow, actions, metrics }: PageHeaderProps) {
+  const metricGridClass = metrics?.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4';
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -32,7 +34,7 @@ export function PageHeader({ title, description, eyebrow, actions, metrics }: Pa
       </div>
 
       {metrics && metrics.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className={`grid gap-3 sm:grid-cols-2 ${metricGridClass}`}>
           {metrics.map((metric) => (
             <div key={metric.label} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 shadow-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{metric.label}</p>
