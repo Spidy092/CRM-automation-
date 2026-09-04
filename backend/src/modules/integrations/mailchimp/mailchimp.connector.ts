@@ -33,12 +33,17 @@ function authHeader(apiKey: string): string {
   return `Basic ${Buffer.from(`anystring:${apiKey}`).toString('base64')}`;
 }
 
-export async function loadCredentials(): Promise<MailchimpCredentials> {
-  const row = await findByName(MAILCHIMP_PROVIDER_NAME);
-  if (!row) throw new AppError('Mailchimp integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Mailchimp credentials not set', 422);
-  const raw = JSON.parse(decrypt(enc)) as unknown;
+export async function loadCredentials(providedCredentials?: unknown): Promise<MailchimpCredentials> {
+  let raw: unknown = providedCredentials;
+
+  if (providedCredentials === undefined) {
+    const row = await findByName(MAILCHIMP_PROVIDER_NAME);
+    if (!row) throw new AppError('Mailchimp integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Mailchimp credentials not set', 422);
+    raw = JSON.parse(decrypt(enc)) as unknown;
+  }
+
   const result = mailchimpCredentialsSchema.safeParse(raw);
   if (!result.success) {
     throw new AppError(
@@ -56,6 +61,7 @@ export async function testConnection(
   try {
     const res = await fetch(`${baseUrl(creds.serverPrefix)}/ping`, {
       headers: { Authorization: authHeader(creds.apiKey) },
+      signal: AbortSignal.timeout(10000),
     });
     if (res.ok) return { ok: true, latencyMs: Date.now() - start };
     let msg = `HTTP ${res.status}`;

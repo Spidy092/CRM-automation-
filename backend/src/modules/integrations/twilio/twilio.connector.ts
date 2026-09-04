@@ -44,18 +44,21 @@ export interface SendSmsOutput {
   latencyMs: number;
 }
 
-export async function loadCredentials(): Promise<TwilioCredentials> {
-  const row = await findByName(TWILIO_PROVIDER_NAME);
-  if (!row) throw new AppError('Twilio integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Twilio credentials not set', 422);
+export async function loadCredentials(providedCredentials?: unknown): Promise<TwilioCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`Twilio credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(TWILIO_PROVIDER_NAME);
+    if (!row) throw new AppError('Twilio integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Twilio credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`Twilio credential decryption failed: ${message}`, 422);
+    }
   }
   const result = twilioCredentialsSchema.safeParse(parsed);
   if (!result.success) {
@@ -118,6 +121,7 @@ export async function testConnection(
       headers: {
         authorization: `Basic ${basic}`,
       },
+      signal: AbortSignal.timeout(10000),
     });
 
     if (res.ok) {

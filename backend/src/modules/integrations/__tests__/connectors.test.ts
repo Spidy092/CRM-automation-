@@ -187,9 +187,9 @@ describe('googleSheetsCredentialsSchema', () => {
     expect(googleSheetsCredentialsSchema.safeParse({ ...valid, clientId: '' }).success).toBe(false);
   });
 
-  it('rejects when accessToken is missing', () => {
+  it('accepts credentials without accessToken', () => {
     const { accessToken: _a, ...withoutToken } = valid;
-    expect(googleSheetsCredentialsSchema.safeParse(withoutToken).success).toBe(false);
+    expect(googleSheetsCredentialsSchema.safeParse(withoutToken).success).toBe(true);
   });
 
   it('rejects unknown fields (strict mode)', () => {

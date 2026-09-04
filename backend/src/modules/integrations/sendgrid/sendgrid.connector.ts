@@ -61,18 +61,21 @@ export interface SendEmailOutput {
   latencyMs: number;
 }
 
-export async function loadCredentials(): Promise<SendgridCredentials> {
-  const row = await findByName(SENDGRID_PROVIDER_NAME);
-  if (!row) throw new AppError('SendGrid integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('SendGrid credentials not set', 422);
+export async function loadCredentials(providedCredentials?: unknown): Promise<SendgridCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`SendGrid credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(SENDGRID_PROVIDER_NAME);
+    if (!row) throw new AppError('SendGrid integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('SendGrid credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`SendGrid credential decryption failed: ${message}`, 422);
+    }
   }
   const result = sendgridCredentialsSchema.safeParse(parsed);
   if (!result.success) {
@@ -169,6 +172,7 @@ export async function testConnection(
       headers: {
         authorization: `Bearer ${creds.apiKey}`,
       },
+      signal: AbortSignal.timeout(10000),
     });
 
     if (res.ok) {

@@ -30,12 +30,15 @@ function authHeader(secretKey: string): string {
   return `Bearer ${secretKey}`;
 }
 
-export async function loadCredentials(): Promise<StripeCredentials> {
-  const row = await findByName(STRIPE_PROVIDER_NAME);
-  if (!row) throw new AppError('Stripe integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Stripe credentials not set', 422);
-  const raw = JSON.parse(decrypt(enc)) as unknown;
+export async function loadCredentials(providedCredentials?: unknown): Promise<StripeCredentials> {
+  let raw: unknown = providedCredentials;
+  if (raw === undefined) {
+    const row = await findByName(STRIPE_PROVIDER_NAME);
+    if (!row) throw new AppError('Stripe integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Stripe credentials not set', 422);
+    raw = JSON.parse(decrypt(enc)) as unknown;
+  }
   const result = stripeCredentialsSchema.safeParse(raw);
   if (!result.success) {
     throw new AppError(
@@ -56,6 +59,7 @@ export async function testConnection(
   try {
     const res = await fetch(`${STRIPE_BASE}/balance`, {
       headers: { Authorization: authHeader(creds.secretKey) },
+      signal: AbortSignal.timeout(10000),
     });
     if (res.ok) return { ok: true, latencyMs: Date.now() - start };
     let msg = `HTTP ${res.status}`;

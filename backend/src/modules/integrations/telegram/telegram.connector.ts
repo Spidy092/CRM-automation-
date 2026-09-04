@@ -28,12 +28,15 @@ function botBase(token: string): string {
   return `https://api.telegram.org/bot${token}`;
 }
 
-export async function loadCredentials(): Promise<TelegramCredentials> {
-  const row = await findByName(TELEGRAM_PROVIDER_NAME);
-  if (!row) throw new AppError('Telegram integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Telegram credentials not set', 422);
-  const raw = JSON.parse(decrypt(enc)) as unknown;
+export async function loadCredentials(providedCredentials?: unknown): Promise<TelegramCredentials> {
+  let raw: unknown = providedCredentials;
+  if (raw === undefined) {
+    const row = await findByName(TELEGRAM_PROVIDER_NAME);
+    if (!row) throw new AppError('Telegram integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Telegram credentials not set', 422);
+    raw = JSON.parse(decrypt(enc)) as unknown;
+  }
   const result = telegramCredentialsSchema.safeParse(raw);
   if (!result.success) {
     throw new AppError(
@@ -52,7 +55,9 @@ export async function testConnection(
 ): Promise<{ ok: boolean; error?: string; latencyMs: number; botUsername?: string }> {
   const start = Date.now();
   try {
-    const res = await fetch(`${botBase(creds.botToken)}/getMe`);
+    const res = await fetch(`${botBase(creds.botToken)}/getMe`, {
+      signal: AbortSignal.timeout(10000),
+    });
     const body = (await res.json()) as {
       ok: boolean;
       result?: { username?: string };

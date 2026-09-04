@@ -30,12 +30,15 @@ export const linkedinCredentialsSchema = z
 
 export type LinkedInCredentials = z.infer<typeof linkedinCredentialsSchema>;
 
-export async function loadCredentials(): Promise<LinkedInCredentials> {
-  const row = await findByName(LINKEDIN_PROVIDER_NAME);
-  if (!row) throw new AppError('LinkedIn integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('LinkedIn credentials not set', 422);
-  const raw = JSON.parse(decrypt(enc)) as unknown;
+export async function loadCredentials(providedCredentials?: unknown): Promise<LinkedInCredentials> {
+  let raw: unknown = providedCredentials;
+  if (raw === undefined) {
+    const row = await findByName(LINKEDIN_PROVIDER_NAME);
+    if (!row) throw new AppError('LinkedIn integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('LinkedIn credentials not set', 422);
+    raw = JSON.parse(decrypt(enc)) as unknown;
+  }
   const result = linkedinCredentialsSchema.safeParse(raw);
   if (!result.success) {
     throw new AppError(
@@ -59,6 +62,7 @@ export async function testConnection(
         Authorization: `Bearer ${creds.accessToken}`,
         'LinkedIn-Version': '202401',
       },
+      signal: AbortSignal.timeout(10000),
     });
     if (res.ok) return { ok: true, latencyMs: Date.now() - start };
     let msg = `HTTP ${res.status}`;

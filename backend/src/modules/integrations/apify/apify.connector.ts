@@ -47,12 +47,15 @@ function authHeader(token: string): string {
   return `Bearer ${token}`;
 }
 
-export async function loadCredentials(): Promise<ApifyCredentials> {
-  const row = await findByName(APIFY_PROVIDER_NAME);
-  if (!row) throw new AppError('Apify integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Apify credentials not set', 422);
-  const raw = JSON.parse(decrypt(enc)) as unknown;
+export async function loadCredentials(providedCredentials?: unknown): Promise<ApifyCredentials> {
+  let raw: unknown = providedCredentials;
+  if (raw === undefined) {
+    const row = await findByName(APIFY_PROVIDER_NAME);
+    if (!row) throw new AppError('Apify integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Apify credentials not set', 422);
+    raw = JSON.parse(decrypt(enc)) as unknown;
+  }
   const result = apifyCredentialsSchema.safeParse(raw);
   if (!result.success) {
     throw new AppError(
@@ -74,6 +77,7 @@ export async function testConnection(
   try {
     const res = await fetch(`${APIFY_BASE_URL}/users/me`, {
       headers: { Authorization: authHeader(creds.apiToken) },
+      signal: AbortSignal.timeout(10000),
     });
     const latencyMs = Date.now() - start;
     if (res.ok) {

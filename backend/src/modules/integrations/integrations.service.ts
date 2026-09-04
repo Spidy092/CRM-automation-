@@ -241,42 +241,42 @@ export async function testIntegration(
         break;
       }
       case 'twilio': {
-        const creds = await twilioConnector.loadCredentials();
+        const creds = await twilioConnector.loadCredentials(activeCredentials);
         const testRes = await twilioConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Twilio connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'sendgrid': {
-        const creds = await sendgridConnector.loadCredentials();
+        const creds = await sendgridConnector.loadCredentials(activeCredentials);
         const testRes = await sendgridConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `SendGrid connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'smtp': {
-        const creds = await smtpConnector.loadCredentials();
+        const creds = await smtpConnector.loadCredentials(activeCredentials);
         const testRes = await smtpConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `SMTP connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'google_sheets': {
-        const creds = await googleSheetsConnector.loadCredentials();
+        const creds = await googleSheetsConnector.loadCredentials(activeCredentials);
         const testRes = await googleSheetsConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Google Sheets connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'google_calendar': {
-        const creds = await googleCalendarConnector.loadCredentials();
+        const creds = await googleCalendarConnector.loadCredentials(activeCredentials);
         const testRes = await googleCalendarConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Google Calendar connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'outlook': {
-        const creds = await outlookConnector.loadCredentials();
+        const creds = await outlookConnector.loadCredentials(activeCredentials);
         const testRes = await outlookConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Outlook connection successful (${testRes.latencyMs}ms).`;
@@ -315,42 +315,42 @@ export async function testIntegration(
         break;
       }
       case 'mailchimp': {
-        const creds = await mailchimpConnector.loadCredentials();
+        const creds = await mailchimpConnector.loadCredentials(activeCredentials);
         const testRes = await mailchimpConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Mailchimp connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'stripe': {
-        const creds = await stripeConnector.loadCredentials();
+        const creds = await stripeConnector.loadCredentials(activeCredentials);
         const testRes = await stripeConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Stripe connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'zapier': {
-        const creds = await zapierConnector.loadCredentials();
+        const creds = await zapierConnector.loadCredentials(activeCredentials);
         const testRes = await zapierConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Zapier webhook reachable (${testRes.latencyMs}ms).`;
         break;
       }
       case 'linkedin': {
-        const creds = await linkedinConnector.loadCredentials();
+        const creds = await linkedinConnector.loadCredentials(activeCredentials);
         const testRes = await linkedinConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `LinkedIn connection successful (${testRes.latencyMs}ms).`;
         break;
       }
       case 'telegram': {
-        const creds = await telegramConnector.loadCredentials();
+        const creds = await telegramConnector.loadCredentials(activeCredentials);
         const testRes = await telegramConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Telegram bot connected${testRes.botUsername ? ` (@${testRes.botUsername})` : ''} (${testRes.latencyMs}ms).`;
         break;
       }
       case 'apify': {
-        const creds = await apifyConnector.loadCredentials();
+        const creds = await apifyConnector.loadCredentials(activeCredentials);
         const testRes = await apifyConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Apify connected${testRes.username ? ` (${testRes.username})` : ''} (${testRes.latencyMs}ms).`;

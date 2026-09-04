@@ -5,6 +5,7 @@
  */
 
 const mockSendMail = jest.fn();
+const mockVerify = jest.fn();
 
 jest.mock('../integrations.repository', () => ({
   findByName: jest.fn(),
@@ -15,14 +16,14 @@ jest.mock('../../../shared/utils/encryption', () => ({
 }));
 jest.mock('nodemailer', () => ({
   __esModule: true,
-  default: { createTransport: jest.fn(() => ({ sendMail: mockSendMail })) },
-  createTransport: jest.fn(() => ({ sendMail: mockSendMail })),
+  default: { createTransport: jest.fn(() => ({ sendMail: mockSendMail, verify: mockVerify })) },
+  createTransport: jest.fn(() => ({ sendMail: mockSendMail, verify: mockVerify })),
 }));
 jest.mock('../../../shared/utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { loadCredentials, sendEmail } from './smtp.connector';
+import { loadCredentials, sendEmail, testConnection } from './smtp.connector';
 import { findByName, findCredentialsById } from '../integrations.repository';
 import { decryptJson } from '../../../shared/utils/encryption';
 import { AppError } from '../../../shared/middleware/errorHandler';
@@ -81,6 +82,31 @@ describe('smtp loadCredentials', () => {
   it('returns parsed credentials on success', async () => {
     primeValidCreds();
     await expect(loadCredentials()).resolves.toMatchObject({ host: 'smtp.x.com', port: 587 });
+  });
+
+  it('parses draft credentials directly without querying database', async () => {
+    const draft = {
+      host: 'smtp.gmail.com',
+      port: '587',
+      secure: false,
+      user: 'user@example.com',
+      pass: 'secret',
+      fromEmail: 'user@example.com',
+    };
+    const creds = await loadCredentials(draft);
+    expect(creds.host).toBe('smtp.gmail.com');
+    expect(creds.port).toBe(587);
+    expect(creds.user).toBe('user@example.com');
+    expect(mockFindByName).not.toHaveBeenCalled();
+    expect(mockFindCreds).not.toHaveBeenCalled();
+  });
+
+  it('throws 422 when draft credentials fail schema validation', async () => {
+    const invalidDraft = { host: 'smtp.gmail.com' };
+    await expect(loadCredentials(invalidDraft)).rejects.toMatchObject({ statusCode: 422 });
+    await expect(loadCredentials(invalidDraft)).rejects.toThrow('SMTP credentials invalid');
+    expect(mockFindByName).not.toHaveBeenCalled();
+    expect(mockFindCreds).not.toHaveBeenCalled();
   });
 });
 
@@ -151,5 +177,22 @@ describe('smtp sendEmail', () => {
         attachments: [{ filename: 'flyer.png', path: '/x/flyer.png', contentType: 'image/png' }],
       }),
     );
+  });
+});
+
+describe('smtp testConnection', () => {
+  it('returns ok: true when transporter.verify succeeds', async () => {
+    mockVerify.mockResolvedValue(true);
+    const res = await testConnection(VALID);
+    expect(res.ok).toBe(true);
+    expect(res.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(mockVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns ok: false when transporter.verify rejects', async () => {
+    mockVerify.mockRejectedValue(new Error('Invalid login: 535-5.7.8 Username and Password not accepted'));
+    const res = await testConnection(VALID);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('Invalid login: 535-5.7.8 Username and Password not accepted');
   });
 });

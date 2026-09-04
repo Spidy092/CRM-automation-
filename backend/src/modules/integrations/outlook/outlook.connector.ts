@@ -22,18 +22,30 @@ import { logger } from '../../../shared/utils/logger';
 
 export const OUTLOOK_PROVIDER_NAME = 'outlook';
 
-export const outlookCredentialsSchema = z
-  .object({
-    tenantId: z.string().min(1, 'tenantId is required'),
-    clientId: z.string().min(1, 'clientId is required'),
-    clientSecret: z.string().min(1, 'clientSecret is required'),
-    accessToken: z.string().min(1, 'accessToken is required'),
-    refreshToken: z.string().min(1, 'refreshToken is required'),
-    /** The mailbox address used as the sender (must match the authenticated user). */
-    fromAddress: z.string().email('fromAddress must be a valid email'),
-    fromName: z.string().max(120).optional(),
-  })
-  .strict();
+export const outlookCredentialsSchema = z.preprocess(
+  (val: unknown) => {
+    if (val && typeof val === 'object') {
+      const obj = val as Record<string, unknown>;
+      return {
+        ...obj,
+        fromAddress: obj.fromAddress ?? obj.fromEmail,
+      };
+    }
+    return val;
+  },
+  z
+    .object({
+      tenantId: z.string().min(1, 'tenantId is required'),
+      clientId: z.string().min(1, 'clientId is required'),
+      clientSecret: z.string().min(1, 'clientSecret is required'),
+      accessToken: z.string().optional(),
+      refreshToken: z.string().optional(),
+      /** The mailbox address used as the sender (must match the authenticated user). */
+      fromAddress: z.string().email('fromAddress must be a valid email'),
+      fromName: z.string().max(120).optional(),
+    })
+    .strict(),
+);
 
 export type OutlookCredentials = z.infer<typeof outlookCredentialsSchema>;
 
@@ -45,18 +57,21 @@ export type OutlookResult =
 
 // ── Credential loader ────────────────────────────────────────────────────────
 
-export async function loadCredentials(): Promise<OutlookCredentials> {
-  const row = await findByName(OUTLOOK_PROVIDER_NAME);
-  if (!row) throw new AppError('Outlook integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Outlook credentials not set', 422);
+export async function loadCredentials(providedCredentials?: unknown): Promise<OutlookCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`Outlook credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(OUTLOOK_PROVIDER_NAME);
+    if (!row) throw new AppError('Outlook integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Outlook credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`Outlook credential decryption failed: ${message}`, 422);
+    }
   }
 
   const result = outlookCredentialsSchema.safeParse(parsed);
@@ -73,16 +88,25 @@ export async function loadCredentials(): Promise<OutlookCredentials> {
 
 async function refreshAccessToken(creds: OutlookCredentials): Promise<string> {
   const tokenUrl = `https://login.microsoftonline.com/${creds.tenantId}/oauth2/v2.0/token`;
+  const params: Record<string, string> = {
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
+  };
+
+  if (creds.refreshToken) {
+    params.refresh_token = creds.refreshToken;
+    params.grant_type = 'refresh_token';
+    params.scope = 'https://graph.microsoft.com/Mail.Send offline_access';
+  } else {
+    params.grant_type = 'client_credentials';
+    params.scope = 'https://graph.microsoft.com/.default';
+  }
+
   const res = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: creds.clientId,
-      client_secret: creds.clientSecret,
-      refresh_token: creds.refreshToken,
-      grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Mail.Send offline_access',
-    }),
+    signal: AbortSignal.timeout(10000),
+    body: new URLSearchParams(params),
   });
   if (!res.ok) {
     throw new AppError(`Outlook token refresh failed: HTTP ${res.status}`, 502);
@@ -154,9 +178,19 @@ export async function sendEmail(input: SendEmailInput): Promise<OutlookResult> {
     'Content-Type': 'application/json',
   });
 
+  let token = creds.accessToken;
+  if (!token) {
+    try {
+      token = await refreshAccessToken(creds);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'token refresh failed';
+      return { ok: false, error: message, retryable: false, latencyMs: Date.now() - start };
+    }
+  }
+
   let res = await loggedFetch(
     url,
-    { method: 'POST', headers: headers(creds.accessToken), body },
+    { method: 'POST', headers: headers(token), body },
     {
       channel: 'sendgrid',
       leadId: input.leadId,

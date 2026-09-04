@@ -26,7 +26,7 @@ export const googleSheetsCredentialsSchema = z
   .object({
     clientId: z.string().min(1, 'clientId is required'),
     clientSecret: z.string().min(1, 'clientSecret is required'),
-    accessToken: z.string().min(1, 'accessToken is required'),
+    accessToken: z.string().optional(),
     refreshToken: z.string().min(1, 'refreshToken is required'),
     /** Optional: default spreadsheet to write to */
     spreadsheetId: z.string().min(1).optional(),
@@ -43,18 +43,21 @@ export type SheetsResult =
 
 // ── Credential loader ────────────────────────────────────────────────────────
 
-export async function loadCredentials(): Promise<GoogleSheetsCredentials> {
-  const row = await findByName(GOOGLE_SHEETS_PROVIDER_NAME);
-  if (!row) throw new AppError('Google Sheets integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Google Sheets credentials not set', 422);
+export async function loadCredentials(providedCredentials?: unknown): Promise<GoogleSheetsCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`Google Sheets credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(GOOGLE_SHEETS_PROVIDER_NAME);
+    if (!row) throw new AppError('Google Sheets integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Google Sheets credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`Google Sheets credential decryption failed: ${message}`, 422);
+    }
   }
 
   const result = googleSheetsCredentialsSchema.safeParse(parsed);
@@ -74,6 +77,7 @@ async function refreshAccessToken(creds: GoogleSheetsCredentials): Promise<strin
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    signal: AbortSignal.timeout(10000),
     body: new URLSearchParams({
       client_id: creds.clientId,
       client_secret: creds.clientSecret,
@@ -147,9 +151,19 @@ export async function appendRows(
     'Content-Type': 'application/json',
   });
 
+  let token = creds.accessToken;
+  if (!token) {
+    try {
+      token = await refreshAccessToken(creds);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'token refresh failed';
+      return { ok: false, error: message, retryable: false, latencyMs: Date.now() - start };
+    }
+  }
+
   let res = await loggedFetch(
     url,
-    { method: 'POST', headers: headers(creds.accessToken), body },
+    { method: 'POST', headers: headers(token), body },
     {
       channel: 'google_ads', // connector.base only allows its typed channels; use closest
       leadId,

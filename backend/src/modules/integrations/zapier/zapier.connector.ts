@@ -23,12 +23,15 @@ export const zapierCredentialsSchema = z
 
 export type ZapierCredentials = z.infer<typeof zapierCredentialsSchema>;
 
-export async function loadCredentials(): Promise<ZapierCredentials> {
-  const row = await findByName(ZAPIER_PROVIDER_NAME);
-  if (!row) throw new AppError('Zapier integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Zapier credentials not set', 422);
-  const raw = JSON.parse(decrypt(enc)) as unknown;
+export async function loadCredentials(providedCredentials?: unknown): Promise<ZapierCredentials> {
+  let raw: unknown = providedCredentials;
+  if (raw === undefined) {
+    const row = await findByName(ZAPIER_PROVIDER_NAME);
+    if (!row) throw new AppError('Zapier integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Zapier credentials not set', 422);
+    raw = JSON.parse(decrypt(enc)) as unknown;
+  }
   const result = zapierCredentialsSchema.safeParse(raw);
   if (!result.success) {
     throw new AppError(
@@ -56,6 +59,7 @@ export async function testConnection(
         source: 'crm-integration-test',
         timestamp: new Date().toISOString(),
       }),
+      signal: AbortSignal.timeout(10000),
     });
     // Zapier returns 200 for active hooks, anything else is an error
     if (res.status === 200) return { ok: true, latencyMs: Date.now() - start };

@@ -28,7 +28,7 @@ export const googleCalendarCredentialsSchema = z
   .object({
     clientId: z.string().min(1, 'clientId is required'),
     clientSecret: z.string().min(1, 'clientSecret is required'),
-    accessToken: z.string().min(1, 'accessToken is required'),
+    accessToken: z.string().optional(),
     refreshToken: z.string().min(1, 'refreshToken is required'),
     /** Target calendar — defaults to 'primary' if omitted. */
     calendarId: z.string().min(1).optional(),
@@ -45,18 +45,21 @@ export type CalendarResult =
 
 // ── Credential loader ────────────────────────────────────────────────────────
 
-export async function loadCredentials(): Promise<GoogleCalendarCredentials> {
-  const row = await findByName(GOOGLE_CALENDAR_PROVIDER_NAME);
-  if (!row) throw new AppError('Google Calendar integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('Google Calendar credentials not set', 422);
+export async function loadCredentials(providedCredentials?: unknown): Promise<GoogleCalendarCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`Google Calendar credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(GOOGLE_CALENDAR_PROVIDER_NAME);
+    if (!row) throw new AppError('Google Calendar integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('Google Calendar credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`Google Calendar credential decryption failed: ${message}`, 422);
+    }
   }
 
   const result = googleCalendarCredentialsSchema.safeParse(parsed);
@@ -75,6 +78,7 @@ async function refreshAccessToken(creds: GoogleCalendarCredentials): Promise<str
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    signal: AbortSignal.timeout(10000),
     body: new URLSearchParams({
       client_id: creds.clientId,
       client_secret: creds.clientSecret,
@@ -154,9 +158,19 @@ export async function createEvent(
     'Content-Type': 'application/json',
   });
 
+  let token = creds.accessToken;
+  if (!token) {
+    try {
+      token = await refreshAccessToken(creds);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'token refresh failed';
+      return { ok: false, error: message, retryable: false, latencyMs: Date.now() - start };
+    }
+  }
+
   let res = await loggedFetch(
     url,
-    { method: 'POST', headers: headers(creds.accessToken), body },
+    { method: 'POST', headers: headers(token), body },
     {
       channel: 'google_ads',
       leadId,
@@ -238,7 +252,16 @@ export async function deleteEvent(eventId: string): Promise<{ ok: boolean; error
     Authorization: `Bearer ${token}`,
   });
 
-  let res = await fetch(url, { method: 'DELETE', headers: headers(creds.accessToken) });
+  let deleteToken = creds.accessToken;
+  if (!deleteToken) {
+    try {
+      deleteToken = await refreshAccessToken(creds);
+    } catch {
+      return { ok: false, error: 'Token refresh failed' };
+    }
+  }
+
+  let res = await fetch(url, { method: 'DELETE', headers: headers(deleteToken) });
 
   if (!res.ok && res.status === 401) {
     try {

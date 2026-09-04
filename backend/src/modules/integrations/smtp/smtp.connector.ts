@@ -20,8 +20,14 @@ export const SMTP_PROVIDER_NAME = 'smtp';
 export const smtpCredentialsSchema = z
   .object({
     host: z.string().min(1, 'host is required'),
-    port: z.number().int().min(1).max(65535),
-    secure: z.boolean().default(false),
+    port: z.preprocess(
+      (val) => (typeof val === 'string' ? parseInt(val, 10) : val),
+      z.number().int().min(1).max(65535),
+    ),
+    secure: z.preprocess(
+      (val) => (typeof val === 'string' ? val === 'true' || val === '1' : val),
+      z.boolean(),
+    ).default(false),
     user: z.string().min(1, 'user is required'),
     pass: z.string().min(1, 'pass is required'),
     fromEmail: z.string().email('fromEmail must be a valid email'),
@@ -58,19 +64,23 @@ export type SmtpResult =
   | { ok: true; externalId?: string; latencyMs: number }
   | { ok: false; error: string; retryable: boolean; latencyMs: number };
 
-export async function loadCredentials(): Promise<SmtpCredentials> {
-  const row = await findByName(SMTP_PROVIDER_NAME);
-  if (!row) throw new AppError('SMTP integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('SMTP credentials not set', 422);
+export async function loadCredentials(providedCredentials?: unknown): Promise<SmtpCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`SMTP credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(SMTP_PROVIDER_NAME);
+    if (!row) throw new AppError('SMTP integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('SMTP credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`SMTP credential decryption failed: ${message}`, 422);
+    }
   }
+
   const result = smtpCredentialsSchema.safeParse(parsed);
   if (!result.success) {
     throw new AppError(
@@ -158,8 +168,11 @@ export async function testConnection(
     const transporter = nodemailer.createTransport({
       host: creds.host,
       port: creds.port,
-      secure: creds.secure,
+      secure: creds.secure ?? (creds.port === 465),
       auth: { user: creds.user, pass: creds.pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
     });
     await transporter.verify();
     return { ok: true, latencyMs: Date.now() - start };
