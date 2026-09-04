@@ -35,7 +35,7 @@ export function NewsletterPage() {
       await toggleDigestMutation.mutateAsync({ enabled: newState });
       setIsAutomatedDigestEnabled(newState);
       showToast(`Automated digest ${newState ? 'enabled' : 'disabled'}.`);
-    } catch (err) {
+    } catch {
       showToast('Failed to toggle automated digest.', 'error');
     }
   };

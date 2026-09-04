@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useLogin } from '@/api/auth';
 import { useAuthStore } from '@/store/authStore';
+import { getApiErrorMessage } from '@/lib/apiError';
 import { Loader2, Lock, Mail, Zap, Eye, EyeOff, AlertCircle, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,7 +81,7 @@ export function LoginPage() {
       setAuth(result.user, result.accessToken, result.refreshToken);
       navigate('/');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Login failed. Please try again.';
+      const message = getApiErrorMessage(err, 'Login failed. Please try again.');
       setError(message);
       setShake(true);
       window.setTimeout(() => setShake(false), 280);

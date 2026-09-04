@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/lib/test-utils';
 import { ForgotPasswordPage } from '../ForgotPasswordPage';
 
@@ -77,5 +78,13 @@ describe('ForgotPasswordPage', () => {
     const { container } = renderWithProviders(<ForgotPasswordPage />);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(container).toBeTruthy();
+  });
+  it("blocks an empty submission before calling the API", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ForgotPasswordPage />);
+
+    await user.click(screen.getByRole("button", { name: "Send Reset Link" }));
+
+    expect(await screen.findByText("Email is required")).toBeInTheDocument();
   });
 });

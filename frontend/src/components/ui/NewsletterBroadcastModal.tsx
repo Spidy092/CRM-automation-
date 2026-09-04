@@ -25,7 +25,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
       await broadcastMutation.mutateAsync({ subject, htmlBody });
       showToast('Broadcast enqueued successfully!');
       onClose();
-    } catch (err) {
+    } catch {
       showToast('Failed to enqueue broadcast.', 'error');
     }
   };

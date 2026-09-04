@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/Toast';
-import { getApiErrorMessage } from '@/lib/apiError';
+import { getApiErrorMessage, getApiErrorStatus } from '@/lib/apiError';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { CheckCircle, Send } from 'lucide-react';
 
@@ -46,7 +46,7 @@ export function PublicFormPage() {
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
 
   const errorMessage = error ? getApiErrorMessage(error, '') : '';
-  const isInactive = errorMessage.toLowerCase().includes('inactive') || (error as any)?.response?.status === 403;
+  const isInactive = errorMessage.toLowerCase().includes('inactive') || getApiErrorStatus(error) === 403;
 
   const visibleFields = useMemo(
     () => form?.fields.filter((field) => field.type !== 'hidden') ?? [],

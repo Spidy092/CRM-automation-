@@ -8,6 +8,7 @@ import { Trash2, Copy, Key, Check } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 
 export function ApiKeysPage() {
   const { data: keys = [], refetch, isLoading } = useApiKeys();
@@ -47,8 +48,8 @@ export function ApiKeysPage() {
       setNewRawKey(result.rawKey);
       setName('');
       refetch();
-    } catch (err: any) {
-      showToast(err.message, 'error');
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, 'Failed to create API key'), 'error');
     }
   };
 
@@ -58,8 +59,8 @@ export function ApiKeysPage() {
       await deleteMutation.mutateAsync(id);
       showToast('Key revoked successfully', 'success');
       refetch();
-    } catch (err: any) {
-      showToast(err.message, 'error');
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, 'Failed to revoke API key'), 'error');
     }
   };
 

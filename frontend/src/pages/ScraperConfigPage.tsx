@@ -304,14 +304,16 @@ function JsonField({
   );
 
   useEffect(() => {
-    try {
-      const parsed = localValue ? JSON.parse(localValue) : undefined;
-      if (JSON.stringify(parsed) !== JSON.stringify(value)) {
-        setLocalValue(value && Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : '');
+    const nextValue = value && Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : '';
+    setLocalValue((currentValue) => {
+      try {
+        const parsed = currentValue ? JSON.parse(currentValue) : undefined;
+        return JSON.stringify(parsed) !== JSON.stringify(value) ? nextValue : currentValue;
+      } catch {
+        // Do nothing, let user keep typing invalid JSON
+        return currentValue;
       }
-    } catch {
-      // Do nothing, let user keep typing invalid JSON
-    }
+    });
   }, [value]);
 
   // Invalid JSON used to be swallowed silently: the textarea kept showing the
@@ -1037,6 +1039,9 @@ export function ScraperConfigPage() {
   const { data: runLeadsData, isLoading: runLeadsLoading } = useScraperRunLeads(showRunLeads ?? '');
   const { data: groups } = useScraperGroups();
   const { data: trends } = useScraperTrends(14);
+  const groupNames = Array.isArray(groups)
+    ? groups.filter((group): group is string => typeof group === "string")
+    : [];
 
   const trendSeries: SeriesDef[] = [
     { key: 'leads_imported', label: 'New Leads', color: '#10b981' },
@@ -1402,14 +1407,14 @@ export function ScraperConfigPage() {
                   <option key={key} value={key}>{label}</option>
                 ))}
               </select>
-              {groups && groups.length > 0 && (
+              {groupNames.length > 0 && (
                 <select
                   value={filterGroup}
                   onChange={(e) => setFilterGroup(e.target.value)}
                   className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm"
                 >
                   <option value="">All groups</option>
-                  {groups.map((g) => (
+                  {groupNames.map((g) => (
                     <option key={g} value={g}>{g}</option>
                   ))}
                 </select>
@@ -1553,7 +1558,7 @@ export function ScraperConfigPage() {
                   list="scraper-group-suggestions"
                 />
                 <datalist id="scraper-group-suggestions">
-                  {(groups ?? []).map((g) => <option key={g} value={g} />)}
+                  {groupNames.map((g) => <option key={g} value={g} />)}
                 </datalist>
               </div>
 

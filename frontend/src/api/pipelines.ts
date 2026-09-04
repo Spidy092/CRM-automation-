@@ -25,6 +25,12 @@ export interface UpdatePipelineInput {
   is_default?: boolean;
 }
 
+function hasLeadItems(value: unknown): value is { items: Lead[] } {
+  if (typeof value !== 'object' || value === null) return false;
+  const items = (value as { items?: unknown }).items;
+  return Array.isArray(items);
+}
+
 export function usePipelines() {
   return useQuery({
     queryKey: ['pipelines'],
@@ -105,18 +111,14 @@ export function useMoveLead() {
       await queryClient.cancelQueries({ queryKey: ['leads'] });
 
       const previousLeadsQueries = queryClient.getQueriesData({ queryKey: ['leads'] });
-
-      queryClient.setQueriesData<any>({ queryKey: ['leads'] }, (oldData) => {
-        if (!oldData) return oldData;
-        if (Array.isArray(oldData.items)) {
-          return {
-            ...oldData,
-            items: oldData.items.map((lead: Lead) =>
-              lead.id === leadId ? { ...lead, pipeline_stage_id: stageId } : lead,
-            ),
-          };
-        }
-        return oldData;
+      queryClient.setQueriesData<unknown>({ queryKey: ['leads'] }, (oldData) => {
+        if (!hasLeadItems(oldData)) return oldData;
+        return {
+          ...oldData,
+          items: oldData.items.map((lead) =>
+            lead.id === leadId ? { ...lead, pipeline_stage_id: stageId } : lead,
+          ),
+        };
       });
 
       return { previousLeadsQueries };

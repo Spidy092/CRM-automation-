@@ -39,7 +39,7 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
       await updateMutation.mutateAsync(formData);
       showToast('AI Digest settings updated successfully!');
       onClose();
-    } catch (err) {
+    } catch {
       showToast('Failed to save AI Digest settings.', 'error');
     }
   };

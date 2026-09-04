@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useForgotPassword } from '@/api/auth';
+import { getApiErrorMessage } from '@/lib/apiError';
 import { Loader2, Mail, Zap, ArrowLeft } from 'lucide-react';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const forgotPassword = useForgotPassword();
 
@@ -13,15 +15,22 @@ export function ForgotPasswordPage() {
     e.preventDefault();
     setError('');
 
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      setEmailError('Email is required');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setEmailError('Enter a valid email');
+      return;
+    }
+    setEmailError('');
+
     try {
-      await forgotPassword.mutateAsync(email);
+      await forgotPassword.mutateAsync(normalizedEmail);
       setSubmitted(true);
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Something went wrong. Please try again.');
-      }
+      setError(getApiErrorMessage(err, 'Something went wrong. Please try again.'));
     }
   };
 
@@ -115,12 +124,22 @@ export function ForgotPasswordPage() {
                       autoComplete="email"
                       required
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        if (emailError) setEmailError('');
+                      }}
+                      aria-invalid={Boolean(emailError)}
+                      aria-describedby={emailError ? 'forgot-email-error' : undefined}
                       placeholder="you@company.com"
                       className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-500 outline-none transition-all duration-200
                         focus:border-indigo-500/60 focus:bg-white/8 focus:ring-2 focus:ring-indigo-500/20"
                     />
                   </div>
+                  {emailError && (
+                    <p id="forgot-email-error" className="text-xs text-red-300">
+                      {emailError}
+                    </p>
+                  )}
                 </div>
 
                 <button
