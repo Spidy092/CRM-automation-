@@ -1,10 +1,11 @@
+import '@testing-library/jest-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
-import { renderWithProviders } from '@/lib/test-utils';
+import { renderWithProviders } from '../../lib/test-utils';
 import { CampaignFormPage } from '../CampaignFormPage';
-import { apiClient } from '@/api/client';
+import { apiClient } from '../../api/client';
 
-vi.mock('@/api/client', () => ({
+vi.mock('../../api/client', () => ({
   apiClient: {
     get: vi.fn().mockResolvedValue({ data: { success: true, data: [] } }),
     post: vi.fn().mockResolvedValue({
@@ -15,13 +16,6 @@ vi.mock('@/api/client', () => ({
     patch: vi.fn().mockResolvedValue({ data: { success: true, data: {} } }),
   },
 }));
-
-const goToStep = async (stepName: RegExp) => {
-  await waitFor(() => {
-    expect(screen.getByRole('button', { name: stepName })).toBeInTheDocument();
-  });
-  fireEvent.click(screen.getByRole('button', { name: stepName }));
-};
 
 const fillNameAndNext = async (name = 'Q3 Push') => {
   await waitFor(() => {
@@ -287,5 +281,46 @@ describe('CampaignFormPage (wizard)', () => {
       expect(screen.getByLabelText(/Campaign Name/i)).toBeInTheDocument();
     });
     expect(screen.getByDisplayValue('Q3 Push')).toBeInTheDocument();
+  });
+
+  it('shows "Save & Review AI Brief" button when AI personalization is enabled and brief is pending', async () => {
+    renderWithProviders(<CampaignFormPage />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Campaign Name/i)).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText(/Campaign Name/i), { target: { value: 'AI Outreach' } });
+
+    // Toggle AI personalization on
+    const aiToggle = screen.getByRole('switch', { name: /AI Personalization/i });
+    fireEvent.click(aiToggle);
+
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+
+    // Step 2: pipeline
+    await waitFor(() => {
+      expect(screen.getByText(/Pipeline Auto-Enrollment/i)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+
+    // Step 3: sequence
+    await waitFor(() => {
+      expect(screen.getByText(/Outreach Sequence/i)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+
+    // Step 4: leads
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Who gets contacted/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
+
+    // Step 5: review
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument();
+    });
+
+    // When AI personalization is enabled and brief is not approved, primary action is guided
+    expect(screen.getByRole('button', { name: /Save & Review AI Brief/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save & Launch/i })).not.toBeInTheDocument();
   });
 });

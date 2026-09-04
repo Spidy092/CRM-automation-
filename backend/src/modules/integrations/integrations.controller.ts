@@ -1,6 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 import { sendSuccess } from '../../shared/utils/response';
-import { updateIntegrationSchema, integrationIdParamSchema } from './integrations.schema';
+import {
+  updateIntegrationSchema,
+  integrationIdParamSchema,
+  testIntegrationSchema,
+} from './integrations.schema';
 import * as integrationsService from './integrations.service';
 import { IntegrationActor } from './integrations.types';
 
@@ -60,7 +64,12 @@ export async function testIntegrationHandler(
 ): Promise<void> {
   try {
     const { id } = integrationIdParamSchema.parse(req.params);
-    const result = await integrationsService.testIntegration(id, actorFromReq(req));
+    const body = testIntegrationSchema.parse(req.body ?? {});
+    const result = await integrationsService.testIntegration(
+      id,
+      actorFromReq(req),
+      body.credentials as Record<string, unknown> | undefined,
+    );
     // 200 even on logical failures (the body carries `ok:false` and a reason) so
     // admins can surface a meaningful message without parsing 4xx semantics.
     sendSuccess(res, result);

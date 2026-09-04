@@ -69,18 +69,23 @@ export interface SendMessageOutput {
  * Throws AppError(404) if the integration row is missing, AppError(422) if
  * the stored credential blob doesn't match the expected shape.
  */
-export async function loadCredentials(): Promise<WhatsappCredentials> {
-  const row = await findByName(WHATSAPP_PROVIDER_NAME);
-  if (!row) throw new AppError('WhatsApp integration not configured', 404);
-  const enc = await findCredentialsById(row.id);
-  if (!enc) throw new AppError('WhatsApp credentials not set', 422);
+export async function loadCredentials(
+  providedCredentials?: unknown,
+): Promise<WhatsappCredentials> {
+  let parsed: unknown = providedCredentials;
 
-  let parsed: unknown;
-  try {
-    parsed = decryptJson<unknown>(enc);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    throw new AppError(`WhatsApp credential decryption failed: ${message}`, 422);
+  if (providedCredentials === undefined) {
+    const row = await findByName(WHATSAPP_PROVIDER_NAME);
+    if (!row) throw new AppError('WhatsApp integration not configured', 404);
+    const enc = await findCredentialsById(row.id);
+    if (!enc) throw new AppError('WhatsApp credentials not set', 422);
+
+    try {
+      parsed = decryptJson<unknown>(enc);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      throw new AppError(`WhatsApp credential decryption failed: ${message}`, 422);
+    }
   }
   const result = whatsappCredentialsSchema.safeParse(parsed);
   if (!result.success) {
@@ -182,6 +187,7 @@ export async function testConnection(
       headers: {
         authorization: `Bearer ${creds.apiToken}`,
       },
+      signal: AbortSignal.timeout(10000),
     });
 
     if (res.ok) {

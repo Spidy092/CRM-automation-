@@ -20,6 +20,7 @@ import {
   Check,
   X,
   ShieldQuestion,
+  Play,
 } from 'lucide-react';
 
 const statusTones: Record<BriefStatus, StatusTone> = {
@@ -67,6 +68,13 @@ export function CampaignBriefPage() {
                 <ArrowLeft className="mr-2 h-4 w-4" /> Back
               </Link>
             </Button>
+            {brief && brief.status === 'approved' && (
+              <Button size="sm" asChild className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Link to={`/campaigns/${campaignId}`}>
+                  <Play className="mr-1 h-4 w-4" /> Go to Campaign
+                </Link>
+              </Button>
+            )}
             {brief && brief.status === 'draft' && (
               <>
                 <Button size="sm" onClick={handleApprove} disabled={approve.isPending}>

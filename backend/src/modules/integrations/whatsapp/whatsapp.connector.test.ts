@@ -16,7 +16,7 @@ jest.mock('../connector.base', () => ({
   loggedFetch: jest.fn(),
 }));
 
-import { loadCredentials, sendMessage } from './whatsapp.connector';
+import { loadCredentials, sendMessage, testConnection } from './whatsapp.connector';
 import { findByName, findCredentialsById } from '../integrations.repository';
 import { decryptJson } from '../../../shared/utils/encryption';
 import { loggedFetch } from '../connector.base';
@@ -68,6 +68,30 @@ describe('whatsapp loadCredentials', () => {
   it('returns parsed credentials on success', async () => {
     primeValidCreds();
     await expect(loadCredentials()).resolves.toMatchObject({ phoneNumberId: '12345678901234' });
+  });
+
+  it('parses draft credentials directly without querying database', async () => {
+    const draft = {
+      phoneNumberId: '98765432109876',
+      apiToken: 'EAA_draft_token',
+      apiVersion: 'v20.0',
+      appSecret: 'secret123',
+    };
+    const creds = await loadCredentials(draft);
+    expect(creds.phoneNumberId).toBe('98765432109876');
+    expect(creds.apiToken).toBe('EAA_draft_token');
+    expect(creds.apiVersion).toBe('v20.0');
+    expect(creds.appSecret).toBe('secret123');
+    expect(mockFindByName).not.toHaveBeenCalled();
+    expect(mockFindCreds).not.toHaveBeenCalled();
+  });
+
+  it('throws 422 when draft credentials fail schema validation', async () => {
+    const invalidDraft = { phoneNumberId: '123' };
+    await expect(loadCredentials(invalidDraft)).rejects.toMatchObject({ statusCode: 422 });
+    await expect(loadCredentials(invalidDraft)).rejects.toThrow('WhatsApp credentials invalid');
+    expect(mockFindByName).not.toHaveBeenCalled();
+    expect(mockFindCreds).not.toHaveBeenCalled();
   });
 });
 
@@ -164,5 +188,52 @@ describe('whatsapp sendMessage', () => {
 
     const [, init] = mockLoggedFetch.mock.calls[0];
     expect(JSON.parse(init.body as string).type).toBe('image');
+  });
+});
+
+describe('whatsapp testConnection', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('returns ok: true with latency on 200 response from Meta Graph API', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    } as Response);
+
+    const res = await testConnection(VALID);
+    expect(res.ok).toBe(true);
+    expect(res.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(global.fetch).toHaveBeenCalledWith(
+      `https://graph.facebook.com/${VALID.apiVersion}/${VALID.phoneNumberId}`,
+      expect.objectContaining({
+        headers: { authorization: `Bearer ${VALID.apiToken}` },
+      }),
+    );
+  });
+
+  it('returns ok: false with Meta error message on failure', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: jest.fn().mockResolvedValue({
+        error: { message: 'Invalid OAuth access token' },
+      }),
+    } as unknown as Response);
+
+    const res = await testConnection(VALID);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('Invalid OAuth access token');
+  });
+
+  it('returns ok: false when network error occurs', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error('Connection timed out'));
+
+    const res = await testConnection(VALID);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('Connection timed out');
   });
 });

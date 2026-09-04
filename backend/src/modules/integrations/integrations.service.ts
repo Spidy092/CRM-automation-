@@ -172,55 +172,61 @@ export async function updateIntegration(
 export async function testIntegration(
   id: string,
   actor: IntegrationActor,
+  draftCredentials?: Record<string, unknown>,
 ): Promise<IntegrationTestResult> {
   const integration = await findById(id);
   if (!integration) throw new AppError('Integration not found', 404);
 
-  let credentials: string | null = null;
-  try {
-    credentials = await findCredentialsById(id);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    await recordTestResult(id, 'failed');
-    return {
-      ok: false,
-      status: 'failed',
-      message: `Failed to read credentials: ${message}`,
-      tested_at: new Date().toISOString(),
-    };
-  }
+  let activeCredentials: Record<string, unknown>;
 
-  if (!credentials) {
-    await recordTestResult(id, 'no_credentials');
-    return {
-      ok: false,
-      status: 'no_credentials',
-      message: 'No credentials configured for this integration',
-      tested_at: new Date().toISOString(),
-    };
-  }
+  if (draftCredentials !== undefined) {
+    activeCredentials = draftCredentials;
+  } else {
+    let credentials: string | null = null;
+    try {
+      credentials = await findCredentialsById(id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      await recordTestResult(id, 'failed');
+      return {
+        ok: false,
+        status: 'failed',
+        message: `Failed to read credentials: ${message}`,
+        tested_at: new Date().toISOString(),
+      };
+    }
 
-  // Base sanity-check: credentials must decrypt to valid JSON.
-  let decryptedCredentials: Record<string, unknown> | null = null;
-  try {
-    decryptedCredentials = JSON.parse(decrypt(credentials)) as Record<string, unknown>;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    await recordTestResult(id, 'failed');
-    await writeAuditLog({
-      userId: actor.id,
-      action: 'integration.test_failed',
-      entityType: 'integration',
-      entityId: id,
-      newValue: { reason: 'decryption_failed', error: message },
-      ipAddress: actor.ipAddress ?? null,
-    });
-    return {
-      ok: false,
-      status: 'failed',
-      message: `Credential decryption failed: ${message}`,
-      tested_at: new Date().toISOString(),
-    };
+    if (!credentials) {
+      await recordTestResult(id, 'no_credentials');
+      return {
+        ok: false,
+        status: 'no_credentials',
+        message: 'No credentials configured for this integration',
+        tested_at: new Date().toISOString(),
+      };
+    }
+
+    // Base sanity-check: credentials must decrypt to valid JSON.
+    try {
+      activeCredentials = JSON.parse(decrypt(credentials)) as Record<string, unknown>;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      await recordTestResult(id, 'failed');
+      await writeAuditLog({
+        userId: actor.id,
+        action: 'integration.test_failed',
+        entityType: 'integration',
+        entityId: id,
+        newValue: { reason: 'decryption_failed', error: message },
+        ipAddress: actor.ipAddress ?? null,
+      });
+      return {
+        ok: false,
+        status: 'failed',
+        message: `Credential decryption failed: ${message}`,
+        tested_at: new Date().toISOString(),
+      };
+    }
   }
 
   // Per-connector credential shape validation (and live ping where possible).
@@ -228,7 +234,7 @@ export async function testIntegration(
   try {
     switch (integration.name) {
       case 'whatsapp': {
-        const creds = await whatsappConnector.loadCredentials();
+        const creds = await whatsappConnector.loadCredentials(activeCredentials);
         const testRes = await whatsappConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `WhatsApp connection successful (${testRes.latencyMs}ms).`;
@@ -277,7 +283,7 @@ export async function testIntegration(
         break;
       }
       case 'openwa': {
-        const loaded = await openwaConnector.loadCredentials(decryptedCredentials);
+        const loaded = await openwaConnector.loadCredentials(activeCredentials);
         const healthCheck = await openwaConnector.healthCheck({ credentials: loaded });
         if (healthCheck.ok) {
           testMessage = `OpenWA session healthy (${healthCheck.latencyMs}ms).`;
@@ -302,7 +308,7 @@ export async function testIntegration(
         break;
       }
       case 'hunter': {
-        const creds = await hunterConnector.loadCredentials(decryptedCredentials || undefined);
+        const creds = await hunterConnector.loadCredentials(activeCredentials || undefined);
         const testRes = await hunterConnector.testConnection(creds);
         if (!testRes.ok) throw new Error(`Live test failed: ${testRes.error}`);
         testMessage = `Hunter.io connection successful (${testRes.latencyMs}ms).`;
@@ -351,7 +357,9 @@ export async function testIntegration(
         break;
       }
       default:
-        testMessage = `Credentials for "${integration.display_name}" decrypted and parsed successfully.`;
+        testMessage = draftCredentials
+          ? `Draft credentials for "${integration.display_name}" validated successfully.`
+          : `Credentials for "${integration.display_name}" decrypted and parsed successfully.`;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unknown error';
@@ -374,7 +382,7 @@ export async function testIntegration(
 
   await recordTestResult(id, 'ok');
 
-  if (!integration.is_enabled) {
+  if (!draftCredentials && !integration.is_enabled) {
     await updateIntegrationRepo(id, { isEnabled: true, updatedBy: actor.id });
   }
 

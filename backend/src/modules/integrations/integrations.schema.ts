@@ -25,3 +25,12 @@ export const updateIntegrationSchema = z
   });
 
 export type UpdateIntegrationInput = z.infer<typeof updateIntegrationSchema>;
+
+/** Optional draft credentials used by the setup wizard's pre-save test. */
+export const testIntegrationSchema = z
+  .object({
+    credentials: integrationCredentialsSchema.optional(),
+  })
+  .strict();
+
+export type TestIntegrationInput = z.infer<typeof testIntegrationSchema>;

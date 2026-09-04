@@ -48,6 +48,7 @@ import {
   updateIntegration as updateIntegrationRepo,
 } from './integrations.repository';
 import * as openwaConnector from './openwa/openwa.connector';
+import * as whatsappConnector from './whatsapp/whatsapp.connector';
 import { writeAuditLog } from '../../shared/utils/audit';
 
 const baseRow: Integration = {
@@ -233,6 +234,97 @@ describe('testIntegration', () => {
     const allAuditCalls = (writeAuditLog as jest.Mock).mock.calls.map((c) => JSON.stringify(c[0]));
     expect(resultStr).not.toContain('SUPER_SECRET');
     expect(allAuditCalls.every((s) => !s.includes('SUPER_SECRET'))).toBe(true);
+  });
+
+  it('tests draft WhatsApp credentials successfully without database credentials', async () => {
+    (findById as jest.Mock).mockResolvedValue(baseRow);
+    (findCredentialsById as jest.Mock).mockClear();
+    (updateIntegrationRepo as jest.Mock).mockClear();
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'ok' });
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) => Promise.resolve(input));
+    (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({ ok: true, latencyMs: 35 });
+
+    const draft = {
+      phoneNumberId: '12345678901234',
+      apiToken: 'EAAG_valid_token',
+      apiVersion: 'v20.0',
+      appSecret: 'secret',
+    };
+
+    const result = await testIntegration(baseRow.id, { id: 'u1' }, draft);
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('WhatsApp connection successful (35ms)');
+    expect(findCredentialsById).not.toHaveBeenCalled();
+    expect(updateIntegrationRepo).not.toHaveBeenCalled();
+    expect(recordTestResult).toHaveBeenCalledWith(baseRow.id, 'ok');
+    expect(whatsappConnector.loadCredentials).toHaveBeenCalledWith(draft);
+  });
+
+  it('rejects invalid draft WhatsApp credentials safely', async () => {
+    (findById as jest.Mock).mockResolvedValue(baseRow);
+    (whatsappConnector.loadCredentials as jest.Mock).mockRejectedValue(
+      new Error('WhatsApp credentials invalid: apiToken is required'),
+    );
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'failed' });
+
+    const draft = { phoneNumberId: '123' };
+    const result = await testIntegration(baseRow.id, { id: 'u1' }, draft);
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
+    expect(result.message).toBe('Connector credential validation failed: WhatsApp credentials invalid: apiToken is required');
+    expect(recordTestResult).toHaveBeenCalledWith(baseRow.id, 'failed');
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'integration.test_failed',
+        newValue: expect.objectContaining({ reason: 'connector_validation_failed' }),
+      }),
+    );
+  });
+
+  it('handles live test failure with draft WhatsApp credentials', async () => {
+    (findById as jest.Mock).mockResolvedValue(baseRow);
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) => Promise.resolve(input));
+    (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: 'Invalid OAuth access token - Cannot parse access token',
+      latencyMs: 40,
+    });
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'failed' });
+
+    const draft = {
+      phoneNumberId: '12345678901234',
+      apiToken: 'bad_token',
+      apiVersion: 'v20.0',
+    };
+    const result = await testIntegration(baseRow.id, { id: 'u1' }, draft);
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
+    expect(result.message).toContain('Invalid OAuth access token');
+    expect(recordTestResult).toHaveBeenCalledWith(baseRow.id, 'failed');
+  });
+
+  it('NEVER logs or returns draft credentials or secret tokens', async () => {
+    (findById as jest.Mock).mockResolvedValue(baseRow);
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) => Promise.resolve(input));
+    (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({ ok: true, latencyMs: 10 });
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'ok' });
+
+    const draft = {
+      phoneNumberId: '12345678901234',
+      apiToken: 'SUPER_SECRET_DRAFT_TOKEN',
+      apiVersion: 'v20.0',
+    };
+
+    const result = await testIntegration(baseRow.id, { id: 'u1' }, draft);
+    const resultStr = JSON.stringify(result);
+    const allAuditCalls = (writeAuditLog as jest.Mock).mock.calls.map((c) => JSON.stringify(c[0]));
+
+    expect(resultStr).not.toContain('SUPER_SECRET_DRAFT_TOKEN');
+    expect(allAuditCalls.every((s) => !s.includes('SUPER_SECRET_DRAFT_TOKEN'))).toBe(true);
   });
 
   it('returns ok when OpenWA health check succeeds', async () => {

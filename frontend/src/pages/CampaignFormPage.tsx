@@ -14,6 +14,7 @@ import { usePipelines, usePipeline } from '@/api/pipelines';
 import { useSequences, useCreateSequence } from '@/api/outreach';
 import type { Sequence, SequenceStep } from '@/api/outreach';
 import { useTemplates } from '@/api/templates';
+import { useCampaignBrief } from '@/api/aiCampaignBrain';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +30,7 @@ import {
   CHANNEL_COLORS,
 } from '@/components/SequenceStepEditor';
 import { SequencePresetPicker } from '@/components/SequencePresetPicker';
+import { SequenceMessagePreview } from '@/components/SequenceMessagePreview';
 import {
   Clock,
   GitBranch,
@@ -355,9 +357,10 @@ export function CampaignFormPage() {
     (seq) => ({ ...seq, steps: Array.isArray(seq.steps) ? seq.steps : [] }),
   );
 
-  const { data: templatesData } = useTemplates();
+  const { data: templatesData } = useTemplates({ limit: 100 });
   const allTemplates = templatesData?.items ?? [];
   const templateNameById = new Map(allTemplates.map((t) => [t.id, t.name]));
+  const templateById = new Map(allTemplates.map((t) => [t.id, t]));
   const approvedTemplateIds = new Set(
     allTemplates.filter((t) => t.approval_status === 'approved').map((t) => t.id),
   );
@@ -396,6 +399,9 @@ export function CampaignFormPage() {
     savedCampaignId ?? '',
     step === REVIEW_STEP && !!savedCampaignId,
   );
+
+  const { data: brief } = useCampaignBrief(savedCampaignId ?? '');
+  const isAiBriefApproved = !aiPersonalizationEnabled || brief?.status === 'approved';
 
   // Fetch stages for the selected pipeline
   const { data: selectedPipeline } = usePipeline(pipelineId);
@@ -499,6 +505,13 @@ export function CampaignFormPage() {
   const handleLaunch = async () => {
     const campaignId = await handleSave();
     if (!campaignId) return;
+
+    if (aiPersonalizationEnabled && (!brief || brief.status !== 'approved')) {
+      showToast('AI Strategy Brief approval is required before launching.', 'error');
+      navigate(`/campaigns/${campaignId}/brief`);
+      return;
+    }
+
     try {
       await launchCampaign.mutateAsync(campaignId);
       showToast('Campaign launched.', 'success');
@@ -506,6 +519,13 @@ export function CampaignFormPage() {
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to launch campaign.'), 'error');
     }
+  };
+
+  const handleSaveAndReviewBrief = async () => {
+    const campaignId = await handleSave();
+    if (!campaignId) return;
+    showToast('Campaign saved. Review and approve your AI Strategy Brief to launch.', 'success');
+    navigate(`/campaigns/${campaignId}/brief`);
   };
 
   const handleFinishDraft = async () => {
@@ -758,6 +778,15 @@ export function CampaignFormPage() {
               </div>
             )}
 
+            {selectedSequence && (
+              <SequenceMessagePreview
+                sequence={selectedSequence}
+                templateById={templateById}
+                title={`Selected: ${selectedSequence.name} — Message Content`}
+                className="mt-3"
+              />
+            )}
+
             {!showNewSequence ? (
               <div className="space-y-4">
                 <SequencePresetPicker
@@ -964,19 +993,27 @@ export function CampaignFormPage() {
                   <dt className="text-slate-500">Sequence</dt>
                   <dd className="mt-1">
                     {selectedSequence ? (
-                      <div className="flex flex-wrap gap-2">
-                        {selectedSequence.steps.map((s) => (
-                          <span
-                            key={s.stepNumber}
-                            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${CHANNEL_COLORS[s.channel] ?? 'bg-slate-50 border-slate-200'}`}
-                          >
-                            {CHANNEL_ICONS[s.channel]}
-                            <span className="font-medium">{CHANNEL_LABELS[s.channel]}</span>
-                            <span className="text-slate-500">
-                              {s.delayHours === 0 ? '(immediate)' : `+${s.delayHours}h`}
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          {selectedSequence.steps.map((s) => (
+                            <span
+                              key={s.stepNumber}
+                              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${CHANNEL_COLORS[s.channel] ?? 'bg-slate-50 border-slate-200'}`}
+                            >
+                              {CHANNEL_ICONS[s.channel]}
+                              <span className="font-medium">{CHANNEL_LABELS[s.channel]}</span>
+                              <span className="text-slate-500">
+                                {s.delayHours === 0 ? '(immediate)' : `+${s.delayHours}h`}
+                              </span>
                             </span>
-                          </span>
-                        ))}
+                          ))}
+                        </div>
+                        <SequenceMessagePreview
+                          sequence={selectedSequence}
+                          templateById={templateById}
+                          title={`Review Sequence Messages (${selectedSequence.name})`}
+                          initiallyOpen={false}
+                        />
                       </div>
                     ) : (
                       <span className="font-medium text-amber-700">
@@ -1078,6 +1115,40 @@ export function CampaignFormPage() {
                     </div>
                   )}
 
+                  {aiPersonalizationEnabled && (
+                    <div
+                      className={`flex items-center justify-between gap-3 rounded-md border p-3 text-sm ${
+                        isAiBriefApproved
+                          ? 'border-green-200 bg-green-50 text-green-800'
+                          : 'border-purple-200 bg-purple-50 text-purple-900'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        {isAiBriefApproved ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+                        ) : (
+                          <Sparkles className="h-4 w-4 shrink-0 text-purple-600" />
+                        )}
+                        <span>
+                          {isAiBriefApproved
+                            ? 'AI Strategy Brief approved and ready for launch.'
+                            : brief?.status === 'draft'
+                              ? 'AI Strategy Brief is ready for review. Approval is required before launch.'
+                              : brief?.status === 'rejected'
+                                ? 'AI Strategy Brief was rejected. Please review or adjust.'
+                                : 'AI Strategy Brief is required before launch. Click below to review.'}
+                        </span>
+                      </span>
+                      {savedCampaignId && !isAiBriefApproved && (
+                        <Button asChild size="sm" variant="outline" className="shrink-0 border-purple-300 bg-white hover:bg-purple-100 text-purple-900">
+                          <Link to={`/campaigns/${savedCampaignId}/brief`}>
+                            Review Brief →
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-3 text-sm">
                     <div className="rounded-md border p-3">
                       <div className="text-slate-500">Eligible leads</div>
@@ -1138,21 +1209,39 @@ export function CampaignFormPage() {
               <Button type="button" variant="outline" onClick={handleFinishDraft} disabled={isSaving || !name.trim() || sendWindowInvalid}>
                 {isSaving ? 'Saving…' : 'Save as draft'}
               </Button>
-              <Button
-                type="button"
-                onClick={handleLaunch}
-                disabled={
-                  isSaving ||
-                  launchCampaign.isPending ||
-                  !name.trim() ||
-                  !sequenceId ||
-                  sendWindowInvalid ||
-                  (!!preview && issues.length > 0)
-                }
-              >
-                <Play className="mr-1 h-4 w-4" />
-                {launchCampaign.isPending ? 'Launching…' : 'Save & Launch'}
-              </Button>
+              {aiPersonalizationEnabled && !isAiBriefApproved ? (
+                <Button
+                  type="button"
+                  onClick={handleSaveAndReviewBrief}
+                  disabled={
+                    isSaving ||
+                    !name.trim() ||
+                    !sequenceId ||
+                    sendWindowInvalid ||
+                    (!!preview && issues.length > 0)
+                  }
+                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                >
+                  <Sparkles className="mr-1.5 h-4 w-4" />
+                  {isSaving ? 'Saving…' : 'Save & Review AI Brief →'}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={handleLaunch}
+                  disabled={
+                    isSaving ||
+                    launchCampaign.isPending ||
+                    !name.trim() ||
+                    !sequenceId ||
+                    sendWindowInvalid ||
+                    (!!preview && issues.length > 0)
+                  }
+                >
+                  <Play className="mr-1 h-4 w-4" />
+                  {launchCampaign.isPending ? 'Launching…' : 'Save & Launch'}
+                </Button>
+              )}
             </>
           )}
         </div>

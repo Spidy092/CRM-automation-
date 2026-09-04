@@ -2,6 +2,7 @@ import {
   integrationIdParamSchema,
   integrationCredentialsSchema,
   updateIntegrationSchema,
+  testIntegrationSchema,
 } from './integrations.schema';
 
 const uuid = '550e8400-e29b-41d4-a716-446655440000';
@@ -60,5 +61,45 @@ describe('updateIntegrationSchema', () => {
   it('rejects empty object', () => {
     const result = updateIntegrationSchema.safeParse({});
     expect(result.success).toBe(false);
+  });
+});
+
+describe('testIntegrationSchema', () => {
+  it('accepts empty object (no draft credentials)', () => {
+    const result = testIntegrationSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.credentials).toBeUndefined();
+    }
+  });
+
+  it('accepts valid credentials object', () => {
+    const result = testIntegrationSchema.safeParse({
+      credentials: { phoneNumberId: '123', apiToken: 'abc' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.credentials).toEqual({ phoneNumberId: '123', apiToken: 'abc' });
+    }
+  });
+
+  it('rejects empty credentials object', () => {
+    const result = testIntegrationSchema.safeParse({
+      credentials: {},
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects unrecognized extra fields due to strict mode', () => {
+    const result = testIntegrationSchema.safeParse({
+      credentials: { phoneNumberId: '123' },
+      extraField: 'not_allowed',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-object credentials', () => {
+    expect(testIntegrationSchema.safeParse({ credentials: 'str' }).success).toBe(false);
+    expect(testIntegrationSchema.safeParse({ credentials: 123 }).success).toBe(false);
   });
 });

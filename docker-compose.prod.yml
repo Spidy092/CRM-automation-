@@ -19,10 +19,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
+          cpus: '1.0'
           memory: 512M
     networks:
       - crm-network
@@ -42,10 +39,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.2'
+          cpus: '0.5'
           memory: 256M
     networks:
       - crm-network
@@ -56,6 +50,7 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_ENV: production
+    image: crm-api:latest
     container_name: crm_api
     restart: unless-stopped
     depends_on:
@@ -67,9 +62,11 @@ services:
       - .env.prod
     environment:
       NODE_ENV: production
-      RUN_MIGRATIONS: 'true'
+      RUN_MIGRATIONS: 'false'
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    volumes:
+      - ./migrations:/migrations:ro
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health || exit 1']
       interval: 30s
@@ -78,10 +75,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
+          cpus: '1.0'
           memory: 512M
     networks:
       - crm-network
@@ -92,6 +86,7 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_ENV: production
+    image: crm-worker:latest
     container_name: crm_worker
     restart: unless-stopped
     depends_on:
@@ -106,13 +101,12 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
     command: node dist/workers/index.js
+    healthcheck:
+      disable: true
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
+          cpus: '1.0'
           memory: 512M
     networks:
       - crm-network
@@ -123,18 +117,21 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_ENV: production
+    image: crm-frontend:latest
     container_name: crm_frontend
     restart: unless-stopped
     depends_on:
       - api
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1/ || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 512M
-        reservations:
-          cpus: '0.1'
-          memory: 128M
+          cpus: '0.5'
+          memory: 256M
     networks:
       - crm-network
 
@@ -150,20 +147,17 @@ services:
       - '443:443'
     volumes:
       - ./nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 512M
-        reservations:
-          cpus: '0.1'
+          cpus: '0.5'
           memory: 128M
     networks:
       - crm-network
 
   bull-board:
-    image: deadly0/bull-board:1.29.3
+    image: deadly0/bull-board:latest
     container_name: crm_bull_board
     restart: unless-stopped
     depends_on:
@@ -178,10 +172,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
+          memory: 128M
     networks:
       - crm-network
 
