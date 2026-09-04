@@ -68,7 +68,12 @@ export async function insertPipeline(
 export async function insertPipelineWithStages(
   name: string,
   isDefault: boolean,
-  stages: Array<{ name: string; position: number; is_terminal_won?: boolean; is_terminal_lost?: boolean }>,
+  stages: Array<{
+    name: string;
+    position: number;
+    is_terminal_won?: boolean;
+    is_terminal_lost?: boolean;
+  }>,
   createdBy: string,
 ): Promise<PipelineWithStages> {
   const client = await pool.connect();
@@ -114,7 +119,10 @@ export async function updatePipeline(
   data: { name?: string; is_default?: boolean },
 ): Promise<Pipeline> {
   if (data.is_default === true) {
-    await pool.query('UPDATE pipelines SET is_default = FALSE WHERE is_default = TRUE AND id != $1', [id]);
+    await pool.query(
+      'UPDATE pipelines SET is_default = FALSE WHERE is_default = TRUE AND id != $1',
+      [id],
+    );
   }
   const fields: string[] = [];
   const values: unknown[] = [];

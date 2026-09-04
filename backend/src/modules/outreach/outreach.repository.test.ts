@@ -85,7 +85,7 @@ describe('deleteSequence', () => {
   it('deletes successfully', async () => {
     mockQueryOne.mockResolvedValue({ id: 's1' });
     await deleteSequence('s1');
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('DELETE'), ['s1']);
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('UPDATE outreach_sequences SET deleted_at'), ['s1']);
   });
 
   it('throws 404 when not found', async () => {

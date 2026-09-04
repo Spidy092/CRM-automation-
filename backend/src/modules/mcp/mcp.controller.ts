@@ -89,7 +89,10 @@ export function handleMcpGet(req: Request, res: Response): void {
     res.status(405).json({
       jsonrpc: '2.0',
       id: null,
-      error: { code: JSONRPC_INVALID_REQUEST, message: 'Only text/event-stream is supported for GET' },
+      error: {
+        code: JSONRPC_INVALID_REQUEST,
+        message: 'Only text/event-stream is supported for GET',
+      },
     });
     return;
   }
@@ -110,8 +113,14 @@ export function handleMcpGet(req: Request, res: Response): void {
   });
 
   // Construct the absolute POST endpoint URL for this session
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.headers['x-forwarded-host'] || req.get('host');
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const protocol = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : (forwardedProto ?? req.protocol);
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const host = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : (forwardedHost ?? req.get('host') ?? 'localhost');
   // req.originalUrl could be /api/v1/mcp
   const endpointUrl = `${protocol}://${host}${req.originalUrl.split('?')[0]}/message?sessionId=${sessionId}`;
 
@@ -184,9 +193,3 @@ function invalidParams(id: JsonRpcMessage['id'], message: string): JsonRpcRespon
     error: { code: JSONRPC_INVALID_PARAMS, message },
   };
 }
-
-
-
-
-
-

@@ -42,25 +42,41 @@ export async function validateSafeUrl(urlStr: string): Promise<string> {
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new AppError(`Forbidden URL protocol '${parsed.protocol}'. Only http: and https: are allowed.`, 400);
+    throw new AppError(
+      `Forbidden URL protocol '${parsed.protocol}'. Only http: and https: are allowed.`,
+      400,
+    );
   }
 
   const hostname = parsed.hostname.toLowerCase();
 
-  if (BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
-    throw new AppError(`Access to local/internal host '${hostname}' is forbidden (SSRF protection).`, 400);
+  if (
+    BLOCKED_HOSTNAMES.has(hostname) ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal')
+  ) {
+    throw new AppError(
+      `Access to local/internal host '${hostname}' is forbidden (SSRF protection).`,
+      400,
+    );
   }
 
   if (net.isIP(hostname)) {
     if (isPrivateIp(hostname)) {
-      throw new AppError(`Access to private IP address '${hostname}' is forbidden (SSRF protection).`, 400);
+      throw new AppError(
+        `Access to private IP address '${hostname}' is forbidden (SSRF protection).`,
+        400,
+      );
     }
   } else {
     try {
       const addresses = await dns.resolve(hostname);
       for (const ip of addresses) {
         if (isPrivateIp(ip)) {
-          throw new AppError(`Host '${hostname}' resolves to private IP '${ip}' (SSRF protection).`, 400);
+          throw new AppError(
+            `Host '${hostname}' resolves to private IP '${ip}' (SSRF protection).`,
+            400,
+          );
         }
       }
     } catch (err) {

@@ -110,7 +110,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SmtpResult> {
     const effectiveFromName = input.fromName ?? creds.fromName;
 
     const info = await transporter.sendMail({
-      from: effectiveFromName ? `"${effectiveFromName}" <${effectiveFromEmail}>` : effectiveFromEmail,
+      from: effectiveFromName
+        ? `"${effectiveFromName}" <${effectiveFromEmail}>`
+        : effectiveFromEmail,
       to: input.to,
       subject: input.subject,
       text: input.textBody ?? input.htmlBody.replace(/<[^>]*>/g, ''),

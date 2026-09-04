@@ -225,9 +225,10 @@ export async function importLeads(
         if (input.review_count !== null) mergePatch.review_count = input.review_count;
         if (input.notes) mergePatch.notes = input.notes;
 
-        const existingCustomFields = typeof existing.custom_fields === 'object' && existing.custom_fields !== null
-          ? (existing.custom_fields as Record<string, unknown>)
-          : {};
+        const existingCustomFields =
+          typeof existing.custom_fields === 'object' && existing.custom_fields !== null
+            ? existing.custom_fields
+            : {};
         mergePatch.custom_fields = { ...existingCustomFields, ...(input.custom_fields ?? {}) };
 
         const existingTags = Array.isArray(existing.tags) ? existing.tags : [];

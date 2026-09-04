@@ -65,7 +65,7 @@ describe('getSequenceHandler', () => {
   it('returns sequence by id', async () => {
     (outreachService.getSequence as jest.Mock).mockResolvedValue({ id: 's1' });
     const res = mockRes();
-    await getSequenceHandler(mockReq({ params: { id: 's1' } }), res, next);
+    await getSequenceHandler(mockReq({ params: { id: '550e8400-e29b-41d4-a716-446655440000' } }), res, next);
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
@@ -99,7 +99,7 @@ describe('updateSequenceHandler', () => {
     (outreachService.updateSequence as jest.Mock).mockResolvedValue({ id: 's1', name: 'Updated' });
     const res = mockRes();
     await updateSequenceHandler(
-      mockReq({ params: { id: 's1' }, body: { name: 'Updated' } }),
+      mockReq({ params: { id: '550e8400-e29b-41d4-a716-446655440000' }, body: { name: 'Updated' } }),
       res,
       next,
     );
@@ -111,7 +111,7 @@ describe('deleteSequenceHandler', () => {
   it('deletes sequence', async () => {
     (outreachService.removeSequence as jest.Mock).mockResolvedValue(undefined);
     const res = mockRes();
-    await deleteSequenceHandler(mockReq({ params: { id: 's1' } }), res, next);
+    await deleteSequenceHandler(mockReq({ params: { id: '550e8400-e29b-41d4-a716-446655440000' } }), res, next);
     expect(res.status).toHaveBeenCalledWith(200);
   });
 });

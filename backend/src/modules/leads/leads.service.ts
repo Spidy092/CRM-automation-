@@ -311,14 +311,20 @@ export async function setLeadPaused(
       return toLeadResponse(before);
     }
     if (['won', 'lost', 'opted_out'].includes(before.status)) {
-      throw new AppError(`Cannot pause lead with status "${before.status}". Only active leads can be paused.`, 400);
+      throw new AppError(
+        `Cannot pause lead with status "${before.status}". Only active leads can be paused.`,
+        400,
+      );
     }
   } else {
     if (before.status === 'active') {
       return toLeadResponse(before);
     }
     if (before.status !== 'paused') {
-      throw new AppError(`Cannot resume lead with status "${before.status}". Only paused leads can be resumed.`, 400);
+      throw new AppError(
+        `Cannot resume lead with status "${before.status}". Only paused leads can be resumed.`,
+        400,
+      );
     }
   }
 
@@ -434,14 +440,20 @@ export async function bulkUpdateLeads(
       if (lead.pipeline_stage_id) {
         const currentStage = await findStageById(lead.pipeline_stage_id);
         if (currentStage && currentStage.pipeline_id !== targetStage.pipeline_id) {
-          throw new AppError('Target stage belongs to a different pipeline than the lead’s current pipeline', 400);
+          throw new AppError(
+            'Target stage belongs to a different pipeline than the lead’s current pipeline',
+            400,
+          );
         }
       }
 
       // H1: Closed lead protection
       const isLeadClosed = ['won', 'lost', 'opted_out'].includes(lead.status);
       if (isLeadClosed && !isTargetTerminal) {
-        throw new AppError('Cannot move a closed (won/lost/opted_out) lead to an active stage. Reopen the lead status first.', 400);
+        throw new AppError(
+          'Cannot move a closed (won/lost/opted_out) lead to an active stage. Reopen the lead status first.',
+          400,
+        );
       }
 
       // H2: Resolve stage outcome side-effects
@@ -452,7 +464,12 @@ export async function bulkUpdateLeads(
           lead_id: leadId,
           user_id: actor.id,
           type: 'status_change',
-          metadata: { field: 'status', from: lead.status, to: outcome, reason: 'bulk_pipeline_stage_move' },
+          metadata: {
+            field: 'status',
+            from: lead.status,
+            to: outcome,
+            reason: 'bulk_pipeline_stage_move',
+          },
         });
       }
     }

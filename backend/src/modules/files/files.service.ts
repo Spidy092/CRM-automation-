@@ -51,7 +51,10 @@ function toResponse(row: FileRow): FileResponse {
   };
 }
 
-export async function listFiles(filters: { tag?: string; search?: string }): Promise<FileResponse[]> {
+export async function listFiles(filters: {
+  tag?: string;
+  search?: string;
+}): Promise<FileResponse[]> {
   const rows = await findFiles(filters);
   return rows.map(toResponse);
 }

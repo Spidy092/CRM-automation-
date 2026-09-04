@@ -9,14 +9,35 @@ import { logger } from './logger';
 // ── Disposable / throwaway email blocklist ─────────────────────────────────
 
 const DISPOSABLE_DOMAINS = new Set([
-  'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email',
-  'yopmail.com', 'sharklasers.com', 'guerrillamailblock.com', 'grr.la',
-  'dispostable.com', 'trashmail.com', 'mailnesia.com', 'maildrop.cc',
-  'tempail.com', 'tempr.email', 'temp-mail.org', 'fakeinbox.com',
-  'sharklasers.com', 'guerrillamail.info', 'guerrillamail.de',
-  'guerillamail.com', 'guerrillamail.net', 'guerrillamail.org',
-  '10minutemail.com', 'getairmail.com', 'mohmal.com', 'burnermail.io',
-  'inbox.testmail.app', 'safetymail.info', 'mailsac.com',
+  'mailinator.com',
+  'guerrillamail.com',
+  'tempmail.com',
+  'throwaway.email',
+  'yopmail.com',
+  'sharklasers.com',
+  'guerrillamailblock.com',
+  'grr.la',
+  'dispostable.com',
+  'trashmail.com',
+  'mailnesia.com',
+  'maildrop.cc',
+  'tempail.com',
+  'tempr.email',
+  'temp-mail.org',
+  'fakeinbox.com',
+  'sharklasers.com',
+  'guerrillamail.info',
+  'guerrillamail.de',
+  'guerillamail.com',
+  'guerrillamail.net',
+  'guerrillamail.org',
+  '10minutemail.com',
+  'getairmail.com',
+  'mohmal.com',
+  'burnermail.io',
+  'inbox.testmail.app',
+  'safetymail.info',
+  'mailsac.com',
 ]);
 
 // ── Common typo suggestions ────────────────────────────────────────────────
@@ -121,7 +142,8 @@ export function getEmailTypoSuggestion(email: string): string | undefined {
  * Simplified RFC 5322 email regex — catches 99.9% of real-world emails
  * without accepting obviously garbage strings.
  */
-const BASIC_EMAIL_RE = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+const BASIC_EMAIL_RE =
+  /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 
 /**
  * Bulk-verify a list of emails with concurrency control.

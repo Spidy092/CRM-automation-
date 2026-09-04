@@ -45,6 +45,8 @@ const sampleUser = {
   email: 'alice@crm.com',
   role: 'sales' as const,
   is_active: true,
+  is_available: true,
+  updated_at: new Date('2025-01-01T00:00:00Z'),
   created_at: new Date('2025-01-01T00:00:00Z'),
 };
 

@@ -12,7 +12,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate);
+router.use(wrap(authenticate));
 
 // Anyone authenticated can read the shared snippet library.
 router.get('/', wrap(listMessageSnippetsHandler));

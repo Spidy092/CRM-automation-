@@ -7,7 +7,7 @@ import { getTeamMetricsHandler } from './teamMetrics.controller';
 
 const router = Router();
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 router.get(
   '/metrics',

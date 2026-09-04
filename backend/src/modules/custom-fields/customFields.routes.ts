@@ -11,7 +11,7 @@ import {
 const router = Router();
 
 // All custom-field routes require authentication.
-router.use(authenticate);
+router.use(wrap(authenticate));
 
 // All authenticated roles can read the field catalog (UI needs it to render forms).
 router.get('/', wrap(listDefinitionsHandler));

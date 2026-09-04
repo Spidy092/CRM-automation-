@@ -7,7 +7,7 @@ import { createActivityHandler, listActivitiesHandler } from './activities.contr
 
 const router = Router({ mergeParams: true });
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 router.get('/', authorize('admin', 'manager', 'sales', 'viewer'), wrap(listActivitiesHandler));
 router.post('/', authorize('admin', 'manager', 'sales'), wrap(createActivityHandler));

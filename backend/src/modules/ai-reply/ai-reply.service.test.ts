@@ -171,6 +171,8 @@ beforeEach(() => {
     email: 'rep@example.com',
     role: 'sales',
     is_active: true,
+    is_available: true,
+    updated_at: new Date('2026-06-25T00:00:00Z'),
     created_at: new Date('2026-06-25T00:00:00Z'),
   });
   mockedFindStageByName.mockResolvedValue({

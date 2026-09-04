@@ -13,10 +13,12 @@
 import { Queue } from 'bullmq';
 import { getBullConnection } from '../workers/queue';
 import { logger } from '../shared/utils/logger';
+import { registerTestCleanup } from '../shared/utils/testResources';
 
 const DLQ_QUEUE_NAME = 'dead-letter';
 
 let dlqQueue: Queue | null = null;
+let dlqCleanupRegistered = false;
 
 function getDLQQueue(): Queue {
   if (!dlqQueue) {
@@ -27,6 +29,13 @@ function getDLQQueue(): Queue {
         removeOnFail: { count: 1_000, age: 30 * 24 * 60 * 60 },
       },
     });
+    if (!dlqCleanupRegistered) {
+      dlqCleanupRegistered = true;
+      registerTestCleanup(async () => {
+        if (dlqQueue) await dlqQueue.close();
+        dlqQueue = null;
+      });
+    }
   }
   return dlqQueue;
 }

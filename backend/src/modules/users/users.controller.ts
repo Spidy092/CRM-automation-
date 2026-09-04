@@ -1,7 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { sendSuccess } from '../../shared/utils/response';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { updateProfileSchema, createUserSchema, updatePermissionsSchema, changePasswordSchema } from './users.schema';
+import {
+  updateProfileSchema,
+  createUserSchema,
+  updatePermissionsSchema,
+  changePasswordSchema,
+} from './users.schema';
 import * as usersService from './users.service';
 
 export async function createUserHandler(

@@ -23,7 +23,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 // Aggregate dashboard stats — same viewer roles as the config list.
 router.get(
@@ -72,9 +72,17 @@ router.post('/logs/:logId/retry-failed', authorize('admin'), wrap(retryFailedHan
 router.get('/logs/:logId/export', authorize('admin', 'manager'), wrap(exportRunLeadsCsvHandler));
 
 // List distinct group names — all authenticated roles
-router.get('/groups', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), wrap(getGroupsHandler));
+router.get(
+  '/groups',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getGroupsHandler),
+);
 
 // Trend data for charts — all authenticated roles
-router.get('/trends', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), wrap(getTrendsHandler));
+router.get(
+  '/trends',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getTrendsHandler),
+);
 
 export { router as scraperRoutes };

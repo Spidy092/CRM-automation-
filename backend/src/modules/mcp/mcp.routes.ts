@@ -43,7 +43,7 @@ const mcpAuthenticate = async (req: Request, res: Response, next: () => void): P
   await authenticate(req, res, next);
 };
 
-router.use(mcpAuthenticate, authenticatedLimiter);
+router.use(wrap(mcpAuthenticate), authenticatedLimiter);
 
 router.post(
   '/',
@@ -55,6 +55,6 @@ router.post(
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   wrap(handleMcpPost),
 );
-router.get('/', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), handleMcpGet);
+router.get('/', authorize('admin', 'manager', 'sales', 'marketing', 'viewer'), wrap(handleMcpGet));
 
 export { router as mcpRoutes };

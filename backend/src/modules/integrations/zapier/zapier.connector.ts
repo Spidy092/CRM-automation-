@@ -31,7 +31,10 @@ export async function loadCredentials(): Promise<ZapierCredentials> {
   const raw = JSON.parse(decrypt(enc)) as unknown;
   const result = zapierCredentialsSchema.safeParse(raw);
   if (!result.success) {
-    throw new AppError(`Zapier credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`, 422);
+    throw new AppError(
+      `Zapier credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`,
+      422,
+    );
   }
   return result.data;
 }
@@ -48,13 +51,25 @@ export async function testConnection(
     const res = await fetch(creds.webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event: 'crm.test', source: 'crm-integration-test', timestamp: new Date().toISOString() }),
+      body: JSON.stringify({
+        event: 'crm.test',
+        source: 'crm-integration-test',
+        timestamp: new Date().toISOString(),
+      }),
     });
     // Zapier returns 200 for active hooks, anything else is an error
     if (res.status === 200) return { ok: true, latencyMs: Date.now() - start };
-    return { ok: false, error: `Zapier responded with HTTP ${res.status}`, latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: `Zapier responded with HTTP ${res.status}`,
+      latencyMs: Date.now() - start,
+    };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error', latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+      latencyMs: Date.now() - start,
+    };
   }
 }
 

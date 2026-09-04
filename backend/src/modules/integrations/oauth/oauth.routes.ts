@@ -21,7 +21,7 @@ import {
 const router = Router();
 
 // All OAuth routes require authentication + admin role
-router.use(authenticate);
+router.use(asyncHandler(authenticate));
 router.use(authorize('admin'));
 
 /**

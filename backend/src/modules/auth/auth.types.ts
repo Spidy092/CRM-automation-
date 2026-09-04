@@ -65,7 +65,10 @@ export interface CreateApiKeyResult {
 }
 
 /** Shape returned by listApiKeys — excludes the hash for security. */
-export type ApiKeyListItem = Pick<ApiKeyRecord, 'id' | 'name' | 'prefix' | 'last_used_at' | 'expires_at' | 'created_at'>;
+export type ApiKeyListItem = Pick<
+  ApiKeyRecord,
+  'id' | 'name' | 'prefix' | 'last_used_at' | 'expires_at' | 'created_at'
+>;
 
 /** User identity extracted from a validated API key. */
 export interface ApiKeyIdentity {

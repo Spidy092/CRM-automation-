@@ -23,7 +23,7 @@ const LINKEDIN_BASE = 'https://api.linkedin.com/v2';
 
 export const linkedinCredentialsSchema = z
   .object({
-    accessToken:    z.string().min(1, 'Access token is required'),
+    accessToken: z.string().min(1, 'Access token is required'),
     organizationId: z.string().optional(),
   })
   .strict();
@@ -38,7 +38,10 @@ export async function loadCredentials(): Promise<LinkedInCredentials> {
   const raw = JSON.parse(decrypt(enc)) as unknown;
   const result = linkedinCredentialsSchema.safeParse(raw);
   if (!result.success) {
-    throw new AppError(`LinkedIn credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`, 422);
+    throw new AppError(
+      `LinkedIn credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`,
+      422,
+    );
   }
   return result.data;
 }
@@ -60,12 +63,18 @@ export async function testConnection(
     if (res.ok) return { ok: true, latencyMs: Date.now() - start };
     let msg = `HTTP ${res.status}`;
     try {
-      const b = await res.json() as { message?: string; serviceErrorCode?: number };
+      const b = (await res.json()) as { message?: string; serviceErrorCode?: number };
       if (b.message) msg = b.message;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return { ok: false, error: msg, latencyMs: Date.now() - start };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error', latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+      latencyMs: Date.now() - start,
+    };
   }
 }
 
@@ -87,32 +96,45 @@ export async function getLeadFormResponses(
   const creds = await loadCredentials();
   const params = new URLSearchParams({
     q: 'owner',
-    ...(options.count  ? { count: String(options.count) } : {}),
-    ...(options.start  ? { start: String(options.start) } : {}),
+    ...(options.count ? { count: String(options.count) } : {}),
+    ...(options.start ? { start: String(options.start) } : {}),
   });
 
   try {
-    const res = await fetch(`${LINKEDIN_BASE}/leadGenerationForms/${formId}/leadGenerationFormResponses?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${creds.accessToken}`,
-        'LinkedIn-Version': '202401',
+    const res = await fetch(
+      `${LINKEDIN_BASE}/leadGenerationForms/${formId}/leadGenerationFormResponses?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${creds.accessToken}`,
+          'LinkedIn-Version': '202401',
+        },
       },
-    });
+    );
 
     if (!res.ok) {
       logger.warn('linkedin lead form responses fetch failed', { formId, status: res.status });
       return [];
     }
 
-    const body = await res.json() as { elements?: Array<{ id: string; formUrn: string; submittedAt: number; fieldValues: Array<{ question: string; values: string[] }> }> };
+    const body = (await res.json()) as {
+      elements?: Array<{
+        id: string;
+        formUrn: string;
+        submittedAt: number;
+        fieldValues: Array<{ question: string; values: string[] }>;
+      }>;
+    };
     return (body.elements ?? []).map((el) => ({
-      leadId:      el.id,
-      formId:      el.formUrn,
+      leadId: el.id,
+      formId: el.formUrn,
       submittedAt: new Date(el.submittedAt).toISOString(),
-      fields:      Object.fromEntries(el.fieldValues.map((f) => [f.question, f.values.join(', ')])),
+      fields: Object.fromEntries(el.fieldValues.map((f) => [f.question, f.values.join(', ')])),
     }));
   } catch (err) {
-    logger.error('linkedin lead form responses error', { formId, error: err instanceof Error ? err.message : String(err) });
+    logger.error('linkedin lead form responses error', {
+      formId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return [];
   }
 }

@@ -22,6 +22,10 @@ jest.mock('./queue', () => ({
   enqueueOutreachStopCheck: jest.fn(),
   OUTREACH_QUEUE: 'outreach',
 }));
+jest.mock('../shared/utils/db', () => ({
+  pool: { query: jest.fn().mockResolvedValue({ rows: [] }) },
+}));
+
 
 jest.mock('../shared/utils/metrics', () => ({
   incJobsProcessed: jest.fn(),
@@ -30,7 +34,7 @@ jest.mock('../shared/utils/metrics', () => ({
 }));
 
 jest.mock('../modules/outreach/outreach.repository', () => ({
-  findSequenceById: jest.fn(),
+  findSequenceByIdIncludingDeleted: jest.fn(),
   findLogsByLead: jest.fn(),
 }));
 
@@ -60,7 +64,7 @@ jest.mock('../modules/outreach/outreach.prompt', () => ({
   personalizeMessage: jest.fn(),
 }));
 
-import { findSequenceById, findLogsByLead } from '../modules/outreach/outreach.repository';
+import { findSequenceByIdIncludingDeleted, findLogsByLead } from '../modules/outreach/outreach.repository';
 import { createLog, updateLogStatus } from '../modules/outreach/outreach.service';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
@@ -73,10 +77,12 @@ import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from './queue';
 
 describe('startOutreachWorker', () => {
-  it('starts without error when redis is available', () => {
+  it('starts without error when redis is available', async () => {
     // Worker instantiation is covered by the integration test.
     // startOutreachWorker() returns a Worker instance.
-    expect(() => startOutreachWorker()).not.toThrow();
+    const worker = startOutreachWorker();
+    expect(worker).toBeDefined();
+    await worker.close();
   });
 });
 
@@ -115,7 +121,7 @@ describe('handleDispatch', () => {
   };
 
   it('dispatches in mock mode, creates log, and schedules follow-up', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
 
@@ -144,7 +150,7 @@ describe('handleDispatch', () => {
 
   it('does not schedule follow-up when there is no next step', async () => {
     const seq = { ...baseSeq, steps: [baseSeq.steps[0]] };
-    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(seq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
 
@@ -162,7 +168,7 @@ describe('handleDispatch', () => {
   });
 
   it('throws when sequence is missing', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(null);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(null);
     await expect(
       handleDispatch({
         leadId: 'lead1',
@@ -177,7 +183,7 @@ describe('handleDispatch', () => {
   });
 
   it('throws when step is missing', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     await expect(
       handleDispatch({
         leadId: 'lead1',
@@ -192,7 +198,7 @@ describe('handleDispatch', () => {
   });
 
   it('throws with 502 when mockMode=false and lead not found', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue(null);
 
@@ -210,7 +216,7 @@ describe('handleDispatch', () => {
   });
 
   it('throws with 502 when mockMode=false and template not approved', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'rejected' });
@@ -229,7 +235,7 @@ describe('handleDispatch', () => {
   });
 
   it('throws with 502 when mockMode=false and lead has no destination', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '' });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
@@ -249,7 +255,7 @@ describe('handleDispatch', () => {
   });
 
   it('updates log to sent and enqueues follow-up when dispatch succeeds', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
@@ -288,7 +294,7 @@ describe('handleDispatch', () => {
         storagePath: '/x/flyer.png',
       },
     ];
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
     (findTemplateById as jest.Mock).mockResolvedValue({
@@ -317,7 +323,7 @@ describe('handleDispatch', () => {
   });
 
   it('updates log to failed and throws with 502 when dispatchOutbound returns ok:false', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
@@ -361,7 +367,7 @@ describe('handleFollowUp', () => {
   };
 
   it('enqueues stop-check and next dispatch when sequence/step exists', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
 
     await handleFollowUp({
       leadId: 'lead1',
@@ -379,7 +385,7 @@ describe('handleFollowUp', () => {
   });
 
   it('does nothing when sequence is missing', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(null);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(null);
 
     await handleFollowUp({
       leadId: 'lead1',
@@ -395,7 +401,7 @@ describe('handleFollowUp', () => {
   });
 
   it('does nothing when next step is missing', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(baseSeq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
 
     await handleFollowUp({
       leadId: 'lead1',
@@ -626,7 +632,7 @@ describe('handleDispatch — send window / daily cap deferral', () => {
   };
 
   it('re-enqueues with a delay when the daily cap is reached', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(seq);
     (findLogsByLead as jest.Mock).mockResolvedValue([]);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, daily_send_limit: 10 });
@@ -646,7 +652,7 @@ describe('handleDispatch — send window / daily cap deferral', () => {
   });
 
   it('sends normally when under the cap and no window is set', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(seq);
     (findLogsByLead as jest.Mock).mockResolvedValue([]);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, daily_send_limit: 10 });
@@ -661,7 +667,7 @@ describe('handleDispatch — send window / daily cap deferral', () => {
   });
 
   it('does not query the sent count when there is no daily limit', async () => {
-    (findSequenceById as jest.Mock).mockResolvedValue(seq);
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(seq);
     (findLogsByLead as jest.Mock).mockResolvedValue([]);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
     (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);

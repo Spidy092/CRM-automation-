@@ -14,7 +14,7 @@ import { oauthRoutes } from './oauth';
 const router = Router();
 
 // All routes require authentication.
-router.use(authenticate);
+router.use(wrap(authenticate));
 
 // OAuth routes (admin-only, handled by oauthRoutes middleware)
 router.use('/oauth', oauthRoutes);

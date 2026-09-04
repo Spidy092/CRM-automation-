@@ -44,11 +44,7 @@ import { parseSourceConfig } from './scraper.schema';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
 import { pushToUser } from '../notifications/notifications.emitter';
-import {
-  verifyEmail,
-  logVerificationStats,
-  type EmailVerificationResult,
-} from '../../shared/utils/email';
+import { verifyEmail } from '../../shared/utils/email';
 
 interface ScrapedLead {
   business_name: string;
@@ -2128,13 +2124,16 @@ export async function discoverPages(
       throw new AppError(`Target blocked the crawler for ${url} (HTTP ${status})`, status);
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runs in
-    // the page's browser context, which has no DOM lib types in this (Node) tsconfig.
-    const rawLinks = await page.$$eval('a[href]', (els: any[]) =>
-      els.map((el) => ({
-        href: el.href as string,
-        text: ((el.textContent as string) ?? '').trim(),
-      })),
+    // The page callback runs in a browser context, so keep its DOM values
+    // behind an unknown boundary in this Node-only TypeScript project.
+    const rawLinks = await page.$$eval('a[href]', (els: unknown[]) =>
+      els.map((el) => {
+        const anchor = el as { href?: unknown; textContent?: unknown };
+        return {
+          href: typeof anchor.href === 'string' ? anchor.href : '',
+          text: typeof anchor.textContent === 'string' ? anchor.textContent.trim() : '',
+        };
+      }),
     );
 
     const seen = new Set<string>();
@@ -2607,7 +2606,9 @@ async function importLeads(
 
     // Verify email deliverability (skip for placeholder/generated emails)
     const isPlaceholder =
-      normalizedEmail.includes('scraped.local') || normalizedEmail.startsWith('no-reply-');
+      normalizedEmail.includes('scraped.local') ||
+      normalizedEmail.startsWith('no-reply@') ||
+      normalizedEmail.startsWith('no-reply-');
     if (!isPlaceholder && lead.email) {
       try {
         const verification = await verifyEmail(lead.email);

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import ms from 'ms';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { redis } from '../../shared/utils/redis';
+import { logger } from '../../shared/utils/logger';
 import {
   findUserByEmail,
   findUserById,
@@ -178,7 +179,13 @@ export async function resetPassword(token: string, newPassword: string): Promise
 // API Keys
 // -----------------------------------------------------------------------------
 
-import { createApiKey, listApiKeys, revokeApiKey, findApiKeyByHash, touchApiKey } from './auth.repository';
+import {
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  findApiKeyByHash,
+  touchApiKey,
+} from './auth.repository';
 import { CreateApiKeyResult, ApiKeyListItem, ApiKeyIdentity } from './auth.types';
 
 export async function generateApiKey(
@@ -190,7 +197,7 @@ export async function generateApiKey(
   const rawKey = `crm_${randomBytes}`;
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   const prefix = rawKey.substring(0, 10);
-  
+
   let expiresAt: Date | null = null;
   if (expiresInDays) {
     expiresAt = new Date();
@@ -242,7 +249,12 @@ export async function validateApiKey(rawKey: string): Promise<ApiKeyIdentity> {
   }
 
   // Fire and forget updating the last_used_at timestamp
-  touchApiKey(record.id).catch((err) => console.error('Failed to touch API key', err));
+  touchApiKey(record.id).catch((err: unknown) => {
+    logger.warn('Failed to touch API key', {
+      error: err instanceof Error ? err.message : String(err),
+      apiKeyId: record.id,
+    });
+  });
 
   return {
     id: record.u_id,

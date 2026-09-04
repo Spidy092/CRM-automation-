@@ -15,7 +15,12 @@ export async function insertActivity(input: CreateActivityInput): Promise<Activi
     `INSERT INTO activities (lead_id, user_id, type, metadata)
      VALUES ($1, $2, $3, COALESCE($4::jsonb, '{}'::jsonb))
      RETURNING ${ACTIVITY_COLS}`,
-    [input.lead_id, input.user_id, input.type, input.metadata ? JSON.stringify(input.metadata) : null],
+    [
+      input.lead_id,
+      input.user_id,
+      input.type,
+      input.metadata ? JSON.stringify(input.metadata) : null,
+    ],
   );
   if (!row) throw new Error('Failed to insert activity');
   return row;

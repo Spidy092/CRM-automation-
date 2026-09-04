@@ -11,6 +11,7 @@
 
 import { Queue, type ConnectionOptions } from 'bullmq';
 import { logger } from '../utils/logger';
+import { registerTestCleanup } from '../utils/testResources';
 import { type AIDomainEvent, aiEventIdempotencyKey } from './ai.events';
 import { AI_EVENTS_QUEUE, getBullConnection } from '../../workers/queue';
 
@@ -18,6 +19,10 @@ type AnyHandler = (event: AIDomainEvent) => Promise<void>;
 
 const aiEventsQueue = new Queue(AI_EVENTS_QUEUE, {
   connection: getBullConnection() as unknown as ConnectionOptions,
+});
+
+registerTestCleanup(async () => {
+  await aiEventsQueue.close();
 });
 
 const handlerRegistry = new Map<AIDomainEvent['type'], Set<AnyHandler>>();

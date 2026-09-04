@@ -17,9 +17,9 @@ export const MAILCHIMP_PROVIDER_NAME = 'mailchimp';
 
 export const mailchimpCredentialsSchema = z
   .object({
-    apiKey:       z.string().min(1, 'API key is required'),
+    apiKey: z.string().min(1, 'API key is required'),
     serverPrefix: z.string().min(1, 'Server prefix is required (e.g. us1)'),
-    listId:       z.string().optional(),
+    listId: z.string().optional(),
   })
   .strict();
 
@@ -41,7 +41,10 @@ export async function loadCredentials(): Promise<MailchimpCredentials> {
   const raw = JSON.parse(decrypt(enc)) as unknown;
   const result = mailchimpCredentialsSchema.safeParse(raw);
   if (!result.success) {
-    throw new AppError(`Mailchimp credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`, 422);
+    throw new AppError(
+      `Mailchimp credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`,
+      422,
+    );
   }
   return result.data;
 }
@@ -56,10 +59,19 @@ export async function testConnection(
     });
     if (res.ok) return { ok: true, latencyMs: Date.now() - start };
     let msg = `HTTP ${res.status}`;
-    try { const b = await res.json() as { detail?: string }; if (b.detail) msg = b.detail; } catch { /* ignore */ }
+    try {
+      const b = (await res.json()) as { detail?: string };
+      if (b.detail) msg = b.detail;
+    } catch {
+      /* ignore */
+    }
     return { ok: false, error: msg, latencyMs: Date.now() - start };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error', latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+      latencyMs: Date.now() - start,
+    };
   }
 }
 
@@ -103,7 +115,7 @@ export async function upsertContact(
       }),
     });
     if (res.ok) return { ok: true };
-    const b = await res.json() as { detail?: string };
+    const b = (await res.json()) as { detail?: string };
     return { ok: false, error: b.detail ?? `HTTP ${res.status}` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };

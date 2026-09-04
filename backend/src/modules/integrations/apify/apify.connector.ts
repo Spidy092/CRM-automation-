@@ -106,7 +106,10 @@ export interface ApifyActorSummary {
  * Best-effort helper for the source-builder UI — returns [] on any failure so
  * the modal can still fall back to a free-text actor id.
  */
-export async function listActors(creds: ApifyCredentials, limit = 100): Promise<ApifyActorSummary[]> {
+export async function listActors(
+  creds: ApifyCredentials,
+  limit = 100,
+): Promise<ApifyActorSummary[]> {
   try {
     const params = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 1000)) });
     const res = await fetch(`${APIFY_BASE_URL}/actors?${params.toString()}`, {
@@ -201,11 +204,15 @@ export async function runActorSync(
           /* keep default */
         }
       }
-      logger.warn('apify: run failed', { actorId: trimmed, status: res.status, latency_ms: latencyMs });
+      logger.warn('apify: run failed', {
+        actorId: trimmed,
+        status: res.status,
+        latency_ms: latencyMs,
+      });
       return { ok: false, items: [], error: msg, latencyMs };
     }
 
-    const body = (await res.json()) as unknown;
+    const body = await res.json();
     const items = Array.isArray(body) ? (body as Array<Record<string, unknown>>) : [];
     logger.info('apify: run ok', { actorId: trimmed, items: items.length, latency_ms: latencyMs });
     return { ok: true, items, latencyMs };

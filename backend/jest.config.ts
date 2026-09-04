@@ -3,6 +3,7 @@ import type { Config } from 'jest';
 const config: Config = {
   testEnvironment: 'node',
   rootDir: 'src',
+  setupFilesAfterEnv: ['<rootDir>/../jest.setup.ts'],
   testMatch: ['**/*.test.ts', '**/*.spec.ts'],
   collectCoverageFrom: ['**/*.ts', '!**/*.d.ts', '!**/index.ts', '!**/*.test.ts', '!**/*.spec.ts'],
   coverageThreshold: process.env.CI

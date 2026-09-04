@@ -1,6 +1,11 @@
 import { Worker, type Job, type ConnectionOptions } from 'bullmq';
 import OpenAI from 'openai';
-import { NEWSLETTER_QUEUE, getBullConnection, type NewsletterBroadcastJob, enqueueNewsletterBroadcast } from './queue';
+import {
+  NEWSLETTER_QUEUE,
+  getBullConnection,
+  type NewsletterBroadcastJob,
+  enqueueNewsletterBroadcast,
+} from './queue';
 import { logger } from '../shared/utils/logger';
 import { getAiConfig } from '../modules/ai-settings/ai-settings.service';
 import { getDigestConfig } from '../modules/newsletter/newsletter.service';
@@ -13,17 +18,21 @@ async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promise<void>
   let offset = 0;
   const limit = 100;
   let processed = 0;
-  
+  let hasMore = true;
+
   const baseUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
-  while (true) {
+  while (hasMore) {
     const subscribers = await findSubscribers(limit, offset, 'confirmed');
-    if (subscribers.length === 0) break;
+    if (subscribers.length === 0) {
+      hasMore = false;
+      continue;
+    }
 
     for (const sub of subscribers) {
       const prefsUrl = `${baseUrl}/newsletter/preferences?token=${sub.unsubscribe_token_hash}`;
       const unsubUrl = `${baseUrl}/newsletter/unsubscribe?token=${sub.unsubscribe_token_hash}`;
-      
+
       const personalizedBody = `${htmlBody}
         <br/><br/>
         <hr/>
@@ -33,11 +42,7 @@ async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promise<void>
         </p>
       `;
 
-      const emailInput = { leadId: sub.id,
-        to: sub.email,
-        subject,
-        htmlBody: personalizedBody,
-      };
+      const emailInput = { leadId: sub.id, to: sub.email, subject, htmlBody: personalizedBody };
 
       try {
         const sgRes = await sendgrid.sendEmail(emailInput);
@@ -51,16 +56,16 @@ async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promise<void>
       }
       processed++;
     }
-    
+
     offset += limit;
   }
-  
+
   logger.info('Newsletter broadcast complete', { jobId: job.id, totalProcessed: processed });
 }
 
 async function processAutomatedDigest(job: Job): Promise<void> {
   logger.info('Starting automated newsletter digest generation', { jobId: job.id });
-  
+
   let aiConfig;
   try {
     aiConfig = await getAiConfig();
@@ -90,7 +95,8 @@ async function processAutomatedDigest(job: Job): Promise<void> {
   const topic = digestConfig?.topic || 'Weekly Sales Tips & Growth Hacks';
   const tone = digestConfig?.tone || 'professional';
   const targetAudience = digestConfig?.targetAudience || 'Sales reps and business professionals';
-  const customPrompt = digestConfig?.customPrompt || 'Provide actionable sales techniques and productivity advice.';
+  const customPrompt =
+    digestConfig?.customPrompt || 'Provide actionable sales techniques and productivity advice.';
 
   const system =
     aiConfig?.systemPromptOverride ||
@@ -110,16 +116,16 @@ async function processAutomatedDigest(job: Job): Promise<void> {
     });
 
     const content = completion.choices[0]?.message?.content?.trim() ?? '';
-    
+
     // Fallback if empty
     if (!content) throw new Error('AI returned empty content');
 
     // Enqueue the broadcast job with the generated content
     const subject = `${topic} - ${new Date().toLocaleDateString()}`;
     const htmlBody = `<div style="font-family: sans-serif; line-height: 1.5; color: #333;">${content.replace(/\n\n/g, '<br/><br/>')}</div>`;
-    
+
     await enqueueNewsletterBroadcast({ subject, htmlBody });
-    
+
     logger.info('Automated newsletter digest generated and broadcast enqueued successfully');
   } catch (err) {
     logger.error('Failed to generate automated digest', { error: (err as Error).message });
@@ -131,7 +137,7 @@ export function startNewsletterWorker(): Worker {
     NEWSLETTER_QUEUE,
     async (job: Job) => {
       logger.info(`Processing ${NEWSLETTER_QUEUE} job`, { jobName: job.name, jobId: job.id });
-      
+
       if (job.name === 'newsletter:broadcast') {
         await processBroadcast(job as Job<NewsletterBroadcastJob>);
       } else if (job.name === 'newsletter:automated-digest') {
@@ -140,7 +146,7 @@ export function startNewsletterWorker(): Worker {
         logger.warn(`Unknown job name in ${NEWSLETTER_QUEUE}`, { jobName: job.name });
       }
     },
-    { connection: getBullConnection() as unknown as ConnectionOptions }
+    { connection: getBullConnection() as unknown as ConnectionOptions },
   );
 
   worker.on('failed', (job, err) => {

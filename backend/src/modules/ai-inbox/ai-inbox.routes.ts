@@ -11,7 +11,7 @@ const router = Router();
 router.get(
   '/',
   authenticatedLimiter,
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing'),
   asyncHandler(getInbox),
 );
@@ -20,7 +20,7 @@ router.get(
 router.patch(
   '/:id/action',
   authenticatedLimiter,
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing'),
   asyncHandler(actionInboxItem),
 );

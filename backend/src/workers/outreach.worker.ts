@@ -497,7 +497,10 @@ export async function handleSendAiReply(data: OutreachSendAiReplyJob): Promise<v
     await updateLogStatus(log.id, 'failed' as OutreachStatus, {
       errorMessage: outcome.error ?? 'Unknown dispatch error',
     });
-    throw new AppError(`AI reply dispatch failed for lead ${leadId} via ${channel}: ${outcome.error}`, 502);
+    throw new AppError(
+      `AI reply dispatch failed for lead ${leadId} via ${channel}: ${outcome.error}`,
+      502,
+    );
   }
 }
 

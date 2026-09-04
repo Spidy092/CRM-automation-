@@ -63,7 +63,13 @@ export async function getPublicPage(slug: string): Promise<PublicLandingPageResp
     if (entry) files[entry[0]] = entry[1];
   }
 
-  return { title: row.title, slug: row.slug, description: row.description, blocks: row.blocks, files };
+  return {
+    title: row.title,
+    slug: row.slug,
+    description: row.description,
+    blocks: row.blocks,
+    files,
+  };
 }
 
 export async function recordPageView(
@@ -80,9 +86,7 @@ export async function recordPageView(
   });
 }
 
-export async function getPageViews(
-  id: string,
-): Promise<{ total: number; recent: PageViewRow[] }> {
+export async function getPageViews(id: string): Promise<{ total: number; recent: PageViewRow[] }> {
   const page = await findPageById(id);
   if (!page) throw new AppError('Page not found', 404);
   const [total, recent] = await Promise.all([countPageViews(id), findPageViews(id)]);

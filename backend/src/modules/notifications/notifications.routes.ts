@@ -61,7 +61,7 @@ function authenticateSSE(req: Request, res: Response, next: NextFunction): void 
   }
 }
 
-router.post('/ticket', authenticate, authenticatedLimiter, wrap(mintSseTicketHandler));
+router.post('/ticket', wrap(authenticate), authenticatedLimiter, wrap(mintSseTicketHandler));
 router.get('/', authenticateSSE, sseHandler);
 
 export { router as notificationsRoutes };

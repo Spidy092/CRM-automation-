@@ -9,7 +9,7 @@ const router = Router();
 // Read a campaign's AI brief
 router.get(
   '/campaigns/:campaignId/brief',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'marketing', 'sales', 'viewer'),
   asyncHandler(getBrief),
 );
@@ -17,14 +17,14 @@ router.get(
 // Approve / reject a brief — managers and admins only
 router.post(
   '/campaigns/:campaignId/brief/approve',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager'),
   asyncHandler(approveBriefHandler),
 );
 
 router.post(
   '/campaigns/:campaignId/brief/reject',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager'),
   asyncHandler(rejectBriefHandler),
 );

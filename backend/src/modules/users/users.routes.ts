@@ -15,7 +15,7 @@ import {
 const router = Router();
 
 // All users routes require a valid JWT and rate limiting.
-router.use(authenticate);
+router.use(wrap(authenticate));
 router.use(authenticatedLimiter);
 
 // POST /api/v1/users — Create a new user. Admin only.

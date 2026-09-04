@@ -23,7 +23,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 router.get('/', wrap(listCampaignsHandler));
 router.get('/:id', wrap(getCampaignHandler));

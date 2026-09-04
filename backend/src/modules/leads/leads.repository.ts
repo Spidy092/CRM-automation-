@@ -392,10 +392,7 @@ export async function findActivityForLead(
   return rows;
 }
 
-export async function bulkUpdateLeads(
-  ids: string[],
-  input: Partial<LeadInput>,
-): Promise<number> {
+export async function bulkUpdateLeads(ids: string[], input: Partial<LeadInput>): Promise<number> {
   if (ids.length === 0) return 0;
 
   const sets: string[] = ['updated_at = NOW()'];
@@ -452,10 +449,7 @@ export async function bulkUpdateLeads(
   return res.rowCount ?? 0;
 }
 
-export async function bulkPauseLeads(
-  ids: string[],
-  status: LeadStatus,
-): Promise<number> {
+export async function bulkPauseLeads(ids: string[], status: LeadStatus): Promise<number> {
   if (ids.length === 0) return 0;
   const sourceStatusFilter = status === 'paused' ? "'active'" : "'paused'";
   const res = await pool.query(

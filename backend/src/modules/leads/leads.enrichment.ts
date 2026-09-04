@@ -61,7 +61,10 @@ export async function enrichLead(
   const result = await Promise.race([
     enrichDomain(domain),
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new AppError('Enrichment request timed out', 504)), ENRICHMENT_TIMEOUT_MS),
+      setTimeout(
+        () => reject(new AppError('Enrichment request timed out', 504)),
+        ENRICHMENT_TIMEOUT_MS,
+      ),
     ),
   ]);
 

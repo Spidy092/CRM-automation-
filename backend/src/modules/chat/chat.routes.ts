@@ -8,13 +8,13 @@ const router = Router();
 
 router.post(
   '/',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   asyncHandler(sendMessage),
 );
 router.get(
   '/history/:conversationId',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   asyncHandler(getHistory),
 );

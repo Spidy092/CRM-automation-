@@ -19,6 +19,7 @@
 import IORedis, { type Redis } from 'ioredis';
 import { Queue, type ConnectionOptions } from 'bullmq';
 import { logger } from '../shared/utils/logger';
+import { registerTestCleanup } from '../shared/utils/testResources';
 import { type AIDomainEvent } from '../shared/events/ai.events';
 
 export const SCORING_CALCULATE_LEAD = 'scoring:calculate-lead';
@@ -87,22 +88,62 @@ export const AI_DECISION_QUEUE = 'ai-decisions';
  * the project keeps a single ioredis dependency in `package.json`.
  */
 let bullConnection: Redis | null = null;
+let bullCleanupRegistered = false;
 
 export function getBullConnection(): Redis {
   if (bullConnection) return bullConnection;
   bullConnection = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
+    lazyConnect: true,
   });
+  if (!bullCleanupRegistered) {
+    bullCleanupRegistered = true;
+    registerTestCleanup(() => {
+      if (bullConnection && bullConnection.status !== 'end') bullConnection.disconnect();
+      bullConnection = null;
+    });
+  }
   bullConnection.on('error', (err: Error) => {
     logger.error('BullMQ Redis connection error', { error: err.message });
   });
   return bullConnection;
 }
 
-const connectionOpts = getBullConnection() as unknown as ConnectionOptions;
+const connectionOpts: ConnectionOptions = {
+  url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  maxRetriesPerRequest: null,
+  enableReadyCheck: true,
+  lazyConnect: true,
+};
 
-export const scoringQueue = new Queue(SCORING_QUEUE, {
+function createLazyQueue(name: string, options: ConstructorParameters<typeof Queue>[1]): Queue {
+  let queue: Queue | null = null;
+  const getQueue = (): Queue => {
+    queue ??= new Queue(name, options);
+    return queue;
+  };
+
+  registerTestCleanup(async () => {
+    if (queue) await queue.close();
+  });
+
+  return new Proxy({} as Queue, {
+    get(_target, property) {
+      if (typeof property === 'symbol') return undefined;
+      if (property === 'then') return undefined;
+      if (property === 'toString') return () => '[LazyQueue ' + name + ']';
+      const value = getQueue()[property as keyof Queue];
+      return typeof value === 'function' ? value.bind(getQueue()) : value;
+    },
+    set(_target, property, value) {
+      Reflect.set(getQueue(), property, value);
+      return true;
+    },
+  });
+}
+
+export const scoringQueue = createLazyQueue(SCORING_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -112,7 +153,7 @@ export const scoringQueue = new Queue(SCORING_QUEUE, {
   },
 });
 
-export const assignmentQueue = new Queue(ASSIGNMENT_QUEUE, {
+export const assignmentQueue = createLazyQueue(ASSIGNMENT_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -122,7 +163,7 @@ export const assignmentQueue = new Queue(ASSIGNMENT_QUEUE, {
   },
 });
 
-export const reportsQueue = new Queue(REPORTS_QUEUE, {
+export const reportsQueue = createLazyQueue(REPORTS_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -132,7 +173,7 @@ export const reportsQueue = new Queue(REPORTS_QUEUE, {
   },
 });
 
-export const scraperQueue = new Queue(SCRAPER_QUEUE, {
+export const scraperQueue = createLazyQueue(SCRAPER_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -142,7 +183,7 @@ export const scraperQueue = new Queue(SCRAPER_QUEUE, {
   },
 });
 
-export const leadEventsQueue = new Queue(LEAD_EVENTS_QUEUE, {
+export const leadEventsQueue = createLazyQueue(LEAD_EVENTS_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -152,7 +193,7 @@ export const leadEventsQueue = new Queue(LEAD_EVENTS_QUEUE, {
   },
 });
 
-export const aiResearchQueue = new Queue(AI_RESEARCH_QUEUE, {
+export const aiResearchQueue = createLazyQueue(AI_RESEARCH_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -162,7 +203,7 @@ export const aiResearchQueue = new Queue(AI_RESEARCH_QUEUE, {
   },
 });
 
-export const aiReplyQueue = new Queue(AI_REPLY_QUEUE, {
+export const aiReplyQueue = createLazyQueue(AI_REPLY_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -172,7 +213,7 @@ export const aiReplyQueue = new Queue(AI_REPLY_QUEUE, {
   },
 });
 
-export const aiCampaignQueue = new Queue(AI_CAMPAIGN_QUEUE, {
+export const aiCampaignQueue = createLazyQueue(AI_CAMPAIGN_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 2,
@@ -182,7 +223,7 @@ export const aiCampaignQueue = new Queue(AI_CAMPAIGN_QUEUE, {
   },
 });
 
-export const aiInboxQueue = new Queue(AI_INBOX_QUEUE, {
+export const aiInboxQueue = createLazyQueue(AI_INBOX_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -192,7 +233,7 @@ export const aiInboxQueue = new Queue(AI_INBOX_QUEUE, {
   },
 });
 
-export const aiDecisionQueue = new Queue(AI_DECISION_QUEUE, {
+export const aiDecisionQueue = createLazyQueue(AI_DECISION_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -202,7 +243,7 @@ export const aiDecisionQueue = new Queue(AI_DECISION_QUEUE, {
   },
 });
 
-export const outreachQueue = new Queue(OUTREACH_QUEUE, {
+export const outreachQueue = createLazyQueue(OUTREACH_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -212,7 +253,7 @@ export const outreachQueue = new Queue(OUTREACH_QUEUE, {
   },
 });
 
-export const newsletterQueue = new Queue(NEWSLETTER_QUEUE, {
+export const newsletterQueue = createLazyQueue(NEWSLETTER_QUEUE, {
   connection: connectionOpts,
   defaultJobOptions: {
     attempts: 3,

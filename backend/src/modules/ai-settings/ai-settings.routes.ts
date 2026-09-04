@@ -7,7 +7,7 @@ import { getAiSettingsHandler, updateAiSettingsHandler } from './ai-settings.con
 
 const router = Router();
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 /**
  * GET /api/v1/ai-settings

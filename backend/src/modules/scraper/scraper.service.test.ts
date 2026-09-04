@@ -21,6 +21,11 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
 
+jest.mock('../../shared/utils/db', () => ({
+  pool: {},
+  query: jest.fn(),
+  queryOne: jest.fn(),
+}));
 jest.mock('./scraper.repository');
 jest.mock('./scraper.scheduler', () => ({
   syncSchedule: jest.fn(),
@@ -28,6 +33,9 @@ jest.mock('./scraper.scheduler', () => ({
 }));
 jest.mock('../../workers/queue', () => ({
   enqueueScraperRun: jest.fn(),
+}));
+jest.mock('../notifications/notifications.emitter', () => ({
+  pushToUser: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('../ai-settings/ai-settings.service', () => ({
   getAiConfig: jest.fn(),
@@ -37,6 +45,9 @@ jest.mock('../../shared/utils/audit', () => ({
 }));
 jest.mock('../../shared/utils/logger', () => ({
   logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+}));
+jest.mock('../../shared/utils/email', () => ({
+  verifyEmail: jest.fn().mockResolvedValue({ valid: true, normalized: 'test@example.com' }),
 }));
 
 // Mock the dynamically-imported leads service so importLeads never touches the DB.
@@ -216,7 +227,11 @@ describe('Scraper Service', () => {
         source_type: 'facebook',
       });
       const result = await createConfig(
-        { name: 'FB', source_type: 'facebook', config: { pageId: '123', accessTokenRef: 'FB_TOKEN' } },
+        {
+          name: 'FB',
+          source_type: 'facebook',
+          config: { pageId: '123', accessTokenRef: 'FB_TOKEN' },
+        },
         mockActor,
       );
       expect(result.id).toBe('3');
@@ -237,10 +252,7 @@ describe('Scraper Service', () => {
 
     it('throws if apiKeyRef is missing entirely', async () => {
       await expect(
-        createConfig(
-          { name: 'Test', source_type: 'google_places', config: {} },
-          mockActor,
-        ),
+        createConfig({ name: 'Test', source_type: 'google_places', config: {} }, mockActor),
       ).rejects.toThrow(AppError);
     });
 
@@ -347,9 +359,7 @@ describe('Scraper Service', () => {
     });
 
     it('returns failed result when scraper throws (unknown source type)', async () => {
-      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
-        activeConfig('unknown_type', {}),
-      );
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(activeConfig('unknown_type', {}));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toContain('Unknown scraper source type');
@@ -432,7 +442,9 @@ describe('Scraper Service', () => {
 
     it('completes with zero results', async () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(gpConfig());
-      global.fetch = jest.fn().mockResolvedValue(jsonResponse({ status: 'ZERO_RESULTS', results: [] }));
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(jsonResponse({ status: 'ZERO_RESULTS', results: [] }));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(0);
@@ -551,7 +563,10 @@ describe('Scraper Service', () => {
         .fn()
         // geocode
         .mockResolvedValueOnce(
-          jsonResponse({ status: 'OK', results: [{ geometry: { location: { lat: 12.9, lng: 77.6 } } }] }),
+          jsonResponse({
+            status: 'OK',
+            results: [{ geometry: { location: { lat: 12.9, lng: 77.6 } } }],
+          }),
         )
         // text search
         .mockResolvedValueOnce(jsonResponse({ status: 'ZERO_RESULTS', results: [] }));
@@ -697,9 +712,7 @@ describe('Scraper Service', () => {
 
     it('fails when API returns an error object', async () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(fbConfig());
-      global.fetch = jest
-        .fn()
-        .mockResolvedValue(jsonResponse({ error: { message: 'bad token' } }));
+      global.fetch = jest.fn().mockResolvedValue(jsonResponse({ error: { message: 'bad token' } }));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toContain('bad token');
@@ -906,9 +919,9 @@ describe('Scraper Service', () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'x' }),
       );
-      global.fetch = jest.fn().mockResolvedValue(
-        jsonResponse({ items: [{ snippet: { channelTitle: 'Dup Chan' } }] }),
-      );
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(jsonResponse({ items: [{ snippet: { channelTitle: 'Dup Chan' } }] }));
       createLeadMock.mockRejectedValueOnce(new AppError('exists', 409));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('completed');
@@ -921,9 +934,9 @@ describe('Scraper Service', () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'x' }),
       );
-      global.fetch = jest.fn().mockResolvedValue(
-        jsonResponse({ items: [{ snippet: { channelTitle: 'Bad Chan' } }] }),
-      );
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(jsonResponse({ items: [{ snippet: { channelTitle: 'Bad Chan' } }] }));
       createLeadMock.mockRejectedValueOnce(new Error('db error'));
       const result = await runScrape('1', mockActor);
       expect(result.recordsFailed).toBe(1);
@@ -937,15 +950,10 @@ describe('Scraper Service', () => {
       );
       global.fetch = jest.fn().mockResolvedValue(
         jsonResponse({
-          items: [
-            { snippet: { channelTitle: 'Good' } },
-            { snippet: { channelTitle: 'Bad' } },
-          ],
+          items: [{ snippet: { channelTitle: 'Good' } }, { snippet: { channelTitle: 'Bad' } }],
         }),
       );
-      createLeadMock
-        .mockResolvedValueOnce({ id: 'ok' })
-        .mockRejectedValueOnce(new Error('boom'));
+      createLeadMock.mockResolvedValueOnce({ id: 'ok' }).mockRejectedValueOnce(new Error('boom'));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('partially_completed');
       expect(result.recordsImported).toBe(1);
@@ -978,9 +986,7 @@ describe('Scraper Service', () => {
     });
 
     it('fails when actorId is missing', async () => {
-      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
-        activeConfig('apify_actor', {}),
-      );
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(activeConfig('apify_actor', {}));
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toContain('actorId is required');
@@ -991,7 +997,12 @@ describe('Scraper Service', () => {
         activeConfig('apify_actor', { actorId: 'a~b' }),
       );
       loadApifyCredentialsMock.mockResolvedValue({ apiToken: 'token' });
-      runActorSyncMock.mockResolvedValue({ ok: false, items: [], error: 'HTTP 404', latencyMs: 10 });
+      runActorSyncMock.mockResolvedValue({
+        ok: false,
+        items: [],
+        error: 'HTTP 404',
+        latencyMs: 10,
+      });
 
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
@@ -1020,8 +1031,7 @@ describe('Scraper Service', () => {
       <a href="http://other.example.org/page">External</a>
       <a href="mailto:root@site.example.com">Mail</a>
     </body></html>`;
-    const contactHtml =
-      '<html><body><a href="mailto:contact@site.example.com">C</a></body></html>';
+    const contactHtml = '<html><body><a href="mailto:contact@site.example.com">C</a></body></html>';
     const aboutHtml = '<html><body><a href="mailto:about@site.example.com">A</a></body></html>';
 
     function routedFetch() {
@@ -1061,9 +1071,7 @@ describe('Scraper Service', () => {
 
       await runScrape('1', mockActor);
 
-      const robotsCalls = fetchMock.mock.calls.filter((c) =>
-        String(c[0]).includes('robots.txt'),
-      );
+      const robotsCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('robots.txt'));
       expect(robotsCalls).toHaveLength(1);
     });
 
@@ -1326,9 +1334,7 @@ describe('Scraper Service', () => {
         browserConfig({ url: ['http://site.example.com/', 'http://site.example.com/contact'] }),
       );
       puppeteerPageMock.content
-        .mockResolvedValueOnce(
-          '<html><body><a href="mailto:hi@acme.com">Email</a></body></html>',
-        )
+        .mockResolvedValueOnce('<html><body><a href="mailto:hi@acme.com">Email</a></body></html>')
         .mockResolvedValueOnce(
           '<html><body><a href="mailto:hi@acme.com">Email</a><a href="tel:+919880699054">Call</a></body></html>',
         );
@@ -1523,7 +1529,9 @@ describe('Scraper Service', () => {
     });
 
     it('falls back to the path as the label when a link has no text', async () => {
-      puppeteerPageMock.$$eval.mockResolvedValue([{ href: 'https://example.com/pricing', text: '' }]);
+      puppeteerPageMock.$$eval.mockResolvedValue([
+        { href: 'https://example.com/pricing', text: '' },
+      ]);
 
       const result = await discoverPages('https://example.com/');
 
@@ -1728,9 +1736,11 @@ describe('Scraper Service', () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'agencies' }),
       );
-      global.fetch = jest.fn().mockResolvedValue(
-        jsonResponse({ items: [{ snippet: { channelTitle: 'Acme TV', country: 'IN' } }] }),
-      );
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ items: [{ snippet: { channelTitle: 'Acme TV', country: 'IN' } }] }),
+        );
 
       await runScrape('1', mockActor);
 

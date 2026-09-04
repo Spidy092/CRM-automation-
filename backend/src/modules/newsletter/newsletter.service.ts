@@ -273,7 +273,9 @@ export const DEFAULT_DIGEST_CONFIG: NewsletterDigestConfig = {
   targetAudience: 'Sales reps and business professionals',
 };
 
-export async function getDigestConfig(): Promise<NewsletterResult<NewsletterDigestConfig, AppError>> {
+export async function getDigestConfig(): Promise<
+  NewsletterResult<NewsletterDigestConfig, AppError>
+> {
   try {
     const raw = await redis.get(DIGEST_CONFIG_REDIS_KEY);
     if (!raw) {
@@ -297,4 +299,3 @@ export async function updateDigestConfig(
     return { ok: false, error: new AppError(message, 500) };
   }
 }
-

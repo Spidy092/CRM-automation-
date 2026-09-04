@@ -63,4 +63,3 @@ export type ListSubscribersQuery = z.infer<typeof listSubscribersQuerySchema>;
 export type BroadcastBody = z.infer<typeof broadcastBodySchema>;
 export type AutomatedDigestToggleBody = z.infer<typeof automatedDigestToggleSchema>;
 export type UpdateDigestConfigBody = z.infer<typeof updateDigestConfigSchema>;
-

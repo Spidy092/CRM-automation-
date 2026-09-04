@@ -22,7 +22,7 @@ import {
 const router = Router();
 
 // All lead routes require authentication + authenticated-tier rate limit.
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 // GET /api/v1/leads — admin/manager/sales/viewer only; marketing excluded per RBAC spec.
 router.get('/', authorize('admin', 'manager', 'sales', 'viewer'), wrap(listLeadsHandler));

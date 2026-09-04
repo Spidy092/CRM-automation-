@@ -11,7 +11,11 @@ function actorFromReq(req: Request): FileActor {
   return { id: user.id, role: user.role, ipAddress: req.ip ?? null };
 }
 
-export async function listFilesHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listFilesHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const parsed = listFilesQuerySchema.parse(req.query);
     const items = await filesService.listFiles(parsed);
@@ -21,7 +25,11 @@ export async function listFilesHandler(req: Request, res: Response, next: NextFu
   }
 }
 
-export async function getFileHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = fileIdParamSchema.parse(req.params);
     const item = await filesService.getFile(id);
@@ -31,7 +39,11 @@ export async function getFileHandler(req: Request, res: Response, next: NextFunc
   }
 }
 
-export async function uploadFileHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function uploadFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     if (!req.file) throw new AppError('No file uploaded', 400);
     const created = await filesService.uploadFile(req.file, actorFromReq(req));
@@ -41,7 +53,11 @@ export async function uploadFileHandler(req: Request, res: Response, next: NextF
   }
 }
 
-export async function updateFileHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function updateFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = fileIdParamSchema.parse(req.params);
     const input = updateFileSchema.parse(req.body);
@@ -52,7 +68,11 @@ export async function updateFileHandler(req: Request, res: Response, next: NextF
   }
 }
 
-export async function deleteFileHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function deleteFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = fileIdParamSchema.parse(req.params);
     await filesService.removeFile(id, actorFromReq(req));

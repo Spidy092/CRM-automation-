@@ -19,7 +19,7 @@ const router = Router();
 
 // ── Admin Routes (authenticated) ──────────────────────────────────────────
 
-router.use('/admin', authenticate, authenticatedLimiter);
+router.use('/admin', wrap(authenticate), authenticatedLimiter);
 
 router.get('/admin', authorize('admin', 'marketing'), wrap(listPagesHandler));
 router.get('/admin/:id', authorize('admin', 'marketing'), wrap(getPageHandler));

@@ -11,15 +11,23 @@
  *   - exports directory is created when missing
  */
 
-import {
-  startReportExportWorker,
-  handleReportExport,
-} from './reportExport.worker';
+import { startReportExportWorker, handleReportExport } from './reportExport.worker';
+
+jest.mock('bullmq', () => ({
+  Worker: jest.fn().mockImplementation(() => ({
+    on: jest.fn(),
+    close: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
 
 jest.mock('./queue', () => ({
   getBullConnection: jest.fn(() => ({ on: jest.fn(), ping: jest.fn() })),
   REPORTS_QUEUE: 'reports',
   REPORT_EXPORT: 'report:export',
+}));
+
+jest.mock('../modules/notifications/notifications.emitter', () => ({
+  pushToUser: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('../shared/utils/metrics', () => ({
@@ -46,20 +54,27 @@ jest.mock('fs', () => ({
 
 jest.mock('xlsx', () => ({
   utils: {
-    json_to_sheet: jest.fn(() => ({} as any)),
-    book_new: jest.fn(() => ({} as any)),
+    json_to_sheet: jest.fn(() => ({}) as any),
+    book_new: jest.fn(() => ({}) as any),
     book_append_sheet: jest.fn(),
   },
   write: jest.fn(() => Buffer.from('mock-xlsx')),
 }));
 
-import { findDashboardMetrics, findLeadGenerationReport, findCampaignAnalytics, findIntegrationHealth } from '../modules/reports/reports.repository';
+import {
+  findDashboardMetrics,
+  findLeadGenerationReport,
+  findCampaignAnalytics,
+  findIntegrationHealth,
+} from '../modules/reports/reports.repository';
 import fs from 'fs';
 import xlsx from 'xlsx';
 
 describe('startReportExportWorker', () => {
-  it('starts without error when redis is available', () => {
-    expect(() => startReportExportWorker()).not.toThrow();
+  it('starts without error when redis is available', async () => {
+    const worker = startReportExportWorker();
+    expect(worker).toBeDefined();
+    await worker.close();
   });
 });
 
@@ -135,7 +150,15 @@ describe('handleReportExport', () => {
   it('exports outreach report to xlsx', async () => {
     const { findOutreachReport } = await import('../modules/reports/reports.repository');
     const outreachRows = [
-      { date: '2026-06-20', channel: 'email', sent: 10, delivered: 8, opened: 4, replied: 2, failed: 0 },
+      {
+        date: '2026-06-20',
+        channel: 'email',
+        sent: 10,
+        delivered: 8,
+        opened: 4,
+        replied: 2,
+        failed: 0,
+      },
     ];
     (findOutreachReport as jest.Mock).mockResolvedValue(outreachRows);
 
@@ -162,9 +185,7 @@ describe('handleReportExport', () => {
 
   it('exports pipeline report to csv', async () => {
     const { findPipelineReport } = await import('../modules/reports/reports.repository');
-    const pipelineRows = [
-      { stageName: 'proposal', leadCount: 5, conversionRate: 20, avgDays: 3 },
-    ];
+    const pipelineRows = [{ stageName: 'proposal', leadCount: 5, conversionRate: 20, avgDays: 3 }];
     (findPipelineReport as jest.Mock).mockResolvedValue(pipelineRows);
 
     await handleReportExport(
@@ -185,7 +206,14 @@ describe('handleReportExport', () => {
   it('exports reps report to csv', async () => {
     const { findSalesRepReport } = await import('../modules/reports/reports.repository');
     const repRows = [
-      { repId: 'u1', repName: 'Alice', leadsAssigned: 10, leadsConverted: 3, conversionRate: 30, avgResponseTime: 0 },
+      {
+        repId: 'u1',
+        repName: 'Alice',
+        leadsAssigned: 10,
+        leadsConverted: 3,
+        conversionRate: 30,
+        avgResponseTime: 0,
+      },
     ];
     (findSalesRepReport as jest.Mock).mockResolvedValue(repRows);
 
@@ -200,15 +228,33 @@ describe('handleReportExport', () => {
     );
 
     const written = (fs.writeFileSync as jest.Mock).mock.calls[0][1] as string;
-    expect(written).toContain('repId,repName,leadsAssigned,leadsConverted,conversionRate,avgResponseTime');
+    expect(written).toContain(
+      'repId,repName,leadsAssigned,leadsConverted,conversionRate,avgResponseTime',
+    );
     expect(written).toContain('u1,Alice,10,3,30,0');
   });
 
   describe('campaigns', () => {
     it('exports campaign analytics to csv', async () => {
       const campaignRows = [
-        { date: '2026-06-20', campaignId: 'c1', campaignName: 'Summer Sale', channel: 'email', leadsTargeted: 100, leadsConverted: 10, conversionRate: 10 },
-        { date: '2026-06-21', campaignId: 'c2', campaignName: 'Winter Sale', channel: 'sms', leadsTargeted: 200, leadsConverted: 25, conversionRate: 12.5 },
+        {
+          date: '2026-06-20',
+          campaignId: 'c1',
+          campaignName: 'Summer Sale',
+          channel: 'email',
+          leadsTargeted: 100,
+          leadsConverted: 10,
+          conversionRate: 10,
+        },
+        {
+          date: '2026-06-21',
+          campaignId: 'c2',
+          campaignName: 'Winter Sale',
+          channel: 'sms',
+          leadsTargeted: 200,
+          leadsConverted: 25,
+          conversionRate: 12.5,
+        },
       ];
       (findCampaignAnalytics as jest.Mock).mockResolvedValue(campaignRows);
 
@@ -230,7 +276,9 @@ describe('handleReportExport', () => {
       expect(fs.writeFileSync).toHaveBeenCalled();
       expect(result.filePath).toMatch(/report-job-c1-\d+\.csv$/);
       const written = (fs.writeFileSync as jest.Mock).mock.calls[0][1] as string;
-      expect(written).toContain('date,campaignId,campaignName,channel,leadsTargeted,leadsConverted,conversionRate');
+      expect(written).toContain(
+        'date,campaignId,campaignName,channel,leadsTargeted,leadsConverted,conversionRate',
+      );
       expect(written).toContain('2026-06-20,c1,Summer Sale,email,100,10,10.00');
       expect(written).toContain('2026-06-21,c2,Winter Sale,sms,200,25,12.50');
     });
@@ -258,8 +306,26 @@ describe('handleReportExport', () => {
   describe('integrations', () => {
     it('exports integration health to csv', async () => {
       const integrationRows = [
-        { integrationId: 'i1', name: 'salesforce', displayName: 'Salesforce', channel: 'crm', status: 'healthy', enabled: true, lastTestedAt: '2026-06-20T10:00:00Z', successRate: 99.9 },
-        { integrationId: 'i2', name: 'hubspot', displayName: 'HubSpot', channel: 'crm', status: 'failing', enabled: false, lastTestedAt: '2026-06-21T11:00:00Z', successRate: 45 },
+        {
+          integrationId: 'i1',
+          name: 'salesforce',
+          displayName: 'Salesforce',
+          channel: 'crm',
+          status: 'healthy',
+          enabled: true,
+          lastTestedAt: '2026-06-20T10:00:00Z',
+          successRate: 99.9,
+        },
+        {
+          integrationId: 'i2',
+          name: 'hubspot',
+          displayName: 'HubSpot',
+          channel: 'crm',
+          status: 'failing',
+          enabled: false,
+          lastTestedAt: '2026-06-21T11:00:00Z',
+          successRate: 45,
+        },
       ];
       (findIntegrationHealth as jest.Mock).mockResolvedValue(integrationRows);
 
@@ -277,7 +343,9 @@ describe('handleReportExport', () => {
       expect(fs.writeFileSync).toHaveBeenCalled();
       expect(result.filePath).toMatch(/report-job-i1-\d+\.csv$/);
       const written = (fs.writeFileSync as jest.Mock).mock.calls[0][1] as string;
-      expect(written).toContain('integrationId,name,displayName,status,enabled,lastTestedAt,successRate');
+      expect(written).toContain(
+        'integrationId,name,displayName,status,enabled,lastTestedAt,successRate',
+      );
       expect(written).toContain('i1,salesforce,Salesforce,healthy,true,2026-06-20T10:00:00Z,99.90');
       expect(written).toContain('i2,hubspot,HubSpot,failing,false,2026-06-21T11:00:00Z,45.00');
     });
@@ -353,7 +421,14 @@ describe('handleReportExport', () => {
   it('escapes commas and quotes in csv values', async () => {
     const { findSalesRepReport } = await import('../modules/reports/reports.repository');
     const repRows = [
-      { repId: 'u1', repName: 'Alice, "The Closer"', leadsAssigned: 10, leadsConverted: 3, conversionRate: 30, avgResponseTime: 0 },
+      {
+        repId: 'u1',
+        repName: 'Alice, "The Closer"',
+        leadsAssigned: 10,
+        leadsConverted: 3,
+        conversionRate: 30,
+        avgResponseTime: 0,
+      },
     ];
     (findSalesRepReport as jest.Mock).mockResolvedValue(repRows);
 

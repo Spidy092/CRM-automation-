@@ -17,7 +17,11 @@ function actorFromReq(req: Request): LandingPageActor {
   return { id: user.id, role: user.role, ipAddress: req.ip ?? null };
 }
 
-export async function listPagesHandler(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listPagesHandler(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const items = await pagesService.listPages();
     sendSuccess(res, items);
@@ -26,7 +30,11 @@ export async function listPagesHandler(_req: Request, res: Response, next: NextF
   }
 }
 
-export async function getPageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getPageHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = pageIdParamSchema.parse(req.params);
     const item = await pagesService.getPage(id);
@@ -50,7 +58,11 @@ export async function getPageViewsHandler(
   }
 }
 
-export async function createPageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function createPageHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const input = createPageSchema.parse(req.body);
     const created = await pagesService.createPage(input, actorFromReq(req));
@@ -60,7 +72,11 @@ export async function createPageHandler(req: Request, res: Response, next: NextF
   }
 }
 
-export async function updatePageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function updatePageHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = pageIdParamSchema.parse(req.params);
     const input = updatePageSchema.parse(req.body);
@@ -71,7 +87,11 @@ export async function updatePageHandler(req: Request, res: Response, next: NextF
   }
 }
 
-export async function publishPageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function publishPageHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = pageIdParamSchema.parse(req.params);
     const updated = await pagesService.publishPage(id, actorFromReq(req));
@@ -81,7 +101,11 @@ export async function publishPageHandler(req: Request, res: Response, next: Next
   }
 }
 
-export async function unpublishPageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function unpublishPageHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = pageIdParamSchema.parse(req.params);
     const updated = await pagesService.unpublishPage(id, actorFromReq(req));
@@ -91,7 +115,11 @@ export async function unpublishPageHandler(req: Request, res: Response, next: Ne
   }
 }
 
-export async function deletePageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function deletePageHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     const { id } = pageIdParamSchema.parse(req.params);
     await pagesService.removePage(id, actorFromReq(req));

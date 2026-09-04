@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from './logger';
+import { registerTestCleanup } from './testResources';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -11,6 +12,10 @@ const pool = new Pool({
 
 pool.on('error', (err) => {
   logger.error('Unexpected PostgreSQL pool error', { error: err.message });
+});
+
+registerTestCleanup(async () => {
+  await pool.end();
 });
 
 export { pool };

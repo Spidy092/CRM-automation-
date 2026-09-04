@@ -22,12 +22,13 @@ const registeredClients = new Map<string, { redirectUris: string[]; clientName: 
 const pendingCodes = new Map<string, { apiKey: string; expiresAt: number }>();
 
 // Cleanup expired codes every minute
-setInterval(() => {
+const pendingCodeCleanup = setInterval(() => {
   const now = Date.now();
   for (const [code, entry] of pendingCodes) {
     if (entry.expiresAt < now) pendingCodes.delete(code);
   }
 }, 60_000);
+pendingCodeCleanup.unref();
 
 /** GET /.well-known/oauth-authorization-server */
 export function oauthMetadata(_req: Request, res: Response): void {
@@ -51,8 +52,14 @@ export function oauthRegister(req: Request, res: Response): void {
     [key: string]: unknown;
   };
 
-  if (!body.redirect_uris || !Array.isArray(body.redirect_uris) || body.redirect_uris.length === 0) {
-    res.status(400).json({ error: 'invalid_client_metadata', error_description: 'redirect_uris is required' });
+  if (
+    !body.redirect_uris ||
+    !Array.isArray(body.redirect_uris) ||
+    body.redirect_uris.length === 0
+  ) {
+    res
+      .status(400)
+      .json({ error: 'invalid_client_metadata', error_description: 'redirect_uris is required' });
     return;
   }
 
@@ -197,7 +204,7 @@ export function oauthAuthorize(req: Request, res: Response): void {
 }
 
 /** POST /oauth/authorize — issues code, returns redirectUrl as JSON (JS client navigates) */
-export async function oauthAuthorizeSubmit(req: Request, res: Response): Promise<void> {
+export function oauthAuthorizeSubmit(req: Request, res: Response): void {
   // Accept both JSON (from fetch) and urlencoded (legacy)
   const body = req.body as Record<string, string>;
   const { redirect_uri, state, apiKey } = body;

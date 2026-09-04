@@ -25,6 +25,10 @@ jest.mock('./queue', () => ({
   enqueueOutreachFollowUp: jest.fn(),
   enqueueOutreachStopCheck: jest.fn(),
 }));
+jest.mock('../shared/utils/db', () => ({
+  pool: { query: jest.fn(() => Promise.resolve({ rows: [] })) },
+}));
+
 
 jest.mock('../shared/utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -38,7 +42,7 @@ jest.mock('../lib/dlq', () => ({ moveToDLQ: jest.fn() }));
 jest.mock('../shared/utils/sentry', () => ({ Sentry: { captureException: jest.fn() } }));
 
 jest.mock('../modules/outreach/outreach.repository', () => ({
-  findSequenceById: jest.fn(),
+  findSequenceByIdIncludingDeleted: jest.fn(),
   findLogsByLead: jest.fn(),
 }));
 jest.mock('../modules/outreach/outreach.service', () => ({
@@ -63,7 +67,7 @@ jest.mock('../modules/outreach/outreach.prompt', () => ({
   personalizeMessage: jest.fn(),
 }));
 
-import { findSequenceById, findLogsByLead } from '../modules/outreach/outreach.repository';
+import { findSequenceByIdIncludingDeleted, findLogsByLead } from '../modules/outreach/outreach.repository';
 import { createLog, updateLogStatus, createTask } from '../modules/outreach/outreach.service';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { findLeadById } from '../modules/leads/leads.repository';
@@ -137,7 +141,7 @@ const MOCK_TEMPLATE = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (findSequenceById as jest.Mock<any>).mockResolvedValue(THREE_STEP_SEQ);
+  (findSequenceByIdIncludingDeleted as jest.Mock<any>).mockResolvedValue(THREE_STEP_SEQ);
   (createLog as jest.Mock<any>).mockResolvedValue(MOCK_LOG);
   (updateLogStatus as jest.Mock<any>).mockResolvedValue({ ...MOCK_LOG, status: 'sent' });
   (findLeadById as jest.Mock<any>).mockResolvedValue(MOCK_LEAD);
@@ -217,7 +221,7 @@ describe('3-step sequence: WhatsApp → Email → SMS', () => {
 
 describe('phone_call step', () => {
   it('creates a task row and skips message dispatch', async () => {
-    (findSequenceById as jest.Mock<any>).mockResolvedValue(FOUR_STEP_SEQ);
+    (findSequenceByIdIncludingDeleted as jest.Mock<any>).mockResolvedValue(FOUR_STEP_SEQ);
     (createTask as jest.Mock<any>).mockResolvedValue({ id: 'task-1' });
 
     await handleDispatch({

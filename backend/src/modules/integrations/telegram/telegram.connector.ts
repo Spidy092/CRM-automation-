@@ -17,7 +17,7 @@ export const TELEGRAM_PROVIDER_NAME = 'telegram';
 
 export const telegramCredentialsSchema = z
   .object({
-    botToken:      z.string().min(1, 'Bot token is required'),
+    botToken: z.string().min(1, 'Bot token is required'),
     defaultChatId: z.string().optional(),
   })
   .strict();
@@ -36,7 +36,10 @@ export async function loadCredentials(): Promise<TelegramCredentials> {
   const raw = JSON.parse(decrypt(enc)) as unknown;
   const result = telegramCredentialsSchema.safeParse(raw);
   if (!result.success) {
-    throw new AppError(`Telegram credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`, 422);
+    throw new AppError(
+      `Telegram credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`,
+      422,
+    );
   }
   return result.data;
 }
@@ -50,13 +53,25 @@ export async function testConnection(
   const start = Date.now();
   try {
     const res = await fetch(`${botBase(creds.botToken)}/getMe`);
-    const body = await res.json() as { ok: boolean; result?: { username?: string }; description?: string };
+    const body = (await res.json()) as {
+      ok: boolean;
+      result?: { username?: string };
+      description?: string;
+    };
     if (body.ok) {
       return { ok: true, latencyMs: Date.now() - start, botUsername: body.result?.username };
     }
-    return { ok: false, error: body.description ?? 'Telegram getMe failed', latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: body.description ?? 'Telegram getMe failed',
+      latencyMs: Date.now() - start,
+    };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error', latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+      latencyMs: Date.now() - start,
+    };
   }
 }
 
@@ -86,14 +101,21 @@ export async function sendMessage(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id:    input.chatId,
-        text:       input.text,
+        chat_id: input.chatId,
+        text: input.text,
         parse_mode: input.parseMode ?? 'Markdown',
       }),
     });
-    const body = await res.json() as { ok: boolean; result?: { message_id: number }; description?: string };
+    const body = (await res.json()) as {
+      ok: boolean;
+      result?: { message_id: number };
+      description?: string;
+    };
     if (body.ok && body.result) {
-      return { ok: true, data: { messageId: body.result.message_id, latencyMs: Date.now() - start } };
+      return {
+        ok: true,
+        data: { messageId: body.result.message_id, latencyMs: Date.now() - start },
+      };
     }
     return { ok: false, error: body.description ?? `HTTP ${res.status}` };
   } catch (err) {
@@ -105,15 +127,24 @@ export async function sendMessage(
  * Gets updates (incoming messages) from the bot since a given offset.
  * Used for reply tracking — call periodically or from a webhook.
  */
-export async function getUpdates(
-  offset?: number,
-): Promise<Array<{ updateId: number; message?: { chatId: number; text?: string; from?: { username?: string } } }>> {
+export async function getUpdates(offset?: number): Promise<
+  Array<{
+    updateId: number;
+    message?: { chatId: number; text?: string; from?: { username?: string } };
+  }>
+> {
   const creds = await loadCredentials();
   const params = new URLSearchParams({ timeout: '0', limit: '100' });
   if (offset != null) params.set('offset', String(offset));
   try {
     const res = await fetch(`${botBase(creds.botToken)}/getUpdates?${params.toString()}`);
-    const body = await res.json() as { ok: boolean; result?: Array<{ update_id: number; message?: { chat: { id: number }; text?: string; from?: { username?: string } } }> };
+    const body = (await res.json()) as {
+      ok: boolean;
+      result?: Array<{
+        update_id: number;
+        message?: { chat: { id: number }; text?: string; from?: { username?: string } };
+      }>;
+    };
     if (!body.ok || !body.result) return [];
     return body.result.map((u) => ({
       updateId: u.update_id,

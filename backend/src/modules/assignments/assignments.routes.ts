@@ -14,7 +14,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 router.get('/config', authorize('admin', 'manager'), wrap(getConfigHandler));
 router.put('/config', authorize('admin', 'manager'), wrap(updateConfigHandler));

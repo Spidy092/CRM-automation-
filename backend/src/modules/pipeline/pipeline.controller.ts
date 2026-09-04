@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { sendSuccess } from '../../shared/utils/response';
-import { AuthenticatedUser } from '../../shared/types';
 import {
   getAllPipelines,
   getPipelineById,
@@ -29,7 +28,7 @@ interface Actor {
 }
 
 function actorFromReq(req: Request): Actor {
-  const user = req.user as AuthenticatedUser | undefined;
+  const user = req.user;
   if (!user) throw new AppError('Unauthorized', 401);
   return { id: user.id, role: user.role, ipAddress: req.ip ?? null };
 }

@@ -18,6 +18,7 @@ import { httpMetricsMiddleware } from './shared/middleware/httpMetrics';
 import { authenticate } from './shared/middleware/auth';
 import { Sentry } from './shared/utils/sentry';
 import { authenticatedLimiter, publicLimiter } from './shared/middleware/rateLimiter';
+import { wrap } from './shared/utils/asyncHandler';
 import { authRoutes } from './modules/auth/auth.routes';
 import { customFieldsRoutes } from './modules/custom-fields/customFields.routes';
 import { leadsRoutes } from './modules/leads/leads.routes';
@@ -88,7 +89,7 @@ app.use(
     origin: (origin, callback) => {
       const allowedOrigins = [
         process.env.CORS_ORIGIN ?? 'http://localhost:5173',
-        'https://claude.ai'
+        'https://claude.ai',
       ];
       // Allow requests with no origin (like mobile apps or curl) or allowed origins
       if (!origin || allowedOrigins.includes(origin)) {
@@ -118,7 +119,7 @@ app.use(httpMetricsMiddleware);
 app.get('/.well-known/oauth-authorization-server', publicLimiter, oauthMetadata);
 app.post('/oauth/register', publicLimiter, oauthRegister);
 app.get('/oauth/authorize', publicLimiter, oauthAuthorize);
-app.post('/oauth/authorize', publicLimiter, oauthAuthorizeSubmit);
+app.post('/oauth/authorize', publicLimiter, wrap(oauthAuthorizeSubmit));
 app.post('/oauth/token', publicLimiter, oauthToken);
 
 // ── Health Check (no auth, no rate limit) ─────────────────────────────────────
@@ -185,7 +186,7 @@ app.use('/api/v1/events', notificationsRoutes);
 app.use('/api/v1/ai-inbox', authenticatedLimiter, aiInboxRoutes);
 app.use('/api/v1/ai-intelligence', authenticatedLimiter, aiIntelligenceRoutes);
 app.use('/api/v1/ai-campaign-brain', authenticatedLimiter, aiCampaignBrainRoutes);
-app.use('/api/v1/ai-reply', authenticate, aiReplyRoutes);
+app.use('/api/v1/ai-reply', wrap(authenticate), aiReplyRoutes);
 app.use('/api/v1/agent', authenticatedLimiter, agentRoutes);
 app.use('/api/v1/chat', authenticatedLimiter, chatRoutes);
 app.use('/api/v1/chat/plans', authenticatedLimiter, planRoutes);

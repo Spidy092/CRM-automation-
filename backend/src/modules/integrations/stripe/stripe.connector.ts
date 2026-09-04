@@ -17,7 +17,7 @@ export const STRIPE_PROVIDER_NAME = 'stripe';
 
 export const stripeCredentialsSchema = z
   .object({
-    secretKey:     z.string().min(1, 'Secret key is required').startsWith('sk_', 'Must start with sk_'),
+    secretKey: z.string().min(1, 'Secret key is required').startsWith('sk_', 'Must start with sk_'),
     webhookSecret: z.string().optional(),
   })
   .strict();
@@ -38,7 +38,10 @@ export async function loadCredentials(): Promise<StripeCredentials> {
   const raw = JSON.parse(decrypt(enc)) as unknown;
   const result = stripeCredentialsSchema.safeParse(raw);
   if (!result.success) {
-    throw new AppError(`Stripe credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`, 422);
+    throw new AppError(
+      `Stripe credentials invalid: ${result.error.errors.map((e) => e.message).join(', ')}`,
+      422,
+    );
   }
   return result.data;
 }
@@ -57,18 +60,24 @@ export async function testConnection(
     if (res.ok) return { ok: true, latencyMs: Date.now() - start };
     let msg = `HTTP ${res.status}`;
     try {
-      const b = await res.json() as { error?: { message?: string } };
+      const b = (await res.json()) as { error?: { message?: string } };
       if (b.error?.message) msg = b.error.message;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return { ok: false, error: msg, latencyMs: Date.now() - start };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error', latencyMs: Date.now() - start };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+      latencyMs: Date.now() - start,
+    };
   }
 }
 
 export interface CreatePaymentLinkInput {
   priceId?: string;
-  amount?: number;   // in paise/cents
+  amount?: number; // in paise/cents
   currency?: string;
   description?: string;
 }
@@ -88,7 +97,7 @@ export async function createPaymentLink(
     if (!priceId) {
       const priceBody = new URLSearchParams({
         unit_amount: String(input.amount ?? 0),
-        currency:    input.currency ?? 'inr',
+        currency: input.currency ?? 'inr',
         'product_data[name]': input.description ?? 'CRM Deal',
       });
       const priceRes = await fetch(`${STRIPE_BASE}/prices`, {
@@ -100,15 +109,18 @@ export async function createPaymentLink(
         body: priceBody,
       });
       if (!priceRes.ok) {
-        const b = await priceRes.json() as { error?: { message?: string } };
+        const b = (await priceRes.json()) as { error?: { message?: string } };
         return { ok: false, error: b.error?.message ?? 'Failed to create price' };
       }
-      const priceData = await priceRes.json() as { id: string };
+      const priceData = (await priceRes.json()) as { id: string };
       priceId = priceData.id;
     }
 
     // Create payment link
-    const linkBody = new URLSearchParams({ 'line_items[0][price]': priceId, 'line_items[0][quantity]': '1' });
+    const linkBody = new URLSearchParams({
+      'line_items[0][price]': priceId,
+      'line_items[0][quantity]': '1',
+    });
     const linkRes = await fetch(`${STRIPE_BASE}/payment_links`, {
       method: 'POST',
       headers: {
@@ -118,10 +130,10 @@ export async function createPaymentLink(
       body: linkBody,
     });
     if (!linkRes.ok) {
-      const b = await linkRes.json() as { error?: { message?: string } };
+      const b = (await linkRes.json()) as { error?: { message?: string } };
       return { ok: false, error: b.error?.message ?? 'Failed to create payment link' };
     }
-    const linkData = await linkRes.json() as { url: string };
+    const linkData = (await linkRes.json()) as { url: string };
     return { ok: true, url: linkData.url };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' };

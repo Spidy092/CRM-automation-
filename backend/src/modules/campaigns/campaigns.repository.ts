@@ -440,8 +440,9 @@ export interface CampaignLeadRow {
   status: 'active' | 'paused' | 'won' | 'lost' | 'opted_out';
 }
 
-
-export async function findEligibleTriggerLeadsForCampaign(campaignId: string): Promise<CampaignLeadRow[]> {
+export async function findEligibleTriggerLeadsForCampaign(
+  campaignId: string,
+): Promise<CampaignLeadRow[]> {
   const result = await pool.query<CampaignLeadRow>(
     `SELECT l.id, l.business_name, l.phone, l.email, l.status
      FROM campaigns c
@@ -454,7 +455,7 @@ export async function findEligibleTriggerLeadsForCampaign(campaignId: string): P
          SELECT 1 FROM campaign_leads cl WHERE cl.campaign_id = c.id AND cl.lead_id = l.id
        )
      ORDER BY l.created_at ASC`,
-    [campaignId]
+    [campaignId],
   );
   return result.rows;
 }

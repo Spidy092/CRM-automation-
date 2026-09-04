@@ -105,7 +105,11 @@ export async function getMeHandler(req: Request, res: Response, next: NextFuncti
 // -----------------------------------------------------------------------------
 import { createApiKeySchema } from './auth.schema';
 
-export async function createApiKeyHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function createApiKeyHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     if (!req.user) throw new AppError('Unauthorized', 401);
     const input = createApiKeySchema.parse(req.body);
@@ -116,7 +120,11 @@ export async function createApiKeyHandler(req: Request, res: Response, next: Nex
   }
 }
 
-export async function getApiKeysHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getApiKeysHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     if (!req.user) throw new AppError('Unauthorized', 401);
     const result = await authService.getApiKeysForUser(req.user.id);
@@ -126,7 +134,11 @@ export async function getApiKeysHandler(req: Request, res: Response, next: NextF
   }
 }
 
-export async function deleteApiKeyHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function deleteApiKeyHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
     if (!req.user) throw new AppError('Unauthorized', 401);
     const id = req.params.id;

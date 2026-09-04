@@ -13,7 +13,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate);
+router.use(wrap(authenticate));
 
 // Anyone authenticated can read the shared file library.
 router.get('/', wrap(listFilesHandler));
@@ -21,7 +21,12 @@ router.get('/:id', wrap(getFileHandler));
 
 // Admin or marketing may upload, rename/retag, and delete files.
 // Per AGENTS.md RBAC reference: marketing role manages campaigns, templates, reports.
-router.post('/', authorize('admin', 'marketing'), fileLibraryUpload.single('file'), wrap(uploadFileHandler));
+router.post(
+  '/',
+  authorize('admin', 'marketing'),
+  fileLibraryUpload.single('file'),
+  wrap(uploadFileHandler),
+);
 router.patch('/:id', authorize('admin', 'marketing'), wrap(updateFileHandler));
 router.delete('/:id', authorize('admin', 'marketing'), wrap(deleteFileHandler));
 

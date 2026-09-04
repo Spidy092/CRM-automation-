@@ -8,19 +8,19 @@ const router = Router();
 
 router.post(
   '/actions',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   asyncHandler(proposeAction),
 );
 router.post(
   '/actions/:id/execute',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing'),
   asyncHandler(executeAction),
 );
 router.post(
   '/actions/:id/reject',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing'),
   asyncHandler(rejectAction),
 );

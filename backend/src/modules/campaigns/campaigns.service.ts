@@ -262,9 +262,9 @@ async function buildAutomationPreview(campaign: Campaign, mockMode = false): Pro
 
   const explicitLeads = await findCampaignLeadRows(campaign.id);
   const triggerLeads = await findEligibleTriggerLeadsForCampaign(campaign.id);
-  
+
   // Deduplicate in case a lead is in both (shouldn't happen with the SQL NOT EXISTS clause, but safe)
-  const leadsMap = new Map();
+  const leadsMap = new Map<string, (typeof explicitLeads)[number]>();
   for (const l of [...explicitLeads, ...triggerLeads]) {
     leadsMap.set(l.id, l);
   }
@@ -337,7 +337,7 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   let enqueued = 0;
 
   // Auto-enroll eligible leads that are not yet in campaign_leads
-  const leadIdsToInsert = preview.eligibleLeads.map(l => l.leadId);
+  const leadIdsToInsert = preview.eligibleLeads.map((l) => l.leadId);
   if (leadIdsToInsert.length > 0) {
     await addLeads(launched.id, leadIdsToInsert, actor);
   }

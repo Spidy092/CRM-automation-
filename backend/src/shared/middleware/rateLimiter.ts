@@ -23,5 +23,8 @@ export const passwordChangeLimiter = rateLimit({
   limit: 5, // max 5 requests per 15 mins
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, error: 'Too many password change attempts. Please try again after 15 minutes.' },
+  message: {
+    success: false,
+    error: 'Too many password change attempts. Please try again after 15 minutes.',
+  },
 });

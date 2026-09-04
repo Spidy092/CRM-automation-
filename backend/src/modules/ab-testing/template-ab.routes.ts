@@ -16,7 +16,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, authenticatedLimiter);
+router.use(wrap(authenticate), authenticatedLimiter);
 
 // ── Variant CRUD ──────────────────────────────────────────────────────────
 

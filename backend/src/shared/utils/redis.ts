@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 import { logger } from './logger';
+import { registerTestCleanup } from './testResources';
 
 export const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
   maxRetriesPerRequest: 3,
@@ -9,6 +10,10 @@ export const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379'
 
 redis.on('connect', () => logger.info('Redis connected'));
 redis.on('error', (err: Error) => logger.error('Redis error', { error: err.message }));
+
+registerTestCleanup(() => {
+  if (redis.status !== 'end') redis.disconnect();
+});
 
 export async function checkRedisConnection(): Promise<boolean> {
   try {

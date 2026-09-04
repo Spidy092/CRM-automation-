@@ -14,7 +14,7 @@ const router = Router();
 // Read a lead's AI profile — any lead-facing role
 router.get(
   '/leads/:leadId/profile',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   asyncHandler(getLeadProfile),
 );
@@ -22,7 +22,7 @@ router.get(
 // Manually (re-)trigger AI research for a lead
 router.post(
   '/leads/:leadId/research',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing'),
   asyncHandler(triggerLeadResearch),
 );
@@ -30,12 +30,17 @@ router.post(
 // Read a lead's AI decision log
 router.get(
   '/leads/:leadId/decisions',
-  authenticate,
+  asyncHandler(authenticate),
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   asyncHandler(getLeadDecisionLog),
 );
 
 // Global AI decision audit trail — admin only
-router.get('/decisions', authenticate, authorize('admin'), asyncHandler(getDecisionLog));
+router.get(
+  '/decisions',
+  asyncHandler(authenticate),
+  authorize('admin'),
+  asyncHandler(getDecisionLog),
+);
 
 export default router;

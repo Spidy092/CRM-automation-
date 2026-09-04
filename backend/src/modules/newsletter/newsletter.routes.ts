@@ -29,7 +29,7 @@ router.patch('/preferences', publicLimiter, wrap(updatePreferencesHandler));
 
 // ── Admin Routes (authenticated) ─────────────────────────────────────────
 
-router.use('/admin', authenticate, authenticatedLimiter, authorize('admin', 'marketing'));
+router.use('/admin', wrap(authenticate), authenticatedLimiter, authorize('admin', 'marketing'));
 router.get('/admin/subscribers', wrap(listSubscribersHandler));
 router.get('/admin/subscribers/:id', wrap(getSubscriberHandler));
 router.post('/admin/broadcast', wrap(broadcastHandler));
