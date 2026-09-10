@@ -45,7 +45,9 @@ export type CalendarResult =
 
 // ── Credential loader ────────────────────────────────────────────────────────
 
-export async function loadCredentials(providedCredentials?: unknown): Promise<GoogleCalendarCredentials> {
+export async function loadCredentials(
+  providedCredentials?: unknown,
+): Promise<GoogleCalendarCredentials> {
   let parsed: unknown = providedCredentials;
 
   if (providedCredentials === undefined) {

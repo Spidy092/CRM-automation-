@@ -267,7 +267,11 @@ export async function moveLead(leadId: string, stageId: string, actor: Actor): P
   void enqueueLeadEvent({
     event: 'lead.stage_moved',
     leadId,
-    payload: { fromStageId: null, toStageId: stageId, pipelineId: stage.pipeline_id },
+    payload: {
+      fromStageId: lead.pipeline_stage_id ?? null,
+      toStageId: stageId,
+      pipelineId: stage.pipeline_id,
+    },
   });
 }
 

@@ -36,6 +36,8 @@ const ApiKeysPage = lazy(() => import('@/pages/ApiKeysPage').then(m => ({ defaul
 const AISettingsPage = lazy(() => import('@/pages/AISettingsPage'));
 const OutreachSequencesPage = lazy(() => import('@/pages/OutreachSequencesPage').then(m => ({ default: m.OutreachSequencesPage })));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage').then(m => ({ default: m.AutomationRulesPage })));
+const WorkflowsPage = lazy(() => import('@/pages/WorkflowsPage').then(m => ({ default: m.WorkflowsPage })));
+const WorkflowBuilderPage = lazy(() => import('@/pages/WorkflowBuilderPage').then(m => ({ default: m.WorkflowBuilderPage })));
 const LeadDetailPage = lazy(() => import('@/pages/LeadDetailPage').then(m => ({ default: m.LeadDetailPage })));
 const TemplatesPage = lazy(() => import('@/pages/TemplatesPage').then(m => ({ default: m.TemplatesPage })));
 const TemplateFormPage = lazy(() => import('@/pages/TemplateFormPage').then(m => ({ default: m.TemplateFormPage })));
@@ -242,6 +244,8 @@ function App() {
                 <Route path="settings/integrations" element={<LazyPage><IntegrationsPage /></LazyPage>} />
                 <Route path="settings/api-keys" element={<LazyPage><ApiKeysPage /></LazyPage>} />
                 <Route path="automation/rules" element={<LazyPage><AutomationRulesPage /></LazyPage>} />
+                <Route path="automation/workflows" element={<LazyPage><WorkflowsPage /></LazyPage>} />
+                <Route path="automation/workflows/new" element={<LazyPage><WorkflowBuilderPage /></LazyPage>} />
                 <Route path="outreach/sequences" element={<LazyPage><OutreachSequencesPage /></LazyPage>} />
                 <Route path="templates" element={<LazyPage><TemplatesPage /></LazyPage>} />
                 <Route path="templates/new" element={<LazyPage><TemplateFormPage /></LazyPage>} />

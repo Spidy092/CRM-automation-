@@ -16,7 +16,8 @@ import type { ChatPageContext, ChatResponse, ChatTurn } from './chat.types';
 const CHAT_HISTORY_TTL_SECONDS = 60 * 60 * 2;
 const CHAT_HISTORY_LIMIT = 20;
 const MAX_TOOL_ROUNDS = 4;
-const CHAT_MAX_TOKENS = 700;
+// Keep every model completion within the platform-wide 500-token budget.
+const CHAT_MAX_TOKENS = 500;
 const TOOL_RESULT_CHAR_LIMIT = 4000;
 const PLAN_MARKER_PATTERN = /^plan:[0-9a-f-]{36}:/;
 
@@ -136,7 +137,7 @@ export async function sendChatMessage(input: SendChatMessageInput): Promise<Chat
     const msg = err instanceof Error ? err.message : String(err);
     logger.warn('chat: agent conversation failed, falling back to planner', {
       error: msg,
-      message: input.message,
+      messageLength: input.message.length,
     });
     return delegateToPlanner(input, history, input.message);
   }
@@ -340,7 +341,10 @@ async function delegateToPlanner(
       return { conversationId: input.conversationId, reply };
     }
     const msg = err instanceof Error ? err.message : 'Unknown planner error';
-    logger.warn('planner: failed to create plan', { error: msg, message: input.message });
+    logger.warn('planner: failed to create plan', {
+      error: msg,
+      messageLength: input.message.length,
+    });
     const reply = [
       'I could not turn that into a valid action plan.',
       'Try asking for one specific action, like:',

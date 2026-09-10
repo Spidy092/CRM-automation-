@@ -49,6 +49,15 @@ export const SCRAPER_QUEUE = 'scraper';
 export const LEAD_EVENT = 'lead:event';
 export const LEAD_EVENTS_QUEUE = 'lead-events';
 
+// Durable domain-event outbox publisher. The consumer is intentionally a
+// separate worker slice; database rows remain retryable if Redis is down.
+export const OUTBOX_PUBLISH = 'outbox:publish';
+export const OUTBOX_QUEUE = 'event-outbox';
+
+// Workflow runtime
+export const WORKFLOW_EXECUTE_ENROLLMENT = 'workflow:execute-enrollment';
+export const WORKFLOW_QUEUE = 'workflows';
+
 // AI Research (Phase 2 — Sprint 5)
 export const AI_RESEARCH_LEAD = 'ai:research-lead';
 export const AI_RESEARCH_QUEUE = 'ai-research';
@@ -188,6 +197,26 @@ export const leadEventsQueue = createLazyQueue(LEAD_EVENTS_QUEUE, {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: 'exponential', delay: 1_000 },
+    removeOnComplete: { count: 2_000, age: 24 * 60 * 60 },
+    removeOnFail: { count: 500, age: 7 * 24 * 60 * 60 },
+  },
+});
+
+export const outboxQueue = createLazyQueue(OUTBOX_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2_000 },
+    removeOnComplete: { count: 2_000, age: 24 * 60 * 60 },
+    removeOnFail: { count: 500, age: 7 * 24 * 60 * 60 },
+  },
+});
+
+export const workflowQueue = createLazyQueue(WORKFLOW_QUEUE, {
+  connection: connectionOpts,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2_000 },
     removeOnComplete: { count: 2_000, age: 24 * 60 * 60 },
     removeOnFail: { count: 500, age: 7 * 24 * 60 * 60 },
   },
@@ -384,16 +413,29 @@ export type AiEventJob = {
 
 export type LeadEventType =
   | 'lead.created'
+  | 'lead.updated'
+  | 'lead.tag_added'
+  | 'form.submitted'
   | 'lead.scored'
   | 'lead.stage_moved'
   | 'lead.assigned'
   | 'lead.status_changed'
   | 'lead.reply.received'; // Phase 2 — inbound message from any channel
 
+export interface OutboxPublishJob {
+  outboxEventId: string;
+}
+
+export interface WorkflowExecuteEnrollmentJob {
+  enrollmentId: string;
+}
+
 export interface LeadEventJob {
   event: LeadEventType;
   leadId: string;
   payload: Record<string, unknown>;
+  /** Stable BullMQ job ID, copied by the event worker for workflow dedupe. */
+  eventId?: string;
 }
 
 export interface OutreachSendAiReplyJob {
@@ -427,7 +469,9 @@ export type JobData =
   | { name: typeof REPORT_EXPORT; data: ReportExportJob }
   | { name: typeof SCRAPER_RUN; data: ScraperRunJob }
   | { name: typeof NEWSLETTER_BROADCAST; data: NewsletterBroadcastJob }
-  | { name: typeof NEWSLETTER_AUTOMATED_DIGEST; data: NewsletterAutomatedDigestJob };
+  | { name: typeof NEWSLETTER_AUTOMATED_DIGEST; data: NewsletterAutomatedDigestJob }
+  | { name: typeof OUTBOX_PUBLISH; data: OutboxPublishJob }
+  | { name: typeof WORKFLOW_EXECUTE_ENROLLMENT; data: WorkflowExecuteEnrollmentJob };
 
 export interface NewsletterBroadcastJob {
   subject: string;
@@ -508,7 +552,36 @@ export async function enqueueScraperRun(payload: ScraperRunJob): Promise<string>
 }
 
 export async function enqueueLeadEvent(payload: LeadEventJob): Promise<void> {
-  await leadEventsQueue.add(LEAD_EVENT, payload);
+  await leadEventsQueue.add(
+    LEAD_EVENT,
+    payload,
+    payload.eventId ? { jobId: `lead-event-${payload.eventId}` } : undefined,
+  );
+}
+
+/**
+ * Enqueue a stable delivery job for an already-persisted outbox row. The
+ * database remains the source of truth; the event id makes retries and
+ * duplicate scheduling idempotent at the BullMQ boundary.
+ */
+export async function enqueueOutboxPublish(
+  payload: OutboxPublishJob,
+  opts?: { jobIdSuffix?: string },
+): Promise<void> {
+  const suffix = opts?.jobIdSuffix ? `-${opts.jobIdSuffix}` : '';
+  await outboxQueue.add(OUTBOX_PUBLISH, payload, {
+    jobId: `outbox-publish-${payload.outboxEventId}${suffix}`,
+  });
+}
+
+export async function enqueueWorkflowExecution(
+  payload: WorkflowExecuteEnrollmentJob,
+  opts?: { jobIdSuffix?: string },
+): Promise<void> {
+  const suffix = opts?.jobIdSuffix ? `-${opts.jobIdSuffix}` : '';
+  await workflowQueue.add(WORKFLOW_EXECUTE_ENROLLMENT, payload, {
+    jobId: `workflow-enrollment-${payload.enrollmentId}${suffix}`,
+  });
 }
 
 export async function enqueueAiResearch(payload: AiResearchLeadJob): Promise<void> {

@@ -114,7 +114,7 @@ export async function handleWhatsAppMessage(
     '';
 
   logger.info('WhatsApp inbound message', {
-    from,
+    from: maskPhone(from),
     type: msgType,
     phoneNumberId,
   });
@@ -141,7 +141,7 @@ export async function handleWhatsAppMessage(
     } catch (error) {
       logger.error('Failed to persist WhatsApp reply', {
         leadId: existing.id,
-        from,
+        from: maskPhone(from),
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -164,8 +164,12 @@ export async function handleWhatsAppMessage(
       });
     }
 
-    logger.info('WhatsApp reply recorded', { leadId: existing.id, from });
-    return { action: 'reply_recorded', leadId: existing.id, details: `Reply from ${from}` };
+    logger.info('WhatsApp reply recorded', { leadId: existing.id, from: maskPhone(from) });
+    return {
+      action: 'reply_recorded',
+      leadId: existing.id,
+      details: `Reply from ${maskPhone(from)}`,
+    };
   }
 
   // New lead from inbound WhatsApp message
@@ -179,7 +183,7 @@ export async function handleWhatsAppMessage(
     );
   } catch (error) {
     logger.error('Failed to create lead from WhatsApp message', {
-      from,
+      from: maskPhone(from),
       error: error instanceof Error ? error.message : String(error),
     });
     throw error;
@@ -189,8 +193,12 @@ export async function handleWhatsAppMessage(
     await publishLeadReplyReceived(created.id, 'whatsapp', `wam:${wamId}`, textBody);
   }
 
-  logger.info('WhatsApp lead created', { leadId: created?.id, from });
-  return { action: 'lead_created', leadId: created?.id, details: `New lead from ${from}` };
+  logger.info('WhatsApp lead created', { leadId: created?.id, from: maskPhone(from) });
+  return {
+    action: 'lead_created',
+    leadId: created?.id,
+    details: `New lead from ${maskPhone(from)}`,
+  };
 }
 
 /**
@@ -270,7 +278,7 @@ export async function handleTwilioMessage(
   const body = payload.Body as string;
   const smsSid = payload.SmsSid as string;
 
-  logger.info('Twilio inbound', { from, body: body?.slice(0, 100), smsSid });
+  logger.info('Twilio inbound', { from: maskPhone(from), smsSid });
 
   if (!from) {
     return { action: 'noop', details: 'No sender number' };
@@ -299,7 +307,7 @@ export async function handleTwilioMessage(
     } catch (error) {
       logger.error('Failed to persist Twilio SMS reply', {
         leadId: existing.id,
-        phone,
+        phone: maskPhone(phone),
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -340,7 +348,7 @@ export async function handleTwilioMessage(
     );
   } catch (error) {
     logger.error('Failed to create lead from Twilio SMS', {
-      phone,
+      phone: maskPhone(phone),
       error: error instanceof Error ? error.message : String(error),
     });
     throw error;
@@ -355,7 +363,11 @@ export async function handleTwilioMessage(
     );
   }
 
-  return { action: 'lead_created', leadId: created?.id, details: `New lead from SMS ${phone}` };
+  return {
+    action: 'lead_created',
+    leadId: created?.id,
+    details: `New lead from SMS ${maskPhone(phone)}`,
+  };
 }
 
 /**
@@ -500,7 +512,10 @@ export async function handleSendGridEvents(events: unknown[]): Promise<WebhookRe
 export async function handleGoogleAdsLeadForm(
   payload: Record<string, unknown>,
 ): Promise<WebhookResult> {
-  logger.info('Google Ads lead form received', { payload });
+  logger.info('Google Ads lead form received', {
+    providerLeadId: typeof payload.lead_id === 'string' ? payload.lead_id : null,
+    fieldCount: Array.isArray(payload.user_column_data) ? payload.user_column_data.length : 0,
+  });
 
   // Google Ads lead form payload typically contains:
   // { lead_id, form_id, google_key, api_version, user_column_data: [{column_name, string_value}] }
@@ -584,7 +599,11 @@ export async function handleWebsiteForm(payload: Record<string, unknown>): Promi
     return { action: 'noop', details: 'No identifying fields (name, email, phone)' };
   }
 
-  logger.info('Website form submission', { name, email, phone });
+  logger.info('Website form submission', {
+    hasName: Boolean(name),
+    email: maskEmail(email),
+    phone: maskPhone(phone),
+  });
 
   // Dedup by email or phone within website_form source
   const existing = email
@@ -638,4 +657,17 @@ export async function handleWebsiteForm(payload: Record<string, unknown>): Promi
     leadId: created?.id,
     details: `New lead from website form`,
   };
+}
+
+function maskPhone(value: string | undefined): string {
+  if (!value) return '';
+  if (value.length <= 4) return '***';
+  return `${value.slice(0, 2)}***${value.slice(-2)}`;
+}
+
+function maskEmail(value: string): string {
+  if (!value) return '';
+  const at = value.indexOf('@');
+  if (at <= 0) return '***';
+  return `${value.slice(0, 1)}***${value.slice(at)}`;
 }

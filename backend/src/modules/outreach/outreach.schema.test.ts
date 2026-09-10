@@ -50,6 +50,28 @@ describe('createSequenceSchema', () => {
       expect(result.success).toBe(true);
     }
   });
+
+  it('rejects duplicate step numbers', () => {
+    const result = createSequenceSchema.safeParse({
+      name: 'Test',
+      steps: [
+        { stepNumber: 1, channel: 'email', delayHours: 0, templateId: uuid },
+        { stepNumber: 1, channel: 'sms', delayHours: 24, templateId: uuid },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects gapped step numbers', () => {
+    const result = createSequenceSchema.safeParse({
+      name: 'Test',
+      steps: [
+        { stepNumber: 1, channel: 'email', delayHours: 0, templateId: uuid },
+        { stepNumber: 3, channel: 'sms', delayHours: 24, templateId: uuid },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('updateSequenceSchema', () => {

@@ -16,7 +16,7 @@ import {
 } from './ai-campaign-brain.repository';
 import type { CampaignBrief, AiCampaignBriefOutput } from './ai-campaign-brain.types';
 
-const BRIEF_MAX_TOKENS = 1200;
+const BRIEF_MAX_TOKENS = 500;
 
 // ── Zod schema ────────────────────────────────────────────────────────────
 

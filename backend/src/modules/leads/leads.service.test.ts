@@ -34,7 +34,7 @@ jest.mock('../custom-fields/customFields.service', () => ({
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
-import { enqueueScoringCalculate } from '../../workers/queue';
+import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
 import {
   bulkClassifyLeads,
   bulkPauseLeads,
@@ -147,7 +147,10 @@ describe('logOutboundActivity', () => {
   });
 
   it('supports call and whatsapp types', async () => {
-    (createOutboundActivityAndUpdateLead as jest.Mock).mockResolvedValue({ ...mockActivity, type: 'whatsapp' });
+    (createOutboundActivityAndUpdateLead as jest.Mock).mockResolvedValue({
+      ...mockActivity,
+      type: 'whatsapp',
+    });
     const res = await logOutboundActivity('lead-2', 'user-2', 'whatsapp');
     expect(res.type).toBe('whatsapp');
     expect(createOutboundActivityAndUpdateLead).toHaveBeenCalledWith({
@@ -324,11 +327,7 @@ describe('updateLeadFields', () => {
   it('updates and audits on success', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(baseRow);
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, notes: 'hi' });
-    const res = await updateLeadFields(
-      'lead-1',
-      { notes: 'hi' },
-      { id: 'rep-1', role: 'sales' },
-    );
+    const res = await updateLeadFields('lead-1', { notes: 'hi' }, { id: 'rep-1', role: 'sales' });
     expect(res.notes).toBe('hi');
     expect(writeAuditLog).toHaveBeenCalled();
   });
@@ -358,11 +357,7 @@ describe('updateLeadFields', () => {
   it('logs assignment_change activity when assigned_to changes', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-2' });
-    await updateLeadFields(
-      'lead-1',
-      { assigned_to: 'rep-2' },
-      { id: 'admin-1', role: 'admin' },
-    );
+    await updateLeadFields('lead-1', { assigned_to: 'rep-2' }, { id: 'admin-1', role: 'admin' });
     expect(insertActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         lead_id: 'lead-1',
@@ -387,6 +382,40 @@ describe('updateLeadFields', () => {
     expect(insertActivity).not.toHaveBeenCalled();
   });
 
+  it('emits workflow events for updated fields, assignment, and added tags', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+    (updateLead as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      notes: 'hi',
+      assigned_to: 'rep-2',
+      tags: ['priority'],
+    });
+
+    await updateLeadFields(
+      'lead-1',
+      { notes: 'hi', assigned_to: 'rep-2', tags: ['priority'] },
+      { id: 'admin-1', role: 'admin' },
+    );
+
+    expect(enqueueLeadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'lead.updated', leadId: 'lead-1' }),
+    );
+    expect(enqueueLeadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'lead.assigned',
+        leadId: 'lead-1',
+        payload: { assignedTo: 'rep-2' },
+      }),
+    );
+    expect(enqueueLeadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'lead.tag_added',
+        leadId: 'lead-1',
+        payload: { tag: 'priority' },
+      }),
+    );
+  });
+
   it('auto-marks the lead won when moved into a terminal-won stage', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({
       ...baseRow,
@@ -394,7 +423,10 @@ describe('updateLeadFields', () => {
       status: 'active',
     });
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-2' });
-    (findStageById as jest.Mock).mockResolvedValue({ is_terminal_won: true, is_terminal_lost: false });
+    (findStageById as jest.Mock).mockResolvedValue({
+      is_terminal_won: true,
+      is_terminal_lost: false,
+    });
     (updateLeadOutcome as jest.Mock).mockResolvedValue({
       ...baseRow,
       pipeline_stage_id: 'stage-2',
@@ -426,7 +458,10 @@ describe('updateLeadFields', () => {
       status: 'won',
     });
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, pipeline_stage_id: 'stage-1' });
-    (findStageById as jest.Mock).mockResolvedValue({ is_terminal_won: false, is_terminal_lost: false });
+    (findStageById as jest.Mock).mockResolvedValue({
+      is_terminal_won: false,
+      is_terminal_lost: false,
+    });
     (updateLeadOutcome as jest.Mock).mockResolvedValue({
       ...baseRow,
       pipeline_stage_id: 'stage-1',
@@ -486,7 +521,12 @@ describe('setLeadPaused', () => {
   it('pauses, records status_change activity, and audits with reason (E4)', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(baseRow);
     (updateLeadStatus as jest.Mock).mockResolvedValue({ ...baseRow, status: 'paused' });
-    const res = await setLeadPaused('lead-1', true, { id: 'rep-1', role: 'sales' }, 'Vacation pause');
+    const res = await setLeadPaused(
+      'lead-1',
+      true,
+      { id: 'rep-1', role: 'sales' },
+      'Vacation pause',
+    );
     expect(res.status).toBe('paused');
     expect(updateLeadStatus).toHaveBeenCalledWith('lead-1', 'paused');
     expect(writeAuditLog).toHaveBeenCalledWith(
@@ -495,25 +535,30 @@ describe('setLeadPaused', () => {
         newValue: expect.objectContaining({ status: 'paused', reason: 'Vacation pause' }),
       }),
     );
+    expect(enqueueLeadEvent).toHaveBeenCalledWith({
+      event: 'lead.status_changed',
+      leadId: 'lead-1',
+      payload: { status: 'paused' },
+    });
   });
 
   it('rejects pausing a won, lost, or opted_out lead (E1 & E3)', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, status: 'won' });
-    await expect(
-      setLeadPaused('lead-1', true, { id: 'admin-1', role: 'admin' }),
-    ).rejects.toThrow('Cannot pause lead with status "won"');
+    await expect(setLeadPaused('lead-1', true, { id: 'admin-1', role: 'admin' })).rejects.toThrow(
+      'Cannot pause lead with status "won"',
+    );
 
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
-    await expect(
-      setLeadPaused('lead-1', true, { id: 'admin-1', role: 'admin' }),
-    ).rejects.toThrow('Cannot pause lead with status "opted_out"');
+    await expect(setLeadPaused('lead-1', true, { id: 'admin-1', role: 'admin' })).rejects.toThrow(
+      'Cannot pause lead with status "opted_out"',
+    );
   });
 
   it('rejects resuming a non-paused lead (E2)', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, status: 'won' });
-    await expect(
-      setLeadPaused('lead-1', false, { id: 'admin-1', role: 'admin' }),
-    ).rejects.toThrow('Cannot resume lead with status "won"');
+    await expect(setLeadPaused('lead-1', false, { id: 'admin-1', role: 'admin' })).rejects.toThrow(
+      'Cannot resume lead with status "won"',
+    );
   });
 });
 
@@ -536,20 +581,41 @@ describe('bulkUpdateLeads', () => {
   it('updates leads in bulk and audits', async () => {
     (repoBulkUpdate as jest.Mock).mockResolvedValue(3);
     const actor = { id: 'admin-1', role: 'admin' as const };
-    const count = await bulkUpdateLeads(['lead-1', 'lead-2', 'lead-3'], { notes: 'bulk updated' }, actor);
+    const count = await bulkUpdateLeads(
+      ['lead-1', 'lead-2', 'lead-3'],
+      { notes: 'bulk updated' },
+      actor,
+    );
     expect(count).toBe(3);
-    expect(repoBulkUpdate).toHaveBeenCalledWith(['lead-1', 'lead-2', 'lead-3'], { notes: 'bulk updated' });
+    expect(repoBulkUpdate).toHaveBeenCalledWith(['lead-1', 'lead-2', 'lead-3'], {
+      notes: 'bulk updated',
+    });
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'lead.bulk_updated', entityId: 'bulk' }),
     );
   });
 
   it('resolves stage outcome during bulk pipeline stage update (H2)', async () => {
-    (findStageById as jest.Mock).mockResolvedValue({ id: 'stage-won', pipeline_id: 'p1', is_terminal_won: true, is_terminal_lost: false });
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead-1', status: 'active', pipeline_stage_id: 'stage-old' });
+    (findStageById as jest.Mock).mockResolvedValue({
+      id: 'stage-won',
+      pipeline_id: 'p1',
+      is_terminal_won: true,
+      is_terminal_lost: false,
+    });
+    (findLeadById as jest.Mock).mockResolvedValue({
+      id: 'lead-1',
+      status: 'active',
+      pipeline_stage_id: 'stage-old',
+    });
     (findStageById as jest.Mock).mockImplementation(async (id: string) => {
       if (id === 'stage-old') return { id: 'stage-old', pipeline_id: 'p1' };
-      if (id === 'stage-won') return { id: 'stage-won', pipeline_id: 'p1', is_terminal_won: true, is_terminal_lost: false };
+      if (id === 'stage-won')
+        return {
+          id: 'stage-won',
+          pipeline_id: 'p1',
+          is_terminal_won: true,
+          is_terminal_lost: false,
+        };
       return null;
     });
     (repoBulkUpdate as jest.Mock).mockResolvedValue(1);
@@ -561,7 +627,11 @@ describe('bulkUpdateLeads', () => {
   });
 
   it('rejects bulk move when lead belongs to a different pipeline (H3)', async () => {
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead-1', status: 'active', pipeline_stage_id: 'stage-p1' });
+    (findLeadById as jest.Mock).mockResolvedValue({
+      id: 'lead-1',
+      status: 'active',
+      pipeline_stage_id: 'stage-p1',
+    });
     (findStageById as jest.Mock).mockImplementation(async (id: string) => {
       if (id === 'stage-p1') return { id: 'stage-p1', pipeline_id: 'p1' };
       if (id === 'stage-p2') return { id: 'stage-p2', pipeline_id: 'p2' };

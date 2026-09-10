@@ -1937,7 +1937,7 @@ function smartExtract(html: string, pageUrl: string, sourcePlatform: string): Sc
   return leads;
 }
 
-const SELECTOR_DETECT_MAX_TOKENS = 600;
+const SELECTOR_DETECT_MAX_TOKENS = 500;
 const SELECTOR_DETECT_SYSTEM_PROMPT = [
   'You are a web-scraping assistant. Given the HTML of a page that lists businesses or contacts,',
   'return CSS selectors that extract lead fields. Respond with ONLY a JSON object of the shape:',
@@ -2629,8 +2629,8 @@ async function importLeads(
         }
         if (verification.suggestion) {
           logger.info('scraper email typo suggestion', {
-            email: normalizedEmail,
-            suggestion: verification.suggestion,
+            emailDomain: normalizedEmail.split('@')[1] ?? 'unknown',
+            suggestionDomain: verification.suggestion.split('@')[1] ?? 'unknown',
             business_name: lead.business_name,
           });
         }
@@ -2759,10 +2759,9 @@ async function fireWebhook(webhookUrl: string, payload: Record<string, unknown>)
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    logger.info('scraper webhook fired', { webhookUrl, status: 'ok' });
+    logger.info('scraper webhook fired', { status: 'ok' });
   } catch (err) {
     logger.warn('scraper webhook failed', {
-      webhookUrl,
       error: err instanceof Error ? err.message : String(err),
     });
   }

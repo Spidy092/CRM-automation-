@@ -23,6 +23,7 @@ import {
 } from './forms.repository';
 import { insertLead } from '../leads/leads.repository';
 import { clampLimit } from '../../shared/utils/pagination';
+import { enqueueLeadEvent } from '../../workers/queue';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
 
@@ -403,6 +404,26 @@ export async function submitForm(
     user_agent: meta.userAgent ?? null,
     referrer: meta.referrer ?? null,
   });
+
+  if (leadId) {
+    // The submission row is committed before the asynchronous workflow event
+    // is published, so a workflow can safely look up the new lead. Keep this
+    // bridge non-blocking for the public form response; Redis failures are
+    // logged and can be replaced by the transactional outbox path later.
+    void Promise.resolve(
+      enqueueLeadEvent({
+        event: 'form.submitted',
+        leadId,
+        payload: { formId: form.id, submissionId: submission.id },
+      }),
+    ).catch((error: unknown) => {
+      logger.error('Failed to enqueue form.submitted workflow event', {
+        formId: form.id,
+        leadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 
   // Dispatch Emails based on form.email_settings
   let emailStatus: FormEmailStatus | undefined;

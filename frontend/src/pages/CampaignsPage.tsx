@@ -115,7 +115,7 @@ export function CampaignsPage() {
       <PageHeader
         eyebrow="Campaign operations"
         title="Campaigns"
-        description="Create, launch, pause, and inspect campaigns that route qualified leads into outreach."
+        description="Define who to reach and what outreach to run. Pipeline tracks lead stages; Workflows handle automatic CRM actions."
         metrics={campaigns ? [
           { label: 'Campaigns', value: campaigns.length },
           { label: 'Active', value: campaigns.filter((campaign) => campaign.status === 'active').length, tone: 'success' },

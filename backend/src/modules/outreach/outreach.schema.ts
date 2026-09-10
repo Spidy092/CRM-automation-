@@ -35,18 +35,47 @@ export const sequenceStepSchema = z.object({
   templateId: z.string().uuid(),
 });
 
+/**
+ * The worker advances by step number, so accepting duplicate or gapped numbers
+ * would make a persisted sequence ambiguous (or strand a follow-up forever).
+ * Keep the invariant at the API boundary; the editor already emits 1..N.
+ */
+const sequenceStepsSchema = z
+  .array(sequenceStepSchema)
+  .min(1, 'At least one step is required')
+  .superRefine((steps, ctx) => {
+    const numbers = steps.map((step) => step.stepNumber);
+    const unique = new Set(numbers);
+    if (unique.size !== numbers.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stepNumber'],
+        message: 'Step numbers must be unique.',
+      });
+    }
+
+    const expected = [...numbers].sort((a, b) => a - b);
+    if (expected.some((number, index) => number !== index + 1)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stepNumber'],
+        message: 'Step numbers must be contiguous and start at 1.',
+      });
+    }
+  });
+
 export const createSequenceSchema = z.object({
   name: z.string().min(1, 'name is required').max(255),
   description: z.string().max(1000).optional().nullable(),
   is_active: z.boolean().optional().default(true),
-  steps: z.array(sequenceStepSchema).min(1, 'At least one step is required'),
+  steps: sequenceStepsSchema,
 });
 
 export const updateSequenceSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(1000).optional().nullable(),
   is_active: z.boolean().optional(),
-  steps: z.array(sequenceStepSchema).min(1).optional(),
+  steps: sequenceStepsSchema.optional(),
 });
 
 export const listSequencesQuerySchema = z.object({

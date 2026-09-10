@@ -51,7 +51,9 @@ async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promise<void>
         try {
           await smtp.sendEmail(emailInput);
         } catch (smtpErr) {
-          logger.error('Failed to send newsletter email to subscriber', { email: sub.email });
+          logger.error('Failed to send newsletter email to subscriber', {
+            subscriberId: sub.id,
+          });
         }
       }
       processed++;

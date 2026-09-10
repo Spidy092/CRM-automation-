@@ -15,9 +15,38 @@ import { decrypt } from '../../../shared/utils/encryption';
 
 export const ZAPIER_PROVIDER_NAME = 'zapier';
 
+const zapierWebhookUrlSchema = z
+  .string()
+  .url('Webhook URL must be a valid URL')
+  .superRefine((value, ctx) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      // z.string().url() reports this case; keep the refinement defensive.
+      return;
+    }
+
+    // The webhook URL is a bearer secret, not a generic HTTP destination. An
+    // exact Zapier host allowlist prevents an admin-configured URL from turning
+    // the connector into an SSRF or arbitrary data-exfiltration primitive.
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'hooks.zapier.com') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Webhook URL must use HTTPS and the hooks.zapier.com host',
+      });
+    }
+    if (parsed.username || parsed.password) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Webhook URL must not include embedded credentials',
+      });
+    }
+  });
+
 export const zapierCredentialsSchema = z
   .object({
-    webhookUrl: z.string().url('Webhook URL must be a valid URL'),
+    webhookUrl: zapierWebhookUrlSchema,
   })
   .strict();
 
@@ -53,6 +82,7 @@ export async function testConnection(
   try {
     const res = await fetch(creds.webhookUrl, {
       method: 'POST',
+      redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         event: 'crm.test',
@@ -104,6 +134,7 @@ export async function triggerEvent(
   try {
     const res = await fetch(creds.webhookUrl, {
       method: 'POST',
+      redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });

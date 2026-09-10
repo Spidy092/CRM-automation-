@@ -25,6 +25,7 @@ import { writeAuditLog } from '../../shared/utils/audit';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
 import type { FormRow } from './forms.types';
+import { enqueueLeadEvent } from '../../workers/queue';
 
 jest.mock('./forms.repository');
 jest.mock('../leads/leads.repository', () => ({ insertLead: jest.fn() }));
@@ -34,6 +35,7 @@ jest.mock('../../shared/utils/logger', () => ({
 }));
 jest.mock('../integrations/sendgrid/sendgrid.connector', () => ({ sendEmail: jest.fn() }));
 jest.mock('../integrations/smtp/smtp.connector', () => ({ sendEmail: jest.fn() }));
+jest.mock('../../workers/queue', () => ({ enqueueLeadEvent: jest.fn() }));
 
 const mockFindForms = findForms as jest.Mock;
 const mockCountForms = countForms as jest.Mock;
@@ -48,6 +50,7 @@ const mockInsertLead = insertLead as jest.Mock;
 const mockWriteAuditLog = writeAuditLog as jest.Mock;
 const mockSgSend = sendgrid.sendEmail as jest.Mock;
 const mockSmtpSend = smtp.sendEmail as jest.Mock;
+const mockEnqueueLeadEvent = enqueueLeadEvent as jest.Mock;
 
 const ACTOR = { id: 'u1', role: 'admin', ipAddress: '1.2.3.4' };
 
@@ -156,9 +159,9 @@ describe('updateFormById', () => {
   it('rejects a slug change that collides with another form', async () => {
     mockFindFormById.mockResolvedValue(FORM);
     mockFindFormBySlug.mockResolvedValue({ ...FORM, id: 'other' });
-    await expect(
-      updateFormById('f1', { slug: 'taken-slug' }, ACTOR),
-    ).rejects.toMatchObject({ statusCode: 409 });
+    await expect(updateFormById('f1', { slug: 'taken-slug' }, ACTOR)).rejects.toMatchObject({
+      statusCode: 409,
+    });
     expect(mockUpdateForm).not.toHaveBeenCalled();
   });
 
@@ -223,17 +226,18 @@ describe('submitForm', () => {
     mockInsertLead.mockResolvedValue({ id: 'lead-1' });
     mockInsertSubmission.mockResolvedValue({ id: 's1', form_id: 'f1', lead_id: 'lead-1' });
 
-    const result = await submitForm(
-      'f1',
-      { email: 'jane@example.com', name: 'Jane Doe' },
-      meta,
-    );
+    const result = await submitForm('f1', { email: 'jane@example.com', name: 'Jane Doe' }, meta);
 
     expect(mockInsertLead).toHaveBeenCalledWith(
       expect.objectContaining({ contact_name: 'Jane Doe', email: 'jane@example.com' }),
     );
     expect(result.leadId).toBe('lead-1');
     expect(result.message).toBe('Thanks!');
+    expect(mockEnqueueLeadEvent).toHaveBeenCalledWith({
+      event: 'form.submitted',
+      leadId: 'lead-1',
+      payload: { formId: 'f1', submissionId: 's1' },
+    });
   });
 
   it('continues without a leadId when lead creation fails', async () => {
@@ -243,9 +247,7 @@ describe('submitForm', () => {
 
     const result = await submitForm('f1', { email: 'jane@example.com' }, meta);
     expect(result.leadId).toBeUndefined();
-    expect(mockInsertSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({ lead_id: null }),
-    );
+    expect(mockInsertSubmission).toHaveBeenCalledWith(expect.objectContaining({ lead_id: null }));
   });
 
   it('skips lead creation when submit_action is not create_lead', async () => {

@@ -69,9 +69,7 @@ export interface SendMessageOutput {
  * Throws AppError(404) if the integration row is missing, AppError(422) if
  * the stored credential blob doesn't match the expected shape.
  */
-export async function loadCredentials(
-  providedCredentials?: unknown,
-): Promise<WhatsappCredentials> {
+export async function loadCredentials(providedCredentials?: unknown): Promise<WhatsappCredentials> {
   let parsed: unknown = providedCredentials;
 
   if (providedCredentials === undefined) {

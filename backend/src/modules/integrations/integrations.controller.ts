@@ -68,7 +68,7 @@ export async function testIntegrationHandler(
     const result = await integrationsService.testIntegration(
       id,
       actorFromReq(req),
-      body.credentials as Record<string, unknown> | undefined,
+      body.credentials,
     );
     // 200 even on logical failures (the body carries `ok:false` and a reason) so
     // admins can surface a meaningful message without parsing 4xx semantics.

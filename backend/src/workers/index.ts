@@ -21,6 +21,9 @@ import {
   scheduleAgentPlanRecovery,
 } from '../modules/agent-planner/recovery.worker';
 import { startNewsletterWorker } from './newsletter.worker';
+import { startWorkflowScheduler, startWorkflowWorker } from './workflow.worker';
+import { startOutboxScheduler, startOutboxWorker } from './outbox.worker';
+import { workflowAutomationEnabled } from '../modules/workflows/workflow.config';
 
 /**
  * CRM Worker Process
@@ -80,6 +83,10 @@ async function startWorkers(): Promise<void> {
   const agentPlanRecovery = startAgentPlanRecoveryWorker();
   void scheduleAgentPlanRecovery();
   const newsletter = startNewsletterWorker();
+  const workflow = workflowAutomationEnabled() ? startWorkflowWorker() : null;
+  if (workflow) startWorkflowScheduler();
+  const outbox = workflowAutomationEnabled() ? startOutboxWorker() : null;
+  if (outbox) startOutboxScheduler();
 
   logger.info('Worker process started — listening for jobs', {
     queues: [
@@ -96,6 +103,8 @@ async function startWorkers(): Promise<void> {
       'ai-decisions',
       'agent-plan-recovery',
       'newsletter',
+      'workflows',
+      'event-outbox',
     ],
   });
 
@@ -112,6 +121,8 @@ async function startWorkers(): Promise<void> {
   void aiDecision;
   void agentPlanRecovery;
   void newsletter;
+  void workflow;
+  void outbox;
 }
 
 // Graceful shutdown

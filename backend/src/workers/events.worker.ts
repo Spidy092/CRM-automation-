@@ -33,6 +33,8 @@ import { findUserById } from '../modules/users/users.repository';
 import { proposeAgentAction } from '../modules/agent/agent.service';
 import type { AgentActor } from '../modules/agent/agent.types';
 import { pushToUser } from '../modules/notifications/notifications.emitter';
+import { enrollWorkflowsForEvent } from '../modules/workflows/workflow.trigger';
+import { workflowAutomationEnabled } from '../modules/workflows/workflow.config';
 
 /**
  * Lead Events Worker
@@ -57,7 +59,7 @@ export function startEventsWorker(): Worker {
       });
 
       try {
-        await handleLeadEvent(job.data);
+        await handleLeadEvent({ ...job.data, eventId: job.id ?? undefined });
 
         const durationSec = (Date.now() - start) / 1000;
         observeJobDuration({ name: LEAD_EVENT, queue: LEAD_EVENTS_QUEUE }, durationSec);
@@ -111,12 +113,33 @@ export function startEventsWorker(): Worker {
 export async function handleLeadEvent(data: LeadEventJob): Promise<void> {
   const { event, leadId, payload } = data;
 
+  // Workflow enrollment is driven by the stable BullMQ job ID. Direct unit
+  // callers without an event ID retain the legacy behavior and do not create
+  // non-durable enrollments.
+  if (data.eventId && workflowAutomationEnabled()) {
+    await enrollWorkflowsForEvent({
+      eventId: data.eventId,
+      eventType: event,
+      leadId,
+      payload,
+    });
+  }
+
   switch (event) {
     case 'lead.created':
       await scoringQueue.add(SCORING_CALCULATE_LEAD, { leadId });
       await enqueueAiResearch({ leadId });
       logger.info('lead.created → scoring + ai research enqueued', { leadId });
       await handleLeadCreatedTrigger(leadId);
+      break;
+
+    case 'lead.updated':
+    case 'lead.tag_added':
+    case 'form.submitted':
+      // These events are currently consumed by the workflow trigger path
+      // above. Keeping the switch explicit prevents them from being reported
+      // as unknown events and leaves room for future campaign-side behavior.
+      logger.info(event, { leadId, payload });
       break;
 
     case 'lead.stage_moved':

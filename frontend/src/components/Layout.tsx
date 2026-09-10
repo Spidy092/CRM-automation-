@@ -39,7 +39,8 @@ const navigation = [
   { name: 'Content', href: '/outreach/sequences', icon: ListOrdered, group: 'Outreach' },
   { name: 'Templates', href: '/templates', icon: MessageSquare, group: 'Outreach' },
   { name: 'Newsletter', href: '/newsletter', icon: MailOpen, group: 'Outreach' },
-  { name: 'Trigger Rules', href: '/automation/rules', icon: Zap, group: 'Tools' },
+  { name: 'Campaign triggers', href: '/automation/rules', icon: Zap, group: 'Automation' },
+  { name: 'Workflows', href: '/automation/workflows', icon: GitBranch, group: 'Automation' },
   { name: 'Web Forms', href: '/forms', icon: FormInput, group: 'Tools' },
   { name: 'Scheduling', href: '/scheduling', icon: CalendarDays, group: 'Tools' },
   { name: 'Reports', href: '/reports', icon: BarChart3, group: 'Intelligence' },
@@ -48,6 +49,18 @@ const navigation = [
   { name: 'Settings', href: '/settings', icon: Settings, group: 'Admin' },
   { name: 'AI & Testing', href: '/admin/ai-decisions', icon: Brain, group: 'Admin' },
 ];
+
+const groupDescriptions: Record<string, string> = {
+  Workspace: 'Leads and sales progress',
+  Outreach: 'Audiences and messages',
+  Automation: 'When events trigger actions',
+  Intelligence: 'Performance and insight',
+  Admin: 'Access and configuration',
+};
+
+const inboxBadgeBase = 'ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-xs font-semibold';
+const inboxBadgeActive = 'bg-white text-slate-950 dark:bg-slate-950 dark:text-white';
+const inboxBadgeIdle = 'bg-indigo-600 text-white';
 
 function isRouteActive(pathname: string, href: string): boolean {
   return href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -109,6 +122,7 @@ export function Layout() {
           {Object.entries(grouped).map(([group, items]) => (
             <div key={group} className="mb-5 last:mb-0">
               <p className="px-3 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{group}</p>
+              {groupDescriptions[group] && <p className="mt-1 px-3 text-[11px] leading-4 text-slate-400 dark:text-slate-500">{groupDescriptions[group]}</p>}
               <div className="mt-2 space-y-1">
                 {items.map((item) => (
                   <NavLink
@@ -131,10 +145,7 @@ export function Layout() {
                         <span className="truncate">{item.name}</span>
                         {item.href === '/ai-inbox' && pendingInboxCount > 0 && (
                           <span
-                            className={cn(
-                              'ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-xs font-semibold',
-                              isActive ? 'bg-white dark:bg-slate-950 text-slate-950 dark:text-white' : 'bg-indigo-600 text-white',
-                            )}
+                            className={cn(inboxBadgeBase, isActive ? inboxBadgeActive : inboxBadgeIdle)}
                           >
                             {pendingInboxCount > 99 ? '99+' : pendingInboxCount}
                           </span>

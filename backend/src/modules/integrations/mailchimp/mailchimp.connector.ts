@@ -33,7 +33,9 @@ function authHeader(apiKey: string): string {
   return `Basic ${Buffer.from(`anystring:${apiKey}`).toString('base64')}`;
 }
 
-export async function loadCredentials(providedCredentials?: unknown): Promise<MailchimpCredentials> {
+export async function loadCredentials(
+  providedCredentials?: unknown,
+): Promise<MailchimpCredentials> {
   let raw: unknown = providedCredentials;
 
   if (providedCredentials === undefined) {

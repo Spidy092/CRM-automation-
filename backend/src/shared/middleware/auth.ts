@@ -35,8 +35,9 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       const user = await validateApiKey(token);
       req.user = user;
       next();
-    } catch (err: any) {
-      sendError(res, err.message || 'Invalid or expired API key', 401);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Invalid or expired API key';
+      sendError(res, message || 'Invalid or expired API key', 401);
     }
     return;
   }

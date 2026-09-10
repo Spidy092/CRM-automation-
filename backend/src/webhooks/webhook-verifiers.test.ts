@@ -4,6 +4,7 @@ import {
   verifySendGridSignature,
   verifyGoogleAdsSecret,
 } from './webhook-verifiers';
+import crypto from 'crypto';
 
 describe('verifyWhatsAppSignature', () => {
   const appSecret = 'my-app-secret';
@@ -52,17 +53,20 @@ describe('verifyTwilioSignature', () => {
 });
 
 describe('verifySendGridSignature', () => {
-  const verificationKey = 'sg-verification-key';
+  const keyPair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const verificationKey = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 
   it('returns true for valid signature', () => {
-    const crypto = require('crypto');
-    const payload = 'timestamp.body';
-    const sig = crypto.createHmac('sha256', verificationKey).update(payload, 'utf8').digest('hex');
-    expect(verifySendGridSignature(payload, sig, verificationKey)).toBe(true);
+    const payload = '1700000000{"event":"delivered"}';
+    const signer = crypto.createSign('sha256');
+    signer.update(payload);
+    signer.end();
+    const signature = signer.sign(keyPair.privateKey).toString('base64');
+    expect(verifySendGridSignature(payload, signature, verificationKey)).toBe(true);
   });
 
   it('returns false for invalid signature', () => {
-    expect(verifySendGridSignature('payload', 'invalid', verificationKey)).toBe(false);
+    expect(verifySendGridSignature('payload', 'aW52YWxpZA==', verificationKey)).toBe(false);
   });
 
   it('returns false when no verification key configured', () => {

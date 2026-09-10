@@ -24,10 +24,12 @@ export const smtpCredentialsSchema = z
       (val) => (typeof val === 'string' ? parseInt(val, 10) : val),
       z.number().int().min(1).max(65535),
     ),
-    secure: z.preprocess(
-      (val) => (typeof val === 'string' ? val === 'true' || val === '1' : val),
-      z.boolean(),
-    ).default(false),
+    secure: z
+      .preprocess(
+        (val) => (typeof val === 'string' ? val === 'true' || val === '1' : val),
+        z.boolean(),
+      )
+      .default(false),
     user: z.string().min(1, 'user is required'),
     pass: z.string().min(1, 'pass is required'),
     fromEmail: z.string().email('fromEmail must be a valid email'),
@@ -168,7 +170,7 @@ export async function testConnection(
     const transporter = nodemailer.createTransport({
       host: creds.host,
       port: creds.port,
-      secure: creds.secure ?? (creds.port === 465),
+      secure: creds.secure ?? creds.port === 465,
       auth: { user: creds.user, pass: creds.pass },
       connectionTimeout: 10000,
       greetingTimeout: 10000,

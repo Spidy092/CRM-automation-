@@ -13,7 +13,7 @@ import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { Mail, MessageSquare, Phone, Zap, Target, Play, GitBranch, ArrowRight, Tag } from 'lucide-react';
+import { Mail, MessageSquare, Phone, Zap, Target, Play, GitBranch, ArrowRight, Tag, Workflow } from 'lucide-react';
 
 // ── Channel icons ────────────────────────────────────────────────────────────
 
@@ -312,7 +312,7 @@ export function AutomationRulesPage() {
       <PageHeader
         eyebrow="Automation"
         title="Automation Rules"
-        description="Manage campaign trigger conditions and their connected outreach sequences."
+        description="Manage campaign trigger conditions and their connected outreach sequences. Use Workflows for broader event-to-action automation."
         metrics={[
           { label: 'Active Rules', value: activeCampaigns },
           { label: 'Total Rules', value: totalRules },
@@ -324,6 +324,16 @@ export function AutomationRulesPage() {
           </Button>
         }
       />
+
+      <div className="flex items-start gap-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-indigo-950">
+        <Workflow className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
+        <div>
+          <p className="font-semibold">This page starts campaign outreach</p>
+          <p className="mt-0.5 leading-5 text-indigo-900/80">
+            These rules connect a lead or pipeline event to a campaign sequence. For actions such as updating fields, assigning owners, or branching across several steps, open <Link className="font-semibold underline underline-offset-2" to="/automation/workflows">Workflows</Link>.
+          </p>
+        </div>
+      </div>
 
       {isLoading && <LoadingTable rows={4} cols={3} />}
 

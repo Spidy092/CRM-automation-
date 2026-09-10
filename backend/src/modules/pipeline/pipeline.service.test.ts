@@ -46,6 +46,7 @@ import {
   findDefaultPipeline,
 } from './pipeline.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { enqueueLeadEvent } from '../../workers/queue';
 import {
   createPipeline,
   createStage,
@@ -242,6 +243,30 @@ describe('moveLead', () => {
     expect(moveLeadToStage).toHaveBeenCalledWith('lead-1', 'stage-1');
     expect(writeAuditLog).toHaveBeenCalled();
     expect(updateLeadOutcome).not.toHaveBeenCalled();
+    expect(enqueueLeadEvent).toHaveBeenCalledWith({
+      event: 'lead.stage_moved',
+      leadId: 'lead-1',
+      payload: { fromStageId: null, toStageId: 'stage-1', pipelineId: 'pipe-1' },
+    });
+  });
+
+  it('preserves the previous stage in the stage-moved event', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseLead,
+      pipeline_stage_id: 'stage-old',
+    });
+    (findStageById as jest.Mock).mockImplementation(async (id: string) => {
+      if (id === 'stage-old') return { ...baseStage, id: 'stage-old' };
+      return { ...baseStage, id: 'stage-new' };
+    });
+
+    await moveLead('lead-1', 'stage-new', actor);
+
+    expect(enqueueLeadEvent).toHaveBeenCalledWith({
+      event: 'lead.stage_moved',
+      leadId: 'lead-1',
+      payload: { fromStageId: 'stage-old', toStageId: 'stage-new', pipelineId: 'pipe-1' },
+    });
   });
 
   it('marks the lead won when moved into a terminal-won stage', async () => {

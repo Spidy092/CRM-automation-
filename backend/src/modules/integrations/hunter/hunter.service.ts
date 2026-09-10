@@ -5,18 +5,21 @@ import { findByName, findCredentialsById } from '../integrations.repository';
 import { decrypt } from '../../../shared/utils/encryption';
 import { z } from 'zod';
 
-const hunterCredentialsSchema = z.preprocess((val) => {
-  if (val && typeof val === 'object') {
-    const record = val as Record<string, unknown>;
-    return {
-      api_key: record.api_key ?? record.apiKey,
-      ...record,
-    };
-  }
-  return val;
-}, z.object({
-  api_key: z.string().min(1, 'API key is required'),
-}));
+const hunterCredentialsSchema = z.preprocess(
+  (val) => {
+    if (val && typeof val === 'object') {
+      const record = val as Record<string, unknown>;
+      return {
+        api_key: record.api_key ?? record.apiKey,
+        ...record,
+      };
+    }
+    return val;
+  },
+  z.object({
+    api_key: z.string().min(1, 'API key is required'),
+  }),
+);
 
 export type HunterCredentials = z.infer<typeof hunterCredentialsSchema>;
 
@@ -66,9 +69,12 @@ export async function testConnection(
   const start = Date.now();
   try {
     // Ping Hunter's Account API to verify API key
-    const response = await fetch(`https://api.hunter.io/v2/account?api_key=${credentials.api_key}`, {
-      signal: AbortSignal.timeout(10000),
-    });
+    const response = await fetch(
+      `https://api.hunter.io/v2/account?api_key=${credentials.api_key}`,
+      {
+        signal: AbortSignal.timeout(10000),
+      },
+    );
 
     if (!response.ok) {
       return {

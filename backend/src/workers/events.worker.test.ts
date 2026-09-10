@@ -68,6 +68,10 @@ jest.mock('../modules/notifications/notifications.emitter', () => ({
   pushToUser: jest.fn(),
 }));
 
+jest.mock('../modules/workflows/workflow.trigger', () => ({
+  enrollWorkflowsForEvent: jest.fn(),
+}));
+
 jest.mock('../shared/utils/logger', () => ({
   logger: {
     info: jest.fn(),
@@ -103,6 +107,7 @@ import {
   cancelPendingOutreachJobs,
 } from './queue';
 import { logger } from '../shared/utils/logger';
+import { enrollWorkflowsForEvent } from '../modules/workflows/workflow.trigger';
 
 const mockFindActiveCampaignsByPipeline = findActiveCampaignsByPipeline as jest.Mock;
 const mockFindActiveCampaignsByStage = findActiveCampaignsByStage as jest.Mock;
@@ -121,6 +126,7 @@ const mockEnqueueAiDecision = enqueueAiDecision as jest.Mock;
 const mockEnqueueAiCreateInboxItem = enqueueAiCreateInboxItem as jest.Mock;
 const mockScoringQueueAdd = scoringQueue.add as jest.Mock;
 const mockCancelPendingOutreachJobs = cancelPendingOutreachJobs as jest.Mock;
+const mockEnrollWorkflows = enrollWorkflowsForEvent as jest.Mock;
 
 const baseCampaign = {
   id: 'camp1',
@@ -154,6 +160,7 @@ const baseSequence = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  delete process.env.WORKFLOW_AUTOMATION_ENABLED;
   mockFindActiveCampaignsByPipeline.mockResolvedValue([]);
   mockFindActiveCampaignsByStage.mockResolvedValue([baseCampaign]);
   mockFindActiveCampaignsByPipelineNoStage.mockResolvedValue([]);
@@ -411,6 +418,32 @@ describe('handleLeadCreatedTrigger', () => {
 });
 
 describe('handleLeadEvent', () => {
+  it('does not enroll workflows while the runtime feature flag is off', async () => {
+    await handleLeadEvent({
+      event: 'lead.created',
+      eventId: 'event-off',
+      leadId: 'lead1',
+      payload: {},
+    });
+    expect(mockEnrollWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('enrolls workflows when the runtime feature flag is explicitly enabled', async () => {
+    process.env.WORKFLOW_AUTOMATION_ENABLED = 'true';
+    await handleLeadEvent({
+      event: 'lead.created',
+      eventId: 'event-on',
+      leadId: 'lead1',
+      payload: { source: 'form' },
+    });
+    expect(mockEnrollWorkflows).toHaveBeenCalledWith({
+      eventId: 'event-on',
+      eventType: 'lead.created',
+      leadId: 'lead1',
+      payload: { source: 'form' },
+    });
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });

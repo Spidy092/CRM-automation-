@@ -67,10 +67,10 @@ export async function createPlanFromGoal(input: {
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      logger.info('planner: calling OpenAI', { model: aiConfig.model, maxTokens: 16_000, attempt });
+      logger.info('planner: calling OpenAI', { model: aiConfig.model, maxTokens: 500, attempt });
       const completion = await client.chat.completions.create({
         model: aiConfig.model,
-        max_tokens: 16_000,
+        max_tokens: 500,
         temperature: aiConfig.temperature,
         response_format: planJsonSchema,
         messages: [
@@ -130,7 +130,10 @@ export async function createPlanFromGoal(input: {
         ? draft.unsupported_reason.trim()
         : 'This goal is not supported by the available agent actions.';
     incPlanError({ code: 'unsupported_goal' });
-    logger.info('planner: goal declined as unsupported', { goal: input.goal, reason });
+    logger.info('planner: goal declined as unsupported', {
+      goalLength: input.goal.length,
+      reason,
+    });
     throw new PlannerError('unsupported_goal', reason, parsedJson);
   }
 

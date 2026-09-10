@@ -43,7 +43,9 @@ export type SheetsResult =
 
 // ── Credential loader ────────────────────────────────────────────────────────
 
-export async function loadCredentials(providedCredentials?: unknown): Promise<GoogleSheetsCredentials> {
+export async function loadCredentials(
+  providedCredentials?: unknown,
+): Promise<GoogleSheetsCredentials> {
   let parsed: unknown = providedCredentials;
 
   if (providedCredentials === undefined) {

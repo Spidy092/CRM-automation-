@@ -1,5 +1,6 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { logger } from '../../shared/utils/logger';
 import { normalizePhone } from '../../shared/utils/phone';
 import { clampLimit, decodeCursor, encodeCursor } from '../../shared/utils/pagination';
 import { resolveStageOutcome } from '../../shared/utils/leadOutcome';
@@ -7,7 +8,7 @@ import { findActiveDefinitions } from '../custom-fields/customFields.repository'
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { findStageById } from '../pipeline/pipeline.repository';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
-import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
+import { enqueueLeadEvent, enqueueScoringCalculate, type LeadEventJob } from '../../workers/queue';
 import {
   countLeads,
   findExistingForDedup,
@@ -44,6 +45,18 @@ interface Actor {
   id: string;
   role: AuthenticatedUser['role'];
   ipAddress?: string | null;
+}
+
+/** Queue delivery is asynchronous; surface failures without creating an
+ * unhandled rejection in the request that already committed the write. */
+function enqueueLeadDomainEvent(event: LeadEventJob): void {
+  void Promise.resolve(enqueueLeadEvent(event)).catch((error: unknown) => {
+    logger.error('failed to enqueue lead domain event', {
+      event: event.event,
+      leadId: event.leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 /** Sales reps are scoped to their own assigned leads; others see all. */
@@ -108,7 +121,7 @@ export async function createLead(input: LeadInput, actor: Actor): Promise<LeadRe
     ipAddress: actor.ipAddress ?? null,
   });
   // Fire-and-forget: trigger scoring automation
-  void enqueueLeadEvent({ event: 'lead.created', leadId: created.id, payload: {} });
+  enqueueLeadDomainEvent({ event: 'lead.created', leadId: created.id, payload: {} });
   return toLeadResponse(created);
 }
 
@@ -279,6 +292,43 @@ export async function updateLeadFields(
     newValue: toLeadResponse(updated),
     ipAddress: actor.ipAddress ?? null,
   });
+
+  // Publish the events that the workflow trigger contract exposes. These are
+  // deliberately emitted after the database write so a consumer never sees
+  // an update that was rolled back. The durable outbox migration can replace
+  // this fire-and-forget bridge once the write transaction is shared here.
+  const changedFields = Object.keys(input).filter(
+    (key) =>
+      JSON.stringify(before[key as keyof typeof before]) !==
+      JSON.stringify(updated[key as keyof typeof updated]),
+  );
+  if (changedFields.length > 0) {
+    const payload = Object.fromEntries(
+      changedFields.map((key) => [key, updated[key as keyof typeof updated]]),
+    );
+    enqueueLeadDomainEvent({ event: 'lead.updated', leadId: id, payload });
+  }
+  if (before.pipeline_stage_id !== updated.pipeline_stage_id) {
+    enqueueLeadDomainEvent({
+      event: 'lead.stage_moved',
+      leadId: id,
+      payload: {
+        fromStageId: before.pipeline_stage_id,
+        toStageId: updated.pipeline_stage_id,
+      },
+    });
+  }
+  if (before.assigned_to !== updated.assigned_to) {
+    enqueueLeadDomainEvent({
+      event: 'lead.assigned',
+      leadId: id,
+      payload: { assignedTo: updated.assigned_to },
+    });
+  }
+  const addedTags = (updated.tags ?? []).filter((tag) => !(before.tags ?? []).includes(tag));
+  for (const tag of addedTags) {
+    enqueueLeadDomainEvent({ event: 'lead.tag_added', leadId: id, payload: { tag } });
+  }
   return toLeadResponse(updated);
 }
 
@@ -354,6 +404,11 @@ export async function setLeadPaused(
     oldValue: { status: before.status },
     newValue: { status: targetStatus, reason: reason ?? null },
     ipAddress: actor.ipAddress ?? null,
+  });
+  enqueueLeadDomainEvent({
+    event: 'lead.status_changed',
+    leadId: id,
+    payload: { status: targetStatus },
   });
   return toLeadResponse(updated);
 }

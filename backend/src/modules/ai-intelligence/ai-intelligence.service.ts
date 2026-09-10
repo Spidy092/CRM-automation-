@@ -19,7 +19,7 @@ import { NotFoundError } from '../../shared/errors';
 import type { LeadAiProfileRow, AiDecisionLogRow, AiResearchOutput } from './ai-intelligence.types';
 
 const PROFILE_CACHE_TTL = 60 * 60; // 1 hour — DB is authoritative
-const RESEARCH_MAX_TOKENS = 800;
+const RESEARCH_MAX_TOKENS = 500;
 const NEXT_ACTION_MAX_TOKENS = 400;
 
 /**

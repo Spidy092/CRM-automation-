@@ -62,6 +62,7 @@ import { abTestRoutes } from './modules/ab-testing/ab-testing.routes';
 import { templateAbRoutes } from './modules/ab-testing/template-ab.routes';
 import { schedulingRoutes } from './modules/scheduling/scheduling.routes';
 import { newsletterRoutes } from './modules/newsletter/newsletter.routes';
+import { workflowsRoutes } from './modules/workflows';
 
 const app: Application = express();
 app.set('trust proxy', 1);
@@ -102,7 +103,18 @@ app.use(
   }),
 );
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
+app.use(
+  express.json({
+    limit: '10mb',
+    // Meta and SendGrid sign the exact raw request bytes. Capture them before
+    // JSON parsing so webhook handlers can verify signatures correctly.
+    verify: (req, _res, buf) => {
+      if ((req as express.Request).originalUrl.startsWith('/webhooks/')) {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      }
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: false }));
 app.use(
   morgan('combined', {
@@ -196,6 +208,7 @@ app.use('/api/v1/ab-testing', abTestRoutes);
 app.use('/api/v1/template-ab', templateAbRoutes);
 app.use('/api/v1/scheduling', schedulingRoutes);
 app.use('/api/v1/newsletter', newsletterRoutes);
+app.use('/api/v1/workflows', workflowsRoutes);
 
 // ── Public Tracking (no auth — called by email clients) ───────────────────
 app.use('/track', publicLimiter, trackingRoutes);

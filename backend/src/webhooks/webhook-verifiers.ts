@@ -4,7 +4,7 @@
  * Each provider uses a different verification mechanism:
  *   - WhatsApp: HMAC-SHA256 of raw request body against app secret
  *   - Twilio: HMAC-SHA1 of URL + params against auth token
- *   - SendGrid: HMAC-SHA256 with verification key (if configured)
+ *   - SendGrid: ECDSA-SHA256 with the public verification key
  *   - Google Ads: Shared secret comparison (simple token match)
  */
 import crypto from 'crypto';
@@ -75,12 +75,15 @@ export function verifyTwilioSignature(
 }
 
 /**
- * Verify SendGrid webhook signature (signed events).
- * SendGrid signs events with HMAC-SHA256 using a verification key configured
- * in the SendGrid dashboard.
+ * Verify a SendGrid signed Event Webhook.
+ *
+ * SendGrid generates an ECDSA key pair. The dashboard exposes the public key;
+ * the request signature is Base64 encoded and covers the timestamp concatenated
+ * with the exact raw request body. The route assembles that signed payload
+ * before calling this helper.
  */
 export function verifySendGridSignature(
-  payload: string,
+  payload: string | Buffer,
   signatureHeader: string | undefined,
   verificationKey: string | undefined,
 ): boolean {
@@ -94,13 +97,11 @@ export function verifySendGridSignature(
     return false;
   }
 
-  const computedSig = crypto
-    .createHmac('sha256', verificationKey)
-    .update(payload, 'utf8')
-    .digest('hex');
-
   try {
-    return crypto.timingSafeEqual(Buffer.from(signatureHeader), Buffer.from(computedSig));
+    const verifier = crypto.createVerify('sha256');
+    verifier.update(payload);
+    verifier.end();
+    return verifier.verify(verificationKey, Buffer.from(signatureHeader, 'base64'));
   } catch {
     return false;
   }
