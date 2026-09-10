@@ -69,6 +69,9 @@ export function QuickResponseModal({ lead, onClose }: Props) {
   const [search, setSearch] = useState('');
   const [skipReview, setSkipReview] = useState(false);
   const [reviewTemplate, setReviewTemplate] = useState<Template | null>(null);
+  const [composeMode, setComposeMode] = useState<'template' | 'custom'>('template');
+  const [customSubject, setCustomSubject] = useState('');
+  const [customBody, setCustomBody] = useState('');
 
   const { data: templatesData, isLoading: templatesLoading } = useTemplates({
     channel: channel ?? undefined,
@@ -88,10 +91,10 @@ export function QuickResponseModal({ lead, onClose }: Props) {
     setReviewTemplate(null);
   };
 
-  const doSend = async (templateId: string) => {
+  const doSend = async (input: { templateId?: string; body?: string; subject?: string }) => {
     if (!channel) return;
     try {
-      await quickSend.mutateAsync({ leadId: lead.id, channel, templateId });
+      await quickSend.mutateAsync({ leadId: lead.id, channel, ...input });
       showToast('Message sent.');
       onClose();
     } catch (err) {
@@ -102,22 +105,44 @@ export function QuickResponseModal({ lead, onClose }: Props) {
 
   const handleSelect = (template: Template) => {
     if (skipReview) {
-      void doSend(template.id);
+      void doSend({ templateId: template.id });
     } else {
       setReviewTemplate(template);
     }
+  };
+
+  const handleCustomSend = () => {
+    if (!channel) return;
+    const body = interpolateTemplate(customBody.trim(), lead);
+    const subject = channel === 'email' ? interpolateTemplate(customSubject.trim(), lead) : undefined;
+    if (!body.trim()) {
+      showToast('Enter a message before sending.', 'error');
+      return;
+    }
+    if (channel === 'email' && !subject?.trim()) {
+      showToast('Enter an email subject before sending.', 'error');
+      return;
+    }
+    void doSend({ body, ...(subject ? { subject } : {}) });
   };
 
   const activeChannel = channelOptions.find((o) => o.channel === channel);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="flex h-[560px] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="quick-response-title"
+        className="flex h-[560px] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl"
+      >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-slate-100 px-6 py-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Send Quick Response to</p>
-            <h2 className="text-lg font-bold text-slate-900">{lead.business_name}</h2>
+            <h2 id="quick-response-title" className="text-lg font-bold text-slate-900">
+              {lead.business_name}
+            </h2>
           </div>
           <button
             type="button"
@@ -143,7 +168,7 @@ export function QuickResponseModal({ lead, onClose }: Props) {
             destination={activeChannel ? activeChannel.destination(lead) : ''}
             isSending={quickSend.isPending}
             onBack={() => setReviewTemplate(null)}
-            onSend={() => doSend(reviewTemplate.id)}
+            onSend={() => doSend({ templateId: reviewTemplate.id })}
           />
         ) : (
           <div className="flex flex-1 overflow-hidden">
@@ -185,60 +210,190 @@ export function QuickResponseModal({ lead, onClose }: Props) {
                     type="checkbox"
                     checked={skipReview}
                     onChange={(e) => setSkipReview(e.target.checked)}
+                    disabled={composeMode === 'custom'}
                     className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
                   />
-                  Skip review step
+                  Skip template review step
                 </label>
               </div>
             </div>
 
-            {/* Right: template selector */}
+            {/* Right: template selector or custom composer */}
             <div className="flex flex-1 flex-col overflow-hidden p-4">
-              <div className="mb-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search approved templates..."
-                    className="w-full rounded-md border border-slate-200 py-1.5 pl-9 pr-3 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  />
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex rounded-md border border-slate-200 p-0.5" role="tablist" aria-label="Message type">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={composeMode === 'template'}
+                    onClick={() => {
+                      setComposeMode('template');
+                      setReviewTemplate(null);
+                    }}
+                    className={`rounded px-2.5 py-1 text-xs font-medium ${
+                      composeMode === 'template' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Approved templates
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={composeMode === 'custom'}
+                    onClick={() => {
+                      setComposeMode('custom');
+                      setReviewTemplate(null);
+                    }}
+                    className={`rounded px-2.5 py-1 text-xs font-medium ${
+                      composeMode === 'custom' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Custom message
+                  </button>
                 </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto">
-                {templatesLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
+                {composeMode === 'template' && (
+                  <div className="relative w-48">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search templates..."
+                      aria-label="Search approved templates"
+                      className="w-full rounded-md border border-slate-200 py-1.5 pl-9 pr-3 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                    />
                   </div>
-                ) : templates.length === 0 ? (
-                  <p className="p-3 text-sm text-slate-400">
-                    No approved {channel} templates match. Create and approve one in Content.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {templates.map((t) => (
-                      <li
-                        key={t.id}
-                        className="flex items-start justify-between gap-3 rounded-md border border-slate-200 p-3 hover:border-slate-300"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-medium text-slate-800">{t.name}</p>
-                          <p className="line-clamp-2 text-xs text-slate-500">{t.body}</p>
-                        </div>
-                        <Button size="sm" onClick={() => handleSelect(t)} className="shrink-0">
-                          Select
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
                 )}
               </div>
+
+              {composeMode === 'custom' ? (
+                <CustomMessageComposer
+                  channel={channel}
+                  destination={activeChannel ? activeChannel.destination(lead) : ''}
+                  subject={customSubject}
+                  body={customBody}
+                  isSending={quickSend.isPending}
+                  onSubjectChange={setCustomSubject}
+                  onBodyChange={setCustomBody}
+                  onBackToTemplates={() => setComposeMode('template')}
+                  onSend={handleCustomSend}
+                />
+              ) : (
+                <div className="flex-1 overflow-y-auto">
+                  {templatesLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                    </div>
+                  ) : templates.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-slate-200 p-4">
+                      <p className="text-sm text-slate-400">
+                        No approved {channel} templates match. You can write a custom message instead.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => setComposeMode('custom')}
+                      >
+                        Write custom message
+                      </Button>
+                    </div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {templates.map((t) => (
+                        <li
+                          key={t.id}
+                          className="flex items-start justify-between gap-3 rounded-md border border-slate-200 p-3 hover:border-slate-300"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-800">{t.name}</p>
+                            <p className="line-clamp-2 text-xs text-slate-500">{t.body}</p>
+                          </div>
+                          <Button size="sm" onClick={() => handleSelect(t)} className="shrink-0">
+                            Select
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function CustomMessageComposer({
+  channel,
+  destination,
+  subject,
+  body,
+  isSending,
+  onSubjectChange,
+  onBodyChange,
+  onBackToTemplates,
+  onSend,
+}: {
+  channel: MessageChannel | null;
+  destination: string;
+  subject: string;
+  body: string;
+  isSending: boolean;
+  onSubjectChange: (value: string) => void;
+  onBodyChange: (value: string) => void;
+  onBackToTemplates: () => void;
+  onSend: () => void;
+}) {
+  const hasRequiredFields = body.trim().length > 0 && (channel !== 'email' || subject.trim().length > 0);
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="mb-3 text-sm text-slate-500">
+        Sending via <span className="font-medium text-slate-700">{channel}</span> to{' '}
+        <span className="font-medium text-slate-700">{destination}</span>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {channel === 'email' && (
+          <label className="mb-4 block text-sm font-medium text-slate-700">
+            Subject
+            <input
+              type="text"
+              value={subject}
+              maxLength={500}
+              onChange={(e) => onSubjectChange(e.target.value)}
+              placeholder="Enter an email subject"
+              className="mt-1.5 w-full rounded-md border border-slate-200 px-3 py-2 font-normal focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+            />
+          </label>
+        )}
+        <label className="block text-sm font-medium text-slate-700">
+          Message
+          <textarea
+            value={body}
+            maxLength={10_000}
+            onChange={(e) => onBodyChange(e.target.value)}
+            placeholder="Write a message to this lead..."
+            rows={9}
+            className="mt-1.5 w-full resize-none rounded-md border border-slate-200 px-3 py-2 font-normal focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+          />
+        </label>
+        <div className="mt-1 flex justify-between gap-3 text-xs text-slate-400">
+          <span>Use {'{{first_name}}'} or {'{{business_name}}'} for lead details.</span>
+          <span>{body.length}/10,000</span>
+        </div>
+      </div>
+      <div className="flex justify-between gap-3 border-t border-slate-100 pt-4">
+        <Button type="button" variant="outline" onClick={onBackToTemplates} disabled={isSending}>
+          Use approved template
+        </Button>
+        <Button type="button" onClick={onSend} disabled={!hasRequiredFields || isSending}>
+          {isSending ? 'Sending…' : 'Send custom message'}
+        </Button>
       </div>
     </div>
   );

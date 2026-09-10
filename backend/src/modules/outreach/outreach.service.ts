@@ -12,6 +12,7 @@ import {
   TaskRow,
   TimelineEntry,
 } from './outreach.types';
+import type { QuickSendInput } from './outreach.schema';
 import { MessageChannel, OutreachStatus, TaskType } from '../../shared/types';
 import {
   deleteSequence,
@@ -422,7 +423,7 @@ export async function sendManualOutreach(
  */
 export async function sendQuickMessage(
   leadId: string,
-  input: { channel: MessageChannel; templateId: string },
+  input: QuickSendInput,
   actor: OutreachActor,
 ): Promise<OutreachLogRow> {
   const lead = await findLeadById(leadId);
@@ -431,23 +432,45 @@ export async function sendQuickMessage(
     throw new AppError('Lead has opted out — cannot send a message', 400);
   }
 
-  const template = await findTemplateById(input.templateId);
-  if (!template) throw new AppError('Template not found', 404);
-  if (template.approval_status !== 'approved') throw new AppError('Template is not approved', 400);
-  if (template.channel !== input.channel) throw new AppError('Template channel mismatch', 400);
+  let message: string;
+  let dispatchBody: string;
+  let subject: string | undefined;
+  let templateId: string | null = input.templateId ?? null;
+  let attachments: NonNullable<Awaited<ReturnType<typeof findTemplateById>>>['attachments'] = [];
+
+  if (input.templateId) {
+    const template = await findTemplateById(input.templateId);
+    if (!template) throw new AppError('Template not found', 404);
+    if (template.approval_status !== 'approved') throw new AppError('Template is not approved', 400);
+    if (template.channel !== input.channel) throw new AppError('Template channel mismatch', 400);
+
+    // AI personalization is skipped here (enabled: false) so the send stays
+    // synchronous and the rep sees the exact rendered text before it goes out.
+    const personalized = await personalizeMessage(lead, template, { enabled: false });
+    message = personalized.message;
+    dispatchBody = message;
+    subject = template.subject ?? undefined;
+    attachments = template.attachments;
+  } else {
+    if (!input.body) throw new AppError('Message body is required', 400);
+    if (input.channel === 'email' && !input.subject) {
+      throw new AppError('Email subject is required for custom messages', 400);
+    }
+
+    message = input.body;
+    subject = input.channel === 'email' ? input.subject : undefined;
+    dispatchBody = input.channel === 'email' ? customEmailBodyToHtml(message) : message;
+    templateId = null;
+  }
 
   const destination = destinationForChannel(lead, input.channel);
   if (!destination) throw new AppError('Lead has no destination for this channel', 400);
-
-  // AI personalization is skipped here (enabled: false) so the send stays
-  // synchronous and the rep sees the exact rendered text before it goes out.
-  const { message } = await personalizeMessage(lead, template, { enabled: false });
 
   const log = await createLog({
     leadId,
     campaignId: null,
     channel: input.channel,
-    templateId: input.templateId,
+    templateId,
     stepNumber: null,
     status: 'queued',
     messageBody: message,
@@ -457,13 +480,13 @@ export async function sendQuickMessage(
     leadId,
     campaignId: null,
     channel: input.channel,
-    templateId: input.templateId,
-    body: message,
+    templateId: templateId ?? 'custom',
+    body: dispatchBody,
     destination,
-    subject: template.subject ?? undefined,
+    subject,
     mockMode: false,
     logId: log.id,
-    attachments: template.attachments,
+    attachments,
   });
 
   if (!outcome.ok) {
@@ -486,11 +509,21 @@ export async function sendQuickMessage(
     action: 'outreach.quick_send',
     entityType: 'lead',
     entityId: leadId,
-    newValue: { channel: input.channel, templateId: input.templateId },
+    newValue: { channel: input.channel, templateId },
     ipAddress: actor.ipAddress ?? null,
   });
 
   return sentLog;
+}
+
+function customEmailBodyToHtml(body: string): string {
+  const escaped = body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  return escaped.replace(/\r?\n/g, '<br />');
 }
 
 export async function getLeadTimeline(leadId: string, limit?: number): Promise<TimelineEntry[]> {

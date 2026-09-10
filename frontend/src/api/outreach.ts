@@ -258,7 +258,9 @@ export function useUpdateTask() {
 export interface QuickSendInput {
   leadId: string;
   channel: SequenceStep['channel'];
-  templateId: string;
+  templateId?: string;
+  body?: string;
+  subject?: string;
 }
 
 export function useQuickSend() {

@@ -136,7 +136,25 @@ export const listTasksQuerySchema = z.object({
  */
 export const quickSendSchema = z.object({
   channel: channelEnum,
-  templateId: z.string().uuid(),
+  templateId: z.string().uuid().optional(),
+  body: z.string().trim().min(1, 'Message body is required').max(10_000).optional(),
+  subject: z.string().trim().max(500).optional(),
+}).superRefine((input, ctx) => {
+  if (!input.templateId && !input.body) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['body'],
+      message: 'Provide an approved template or a custom message body.',
+    });
+  }
+
+  if (!input.templateId && input.channel === 'email' && !input.subject) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['subject'],
+      message: 'Email subject is required for custom messages.',
+    });
+  }
 });
 
 export const manualSendSchema = z.object({
