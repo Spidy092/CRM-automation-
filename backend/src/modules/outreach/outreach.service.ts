@@ -441,7 +441,8 @@ export async function sendQuickMessage(
   if (input.templateId) {
     const template = await findTemplateById(input.templateId);
     if (!template) throw new AppError('Template not found', 404);
-    if (template.approval_status !== 'approved') throw new AppError('Template is not approved', 400);
+    if (template.approval_status !== 'approved')
+      throw new AppError('Template is not approved', 400);
     if (template.channel !== input.channel) throw new AppError('Template channel mismatch', 400);
 
     // AI personalization is skipped here (enabled: false) so the send stays
