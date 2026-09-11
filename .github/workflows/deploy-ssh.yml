@@ -76,6 +76,7 @@ jobs:
     name: Build & Deploy to EC2
     needs: test
     runs-on: ubuntu-latest
+    environment: EC2_HOST
     steps:
       - uses: actions/checkout@v4
 
