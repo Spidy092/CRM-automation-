@@ -172,10 +172,11 @@ describe('updateIntegration', () => {
   it('merges partial credential updates with existing stored credentials', async () => {
     const existingRow = {
       ...baseRow,
-      encrypted_credentials:
-        'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',
     };
     (findById as jest.Mock).mockResolvedValue(existingRow);
+    (findCredentialsById as jest.Mock).mockResolvedValue(
+      'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',
+    );
     (updateIntegrationRepo as jest.Mock).mockResolvedValue(existingRow);
 
     await updateIntegration(baseRow.id, { credentials: { apiToken: 'new-token' } }, { id: 'u1' });
@@ -286,6 +287,7 @@ describe('testIntegration', () => {
   it('tests draft WhatsApp credentials successfully without database credentials', async () => {
     (findById as jest.Mock).mockResolvedValue(baseRow);
     (findCredentialsById as jest.Mock).mockClear();
+    (findCredentialsById as jest.Mock).mockResolvedValue(null);
     (updateIntegrationRepo as jest.Mock).mockClear();
     (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'ok' });
     (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) =>
@@ -305,7 +307,7 @@ describe('testIntegration', () => {
     expect(result.ok).toBe(true);
     expect(result.status).toBe('ok');
     expect(result.message).toContain('WhatsApp connection successful (35ms)');
-    expect(findCredentialsById).not.toHaveBeenCalled();
+    expect(findCredentialsById).toHaveBeenCalledWith(baseRow.id);
     expect(updateIntegrationRepo).not.toHaveBeenCalled();
     expect(recordTestResult).toHaveBeenCalledWith(baseRow.id, 'ok');
     expect(whatsappConnector.loadCredentials).toHaveBeenCalledWith(draft);
@@ -314,8 +316,6 @@ describe('testIntegration', () => {
   it('tests a partial WhatsApp credential update with stored credential fields', async () => {
     (findById as jest.Mock).mockResolvedValue({
       ...baseRow,
-      encrypted_credentials:
-        'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',
     });
     (findCredentialsById as jest.Mock).mockResolvedValue(
       'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',

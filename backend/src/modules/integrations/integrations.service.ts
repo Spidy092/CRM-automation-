@@ -151,12 +151,13 @@ export async function updateIntegration(
       encryptedCredentials = null;
     } else {
       let existingCredentials: Record<string, unknown> = {};
-      if (before.encrypted_credentials) {
-        try {
-          existingCredentials = decryptCredentialRecord(before.encrypted_credentials);
-        } catch {
-          throw new AppError('Existing integration credentials could not be read', 422);
+      try {
+        const encryptedExistingCredentials = await findCredentialsById(id);
+        if (encryptedExistingCredentials) {
+          existingCredentials = decryptCredentialRecord(encryptedExistingCredentials);
         }
+      } catch {
+        throw new AppError('Existing integration credentials could not be read', 422);
       }
       encryptedCredentials = encryptJson({ ...existingCredentials, ...input.credentials });
     }
@@ -201,8 +202,9 @@ export async function testIntegration(
 
   if (draftCredentials !== undefined) {
     try {
-      const storedCredentials = integration.encrypted_credentials
-        ? decryptCredentialRecord(integration.encrypted_credentials)
+      const encryptedStoredCredentials = await findCredentialsById(id);
+      const storedCredentials = encryptedStoredCredentials
+        ? decryptCredentialRecord(encryptedStoredCredentials)
         : {};
       activeCredentials = { ...storedCredentials, ...draftCredentials };
     } catch (err) {
