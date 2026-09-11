@@ -148,7 +148,7 @@ describe('processBroadcast (newsletter:broadcast)', () => {
 
     expect(logger.error).toHaveBeenCalledWith(
       'Failed to send newsletter email to subscriber',
-      expect.objectContaining({ email: 'a@example.com' }),
+      expect.objectContaining({ subscriberId: 'sub-1' }),
     );
   });
 });

@@ -235,6 +235,7 @@ describe('submitForm', () => {
     expect(result.message).toBe('Thanks!');
     expect(mockEnqueueLeadEvent).toHaveBeenCalledWith({
       event: 'form.submitted',
+      eventId: 'form-submission:s1',
       leadId: 'lead-1',
       payload: { formId: 'f1', submissionId: 's1' },
     });

@@ -10,7 +10,11 @@
  */
 import { pool, queryOne } from '../shared/utils/db';
 import { logger } from '../shared/utils/logger';
-import { cancelPendingOutreachJobs, enqueueAiClassifyReply } from '../workers/queue';
+import {
+  cancelPendingOutreachJobs,
+  enqueueAiClassifyReply,
+  enqueueLeadEvent,
+} from '../workers/queue';
 import { publishAIDomainEvent } from '../shared/events/eventBus';
 import { upsertReplyTask } from '../modules/outreach/outreach.service';
 import { buildPendingReplyTaskSpec, resolveDueAt } from '../modules/ai-reply/ai-reply.tasks';
@@ -38,6 +42,29 @@ async function publishLeadReplyReceived(
       message_text: rawBody.slice(0, 2000),
       received_at: new Date().toISOString(),
     },
+  });
+
+  // Keep workflow enrollment best-effort so a Redis outage cannot cause a
+  // provider webhook to be retried after the reply was already persisted.
+  void Promise.resolve(
+    enqueueLeadEvent({
+      event: 'message.event',
+      eventId: messageId !== 'unknown' ? `message:${messageId}` : undefined,
+      leadId,
+      payload: {
+        messageId,
+        channel,
+        messageText: rawBody.slice(0, 2000),
+        receivedAt: new Date().toISOString(),
+      },
+    }),
+  ).catch((error: unknown) => {
+    logger.error('Failed to enqueue message workflow event', {
+      leadId,
+      channel,
+      messageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
 }
 

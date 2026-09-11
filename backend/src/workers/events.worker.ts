@@ -136,6 +136,9 @@ export async function handleLeadEvent(data: LeadEventJob): Promise<void> {
     case 'lead.updated':
     case 'lead.tag_added':
     case 'form.submitted':
+    case 'message.event':
+    case 'booking.created':
+    case 'booking.cancelled':
       // These events are currently consumed by the workflow trigger path
       // above. Keeping the switch explicit prevents them from being reported
       // as unknown events and leaves room for future campaign-side behavior.

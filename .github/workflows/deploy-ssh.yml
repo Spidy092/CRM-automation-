@@ -1,0 +1,135 @@
+name: Deploy to EC2 via SSH
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. CI Validation
+  # ──────────────────────────────────────────────────────────────────────────
+  test:
+    name: Run Unit Tests & Lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm_test
+          POSTGRES_PASSWORD: crm_test
+          POSTGRES_DB: crm_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://crm_test:crm_test@localhost:5432/crm_test
+      REDIS_URL: redis://localhost:6379
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Generate JWT Keys for Test
+        run: |
+          mkdir -p /tmp/jwt
+          openssl genrsa -out /tmp/jwt/private.pem 2048
+          openssl rsa -in /tmp/jwt/private.pem -pubout -out /tmp/jwt/public.pem
+          echo "JWT_PRIVATE_KEY=$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/jwt/private.pem)" >> $GITHUB_ENV
+          echo "JWT_PUBLIC_KEY=$(sed ':a;N;$!ba;s/\n/\\n/g' /tmp/jwt/public.pem)" >> $GITHUB_ENV
+
+      - name: Test Backend
+        run: |
+          cd backend
+          npm ci
+          npm run migrate
+          npm run lint
+          npm run test
+          npm run build
+
+      - name: Test Frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run lint
+          npm run test
+          npm run build
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Build & Deploy via SSH
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Build & Deploy to EC2
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Images on Runner
+        run: |
+          docker build -t crm-api:latest ./backend
+          docker build -t crm-worker:latest ./backend
+          docker build -t crm-frontend:latest ./frontend
+
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Add EC2 to Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Sync Migration and Configuration Files to EC2
+        run: |
+          scp -r ./migrations ./docker-compose.prod.yml ./nginx ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/ubuntu/crm/
+
+      - name: Stream Images to EC2 Docker Daemon
+        run: |
+          echo "Streaming compressed Docker images directly to EC2..."
+          docker save crm-api:latest crm-worker:latest crm-frontend:latest | gzip -1 | \
+            ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "gunzip | docker load"
+
+      - name: Run Migrations and Restart Containers
+        run: |
+          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+            set -e
+            cd /home/ubuntu/crm
+
+            echo "Running database migrations..."
+            docker compose -f docker-compose.prod.yml run --rm --entrypoint '' api npx node-pg-migrate up -m /migrations
+
+            echo "Recreating containers..."
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            echo "Reloading Nginx reverse proxy..."
+            docker restart crm_nginx
+
+            echo "Cleaning up dangling Docker images..."
+            docker image prune -f
+          EOF
+
+      - name: Verify Live Health
+        run: |
+          sleep 5
+          curl -f https://soft.swaragh.net/health
+          echo "Deployment verified successfully!"
+

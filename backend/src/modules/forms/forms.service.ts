@@ -413,6 +413,7 @@ export async function submitForm(
     void Promise.resolve(
       enqueueLeadEvent({
         event: 'form.submitted',
+        eventId: `form-submission:${submission.id}`,
         leadId,
         payload: { formId: form.id, submissionId: submission.id },
       }),

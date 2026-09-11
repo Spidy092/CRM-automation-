@@ -19,7 +19,7 @@ import {
   handleGoogleAdsLeadForm,
 } from './webhook-handlers';
 import { publishAIDomainEvent } from '../shared/events/eventBus';
-import { cancelPendingOutreachJobs } from '../workers/queue';
+import { cancelPendingOutreachJobs, enqueueLeadEvent } from '../workers/queue';
 
 const mockQueryOne = jest.fn();
 const mockQuery = jest.fn();
@@ -27,9 +27,11 @@ const mockQuery = jest.fn();
 jest.mock('../workers/queue', () => ({
   cancelPendingOutreachJobs: jest.fn().mockResolvedValue(undefined),
   enqueueAiClassifyReply: jest.fn().mockResolvedValue(undefined),
+  enqueueLeadEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockedCancelPendingOutreachJobs = cancelPendingOutreachJobs as jest.Mock;
+const mockedEnqueueLeadEvent = enqueueLeadEvent as jest.Mock;
 jest.mock('../shared/utils/db', () => ({
   pool: { query: (...args: unknown[]) => mockQuery(...args) },
   queryOne: (...args: unknown[]) => mockQueryOne(...args),
@@ -95,6 +97,14 @@ describe('handleWhatsAppMessage', () => {
           message_text: 'Hello',
           received_at: expect.any(String),
         }),
+      }),
+    );
+    expect(mockedEnqueueLeadEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'message.event',
+        eventId: 'message:wam:wam123',
+        leadId: 'lead-1',
+        payload: expect.objectContaining({ channel: 'whatsapp', messageText: 'Hello' }),
       }),
     );
   });
@@ -230,9 +240,7 @@ describe('handleTwilioMessage', () => {
   });
 
   it('creates lead for unknown number', async () => {
-    mockQueryOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'lead-sms-new' });
+    mockQueryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'lead-sms-new' });
 
     const result = await handleTwilioMessage({
       From: '+19991112222',
@@ -317,10 +325,7 @@ describe('handleSendGridEvents', () => {
 
     await handleSendGridEvents([{ event: 'open', sg_message_id: 'msg1' }]);
 
-    expect(mockQuery).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.arrayContaining(['opened']),
-    );
+    expect(mockQuery).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining(['opened']));
   });
 
   it('marks lead opted_out on unsubscribe event', async () => {
@@ -332,9 +337,7 @@ describe('handleSendGridEvents', () => {
     await handleSendGridEvents([{ event: 'unsubscribe', sg_message_id: 'msg2' }]);
 
     // At least one UPDATE call should hit the leads table
-    const leadUpdateCall = mockQuery.mock.calls.find((c) =>
-      (c[0] as string).includes("opted_out"),
-    );
+    const leadUpdateCall = mockQuery.mock.calls.find((c) => (c[0] as string).includes('opted_out'));
     expect(leadUpdateCall).toBeDefined();
   });
 
@@ -343,10 +346,7 @@ describe('handleSendGridEvents', () => {
 
     await handleSendGridEvents([{ event: 'bounce', sg_message_id: 'msg3' }]);
 
-    expect(mockQuery).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.arrayContaining(['failed']),
-    );
+    expect(mockQuery).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining(['failed']));
   });
 
   it('returns noop for empty array', async () => {
@@ -405,9 +405,7 @@ describe('handleGoogleAdsLeadForm', () => {
   });
 
   it('handles payload with no user_column_data gracefully', async () => {
-    mockQueryOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'lead-ga-2' });
+    mockQueryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'lead-ga-2' });
 
     const result = await handleGoogleAdsLeadForm({ lead_id: 'gl-002' });
 

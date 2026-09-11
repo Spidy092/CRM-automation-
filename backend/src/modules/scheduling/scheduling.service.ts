@@ -16,6 +16,17 @@ import {
   createEvent,
   deleteEvent,
 } from '../integrations/google-calendar/google-calendar.connector';
+import { enqueueLeadEvent, type LeadEventJob } from '../../workers/queue';
+
+function enqueueBookingWorkflowEvent(event: LeadEventJob): void {
+  void Promise.resolve(enqueueLeadEvent(event)).catch((error: unknown) => {
+    logger.error('Failed to enqueue booking workflow event', {
+      event: event.event,
+      leadId: event.leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
 
 // ── Availability ─────────────────────────────────────────────────────────
 
@@ -428,6 +439,21 @@ export async function createBooking(slug: string, input: CreateBookingInput): Pr
     ipAddress: null,
   });
 
+  if (input.leadId) {
+    enqueueBookingWorkflowEvent({
+      event: 'booking.created',
+      eventId: `booking:${booking.id}:created`,
+      leadId: input.leadId,
+      payload: {
+        bookingId: booking.id,
+        bookingUrlId: bookingUrl.id,
+        status: booking.status,
+        startsAt: booking.starts_at,
+        endsAt: booking.ends_at,
+      },
+    });
+  }
+
   logger.info('Booking created', {
     bookingId: booking.id,
     userId: bookingUrl.user_id,
@@ -472,6 +498,21 @@ export async function cancelBooking(bookingId: string, actorId: string): Promise
     entityId: bookingId,
     ipAddress: null,
   });
+
+  if (booking.lead_id) {
+    enqueueBookingWorkflowEvent({
+      event: 'booking.cancelled',
+      eventId: `booking:${bookingId}:cancelled`,
+      leadId: booking.lead_id,
+      payload: {
+        bookingId,
+        bookingUrlId: booking.booking_url_id,
+        status: updated.status,
+        startsAt: booking.starts_at,
+        endsAt: booking.ends_at,
+      },
+    });
+  }
 
   return updated;
 }
@@ -583,6 +624,21 @@ export async function createInternalBooking(
     },
     ipAddress: null,
   });
+
+  if (input.leadId) {
+    enqueueBookingWorkflowEvent({
+      event: 'booking.created',
+      eventId: `booking:${booking.id}:created`,
+      leadId: input.leadId,
+      payload: {
+        bookingId: booking.id,
+        bookingUrlId,
+        status: booking.status,
+        startsAt: booking.starts_at,
+        endsAt: booking.ends_at,
+      },
+    });
+  }
 
   return booking;
 }
