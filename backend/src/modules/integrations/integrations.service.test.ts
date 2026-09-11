@@ -20,14 +20,38 @@ jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
 // Mock all connector modules so loadCredentials() / testConnection() don't hit
 // the DB / env / network. testConnection defaults to a successful live ping.
-jest.mock('./whatsapp/whatsapp.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./twilio/twilio.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./sendgrid/sendgrid.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./smtp/smtp.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./google-sheets/google-sheets.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./google-calendar/google-calendar.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./outlook/outlook.connector', () => ({ loadCredentials: jest.fn(), testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }) }));
-jest.mock('./openwa/openwa.connector', () => ({ loadCredentials: jest.fn(), healthCheck: jest.fn() }));
+jest.mock('./whatsapp/whatsapp.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./twilio/twilio.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./sendgrid/sendgrid.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./smtp/smtp.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./google-sheets/google-sheets.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./google-calendar/google-calendar.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./outlook/outlook.connector', () => ({
+  loadCredentials: jest.fn(),
+  testConnection: jest.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+}));
+jest.mock('./openwa/openwa.connector', () => ({
+  loadCredentials: jest.fn(),
+  healthCheck: jest.fn(),
+}));
 
 jest.mock('../../shared/utils/encryption', () => ({
   encryptJson: jest.fn((v: unknown) => `enc(${JSON.stringify(v)})`),
@@ -108,7 +132,11 @@ describe('updateIntegration', () => {
     expect(result.is_enabled).toBe(true);
     expect(updateIntegrationRepo).toHaveBeenCalledWith(
       baseRow.id,
-      expect.objectContaining({ isEnabled: true, encryptedCredentials: undefined, updatedBy: 'u1' }),
+      expect.objectContaining({
+        isEnabled: true,
+        encryptedCredentials: undefined,
+        updatedBy: 'u1',
+      }),
     );
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -125,11 +153,7 @@ describe('updateIntegration', () => {
       is_enabled: true,
       encrypted_credentials: 'enc({"token":"abc"})',
     });
-    await updateIntegration(
-      baseRow.id,
-      { credentials: { token: 'abc' } },
-      { id: 'u1' },
-    );
+    await updateIntegration(baseRow.id, { credentials: { token: 'abc' } }, { id: 'u1' });
     expect(updateIntegrationRepo).toHaveBeenCalledWith(
       baseRow.id,
       expect.objectContaining({
@@ -141,6 +165,26 @@ describe('updateIntegration', () => {
       expect.objectContaining({
         action: 'integration.updated',
         newValue: expect.objectContaining({ credentials_changed: true }),
+      }),
+    );
+  });
+
+  it('merges partial credential updates with existing stored credentials', async () => {
+    const existingRow = {
+      ...baseRow,
+      encrypted_credentials:
+        'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',
+    };
+    (findById as jest.Mock).mockResolvedValue(existingRow);
+    (updateIntegrationRepo as jest.Mock).mockResolvedValue(existingRow);
+
+    await updateIntegration(baseRow.id, { credentials: { apiToken: 'new-token' } }, { id: 'u1' });
+
+    expect(updateIntegrationRepo).toHaveBeenCalledWith(
+      baseRow.id,
+      expect.objectContaining({
+        encryptedCredentials:
+          'enc({"phoneNumberId":"12345678901234","apiToken":"new-token","apiVersion":"v20.0","appSecret":"secret"})',
       }),
     );
   });
@@ -189,7 +233,10 @@ describe('testIntegration', () => {
   it('returns no_credentials when credentials are null', async () => {
     (findById as jest.Mock).mockResolvedValue(baseRow);
     (findCredentialsById as jest.Mock).mockResolvedValue(null);
-    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'no_credentials' });
+    (recordTestResult as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      last_test_status: 'no_credentials',
+    });
     const result = await testIntegration(baseRow.id, { id: 'u1' });
     expect(result.ok).toBe(false);
     expect(result.status).toBe('no_credentials');
@@ -241,7 +288,9 @@ describe('testIntegration', () => {
     (findCredentialsById as jest.Mock).mockClear();
     (updateIntegrationRepo as jest.Mock).mockClear();
     (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'ok' });
-    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) => Promise.resolve(input));
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) =>
+      Promise.resolve(input),
+    );
     (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({ ok: true, latencyMs: 35 });
 
     const draft = {
@@ -262,6 +311,32 @@ describe('testIntegration', () => {
     expect(whatsappConnector.loadCredentials).toHaveBeenCalledWith(draft);
   });
 
+  it('tests a partial WhatsApp credential update with stored credential fields', async () => {
+    (findById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      encrypted_credentials:
+        'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',
+    });
+    (findCredentialsById as jest.Mock).mockResolvedValue(
+      'enc({"phoneNumberId":"12345678901234","apiToken":"old-token","apiVersion":"v20.0","appSecret":"secret"})',
+    );
+    (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'ok' });
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) =>
+      Promise.resolve(input),
+    );
+    (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({ ok: true, latencyMs: 25 });
+
+    const result = await testIntegration(baseRow.id, { id: 'u1' }, { apiToken: 'new-token' });
+
+    expect(result.ok).toBe(true);
+    expect(whatsappConnector.loadCredentials).toHaveBeenCalledWith({
+      phoneNumberId: '12345678901234',
+      apiToken: 'new-token',
+      apiVersion: 'v20.0',
+      appSecret: 'secret',
+    });
+  });
+
   it('rejects invalid draft WhatsApp credentials safely', async () => {
     (findById as jest.Mock).mockResolvedValue(baseRow);
     (whatsappConnector.loadCredentials as jest.Mock).mockRejectedValue(
@@ -274,7 +349,9 @@ describe('testIntegration', () => {
 
     expect(result.ok).toBe(false);
     expect(result.status).toBe('failed');
-    expect(result.message).toBe('Connector credential validation failed: WhatsApp credentials invalid: apiToken is required');
+    expect(result.message).toBe(
+      'Connector credential validation failed: WhatsApp credentials invalid: apiToken is required',
+    );
     expect(recordTestResult).toHaveBeenCalledWith(baseRow.id, 'failed');
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -286,7 +363,9 @@ describe('testIntegration', () => {
 
   it('handles live test failure with draft WhatsApp credentials', async () => {
     (findById as jest.Mock).mockResolvedValue(baseRow);
-    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) => Promise.resolve(input));
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) =>
+      Promise.resolve(input),
+    );
     (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({
       ok: false,
       error: 'Invalid OAuth access token - Cannot parse access token',
@@ -309,7 +388,9 @@ describe('testIntegration', () => {
 
   it('NEVER logs or returns draft credentials or secret tokens', async () => {
     (findById as jest.Mock).mockResolvedValue(baseRow);
-    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) => Promise.resolve(input));
+    (whatsappConnector.loadCredentials as jest.Mock).mockImplementation((input) =>
+      Promise.resolve(input),
+    );
     (whatsappConnector.testConnection as jest.Mock).mockResolvedValue({ ok: true, latencyMs: 10 });
     (recordTestResult as jest.Mock).mockResolvedValue({ ...baseRow, last_test_status: 'ok' });
 
@@ -470,8 +551,20 @@ describe('testAllIntegrations', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('skips disabled integrations and tests only enabled ones', async () => {
-    const enabledRow = { ...baseRow, id: 'a', name: 'twilio', display_name: 'Twilio', is_enabled: true };
-    const disabledRow = { ...baseRow, id: 'b', name: 'smtp', display_name: 'SMTP', is_enabled: false };
+    const enabledRow = {
+      ...baseRow,
+      id: 'a',
+      name: 'twilio',
+      display_name: 'Twilio',
+      is_enabled: true,
+    };
+    const disabledRow = {
+      ...baseRow,
+      id: 'b',
+      name: 'smtp',
+      display_name: 'SMTP',
+      is_enabled: false,
+    };
     (findAllPublic as jest.Mock).mockResolvedValue([enabledRow, disabledRow]);
     // testIntegration internals for the enabled one
     (findById as jest.Mock).mockResolvedValue(enabledRow);
@@ -492,11 +585,20 @@ describe('testAllIntegrations', () => {
   });
 
   it('counts failures when an enabled integration fails the test', async () => {
-    const enabledRow = { ...baseRow, id: 'a', name: 'twilio', display_name: 'Twilio', is_enabled: true };
+    const enabledRow = {
+      ...baseRow,
+      id: 'a',
+      name: 'twilio',
+      display_name: 'Twilio',
+      is_enabled: true,
+    };
     (findAllPublic as jest.Mock).mockResolvedValue([enabledRow]);
     (findById as jest.Mock).mockResolvedValue(enabledRow);
     (findCredentialsById as jest.Mock).mockResolvedValue(null);
-    (recordTestResult as jest.Mock).mockResolvedValue({ ...enabledRow, last_test_status: 'no_credentials' });
+    (recordTestResult as jest.Mock).mockResolvedValue({
+      ...enabledRow,
+      last_test_status: 'no_credentials',
+    });
 
     const result = await testAllIntegrations({ id: 'u1' });
     expect(result.total).toBe(1);
@@ -507,7 +609,13 @@ describe('testAllIntegrations', () => {
   });
 
   it('falls back gracefully when testIntegration itself throws (404)', async () => {
-    const enabledRow = { ...baseRow, id: 'a', name: 'twilio', display_name: 'Twilio', is_enabled: true };
+    const enabledRow = {
+      ...baseRow,
+      id: 'a',
+      name: 'twilio',
+      display_name: 'Twilio',
+      is_enabled: true,
+    };
     (findAllPublic as jest.Mock).mockResolvedValue([enabledRow]);
     // findById returns null inside testIntegration -> throws AppError 404
     (findById as jest.Mock).mockResolvedValue(null);

@@ -46,6 +46,14 @@ function toPublic(row: Integration | IntegrationPublic): IntegrationPublic {
   };
 }
 
+function decryptCredentialRecord(payload: string): Record<string, unknown> {
+  const parsed = JSON.parse(decrypt(payload)) as unknown;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Decrypted credentials must be an object');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export async function listIntegrations(): Promise<IntegrationPublic[]> {
   const rows = await findAllPublic();
   return rows.map((r) => toPublic(r));
@@ -139,7 +147,19 @@ export async function updateIntegration(
 
   let encryptedCredentials: string | null | undefined;
   if (input.credentials !== undefined) {
-    encryptedCredentials = input.credentials === null ? null : encryptJson(input.credentials);
+    if (input.credentials === null) {
+      encryptedCredentials = null;
+    } else {
+      let existingCredentials: Record<string, unknown> = {};
+      if (before.encrypted_credentials) {
+        try {
+          existingCredentials = decryptCredentialRecord(before.encrypted_credentials);
+        } catch {
+          throw new AppError('Existing integration credentials could not be read', 422);
+        }
+      }
+      encryptedCredentials = encryptJson({ ...existingCredentials, ...input.credentials });
+    }
   }
 
   const updated = await updateIntegrationRepo(id, {
@@ -180,7 +200,29 @@ export async function testIntegration(
   let activeCredentials: Record<string, unknown>;
 
   if (draftCredentials !== undefined) {
-    activeCredentials = draftCredentials;
+    try {
+      const storedCredentials = integration.encrypted_credentials
+        ? decryptCredentialRecord(integration.encrypted_credentials)
+        : {};
+      activeCredentials = { ...storedCredentials, ...draftCredentials };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'unknown error';
+      await recordTestResult(id, 'failed');
+      await writeAuditLog({
+        userId: actor.id,
+        action: 'integration.test_failed',
+        entityType: 'integration',
+        entityId: id,
+        newValue: { reason: 'decryption_failed', error: message },
+        ipAddress: actor.ipAddress ?? null,
+      });
+      return {
+        ok: false,
+        status: 'failed',
+        message: `Credential decryption failed: ${message}`,
+        tested_at: new Date().toISOString(),
+      };
+    }
   } else {
     let credentials: string | null = null;
     try {
@@ -208,7 +250,7 @@ export async function testIntegration(
 
     // Base sanity-check: credentials must decrypt to valid JSON.
     try {
-      activeCredentials = JSON.parse(decrypt(credentials)) as Record<string, unknown>;
+      activeCredentials = decryptCredentialRecord(credentials);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'unknown error';
       await recordTestResult(id, 'failed');
