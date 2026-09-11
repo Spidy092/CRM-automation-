@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { useTemplates } from '@/api/templates';
 import { useQuickSend } from '@/api/outreach';
+import { getApiErrorMessage } from '@/lib/apiError';
 import type { Lead, MessageChannel, Template } from '@/types';
 import { Mail, MessageSquare, Smartphone, Search, X, ArrowLeft } from 'lucide-react';
 
@@ -98,8 +99,7 @@ export function QuickResponseModal({ lead, onClose }: Props) {
       showToast('Message sent.');
       onClose();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to send message.';
-      showToast(message, 'error');
+      showToast(getApiErrorMessage(err, 'Failed to send message.'), 'error');
     }
   };
 

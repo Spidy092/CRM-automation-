@@ -138,13 +138,40 @@ function loggedFetch(url, init, opts) {
                     return [2 /*return*/, {
                             ok: false,
                             status: response.status,
-                            error: "HTTP ".concat(response.status),
+                            error: extractProviderErrorMessage(data) || "HTTP ".concat(response.status),
                             latencyMs: latencyMs,
                             retryable: retryable,
                         }];
             }
         });
     });
+}
+/**
+ * Pull only a provider-supplied message from a structured error response.
+ * Never return the full response body because it may contain sensitive data.
+ */
+function extractProviderErrorMessage(data) {
+    if (typeof data === 'string') {
+        try {
+            return extractProviderErrorMessage(JSON.parse(data));
+        }
+        catch (_m) {
+            return undefined;
+        }
+    }
+    if (!data || typeof data !== 'object')
+        return undefined;
+    var payload = data;
+    var providerError = payload.error;
+    if (typeof providerError === 'string' && providerError.trim())
+        return providerError;
+    if (providerError && typeof providerError === 'object') {
+        var message_1 = providerError.message;
+        if (typeof message_1 === 'string' && message_1.trim())
+            return message_1;
+    }
+    var message = payload.message;
+    return typeof message === 'string' && message.trim() ? message : undefined;
 }
 /**
  * Extracts a provider-specific identifier from a successful response body.

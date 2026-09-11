@@ -155,10 +155,37 @@ export async function loggedFetch<T = unknown>(
   return {
     ok: false,
     status: response.status,
-    error: `HTTP ${response.status}`,
+    error: extractProviderErrorMessage(data) ?? `HTTP ${response.status}`,
     latencyMs,
     retryable,
   };
+}
+
+/**
+ * Pull only a provider-supplied message from a structured error response.
+ * Never return the full response body because it may contain sensitive data.
+ */
+function extractProviderErrorMessage(data: unknown): string | undefined {
+  if (typeof data === 'string') {
+    try {
+      return extractProviderErrorMessage(JSON.parse(data));
+    } catch {
+      return undefined;
+    }
+  }
+  if (!data || typeof data !== 'object') return undefined;
+
+  const payload = data as Record<string, unknown>;
+  const providerError = payload.error;
+  if (typeof providerError === 'string' && providerError.trim()) return providerError;
+
+  if (providerError && typeof providerError === 'object') {
+    const message = (providerError as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+
+  const message = payload.message;
+  return typeof message === 'string' && message.trim() ? message : undefined;
 }
 
 /**
