@@ -88,4 +88,17 @@ describe('workflow routes', () => {
       expect.objectContaining({ id: 'user-1' }),
     );
   });
+
+  it('replays a failed enrollment through the admin workflow route', async () => {
+    mockedService.replayWorkflowEnrollment.mockResolvedValueOnce({ id } as never);
+
+    const response = await request(app).post(`/workflows/enrollments/${id}/replay`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.id).toBe(id);
+    expect(mockedService.replayWorkflowEnrollment).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ id: 'user-1' }),
+    );
+  });
 });

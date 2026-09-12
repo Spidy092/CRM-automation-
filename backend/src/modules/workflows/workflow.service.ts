@@ -7,11 +7,14 @@ import {
   findWorkflows,
   insertWorkflow,
   publishWorkflow as publishWorkflowRecord,
+  replayFailedEnrollment,
   updateWorkflowStatus,
 } from './workflow.repository';
 import { AppError } from '../../shared/middleware/errorHandler';
 import type { CreateWorkflowInput } from './workflow.schema';
 import type { WorkflowDetail } from './workflow.types';
+import type { WorkflowEnrollmentRow } from './workflow.types';
+import { enqueueWorkflowExecution } from '../../workers/queue';
 
 export interface WorkflowValidationResult {
   valid: boolean;
@@ -141,4 +144,31 @@ export async function resumeWorkflow(
     ipAddress: actor.ipAddress ?? null,
   });
   return resumed;
+}
+
+/** Requeues a failed workflow run from its current node after operator approval. */
+export async function replayWorkflowEnrollment(
+  enrollmentId: string,
+  actor: { id: string; ipAddress?: string | null },
+): Promise<WorkflowEnrollmentRow> {
+  const replayed = await replayFailedEnrollment(enrollmentId);
+  if (!replayed) {
+    throw new AppError('Only failed workflow runs can be replayed', 400);
+  }
+
+  // The database state is already due, so the scheduler remains a recovery
+  // path if Redis is temporarily unavailable after this request commits.
+  await enqueueWorkflowExecution(
+    { enrollmentId: replayed.id },
+    { jobIdSuffix: `replay-${replayed.lock_version}` },
+  );
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'workflow.enrollment_replayed',
+    entityType: 'workflow_enrollment',
+    entityId: replayed.id,
+    newValue: replayed,
+    ipAddress: actor.ipAddress ?? null,
+  });
+  return replayed;
 }
