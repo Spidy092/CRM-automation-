@@ -373,7 +373,11 @@ export function IntegrationSetupWizard({
     }
 
     return (
-      <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+      <form
+        autoComplete="off"
+        onSubmit={(event) => event.preventDefault()}
+        className="space-y-4 max-h-[50vh] overflow-y-auto pr-1"
+      >
         <div className="flex items-center gap-3 rounded-lg border bg-muted/50 p-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
             <Link2 className="h-4 w-4 text-primary" />
@@ -437,7 +441,12 @@ export function IntegrationSetupWizard({
               )}
               <Input
                 id={inputId}
+                name={`integration-${selectedIntegration.name}-${field.key}`}
                 type={inputType}
+                autoComplete={inputType === 'password' ? 'new-password' : 'off'}
+                data-1p-ignore="true"
+                data-bwignore="true"
+                data-lpignore="true"
                 placeholder={field.placeholder}
                 value={String(value)}
                 onChange={(e) => handleValueChange(field.key, e.target.value)}
@@ -446,7 +455,7 @@ export function IntegrationSetupWizard({
             </div>
           );
         })}
-      </div>
+      </form>
     );
   };
 

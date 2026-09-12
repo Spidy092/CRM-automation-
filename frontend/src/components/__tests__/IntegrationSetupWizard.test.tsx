@@ -84,6 +84,17 @@ const sheetsIntegration: Integration = {
   updated_at: '2026-06-27T10:00:00Z',
 };
 
+const whatsappIntegration: Integration = {
+  id: 'int-whatsapp-1',
+  name: 'whatsapp',
+  display_name: 'WhatsApp Cloud API',
+  is_enabled: false,
+  last_tested_at: null,
+  last_test_status: null,
+  updated_by: null,
+  updated_at: '2026-06-27T10:00:00Z',
+};
+
 const mockIntegrations: Integration[] = [openwaIntegration, sheetsIntegration];
 
 function setupIntegrationsMock(data: Integration[] | null = mockIntegrations) {
@@ -198,6 +209,29 @@ describe('IntegrationSetupWizard', () => {
         'One or more WhatsApp sender numbers for rotation (E.164 format).',
       ),
     ).toBeInTheDocument();
+  });
+
+  it('prevents Chrome from treating integration credentials as a saved login', () => {
+    renderWithProviders(
+      <IntegrationSetupWizard
+        open={true}
+        onOpenChange={vi.fn()}
+        integration={whatsappIntegration}
+      />,
+    );
+
+    const phoneNumberId = screen.getByLabelText(/Phone Number ID/i);
+    expect(phoneNumberId.closest('form')).toHaveAttribute('autocomplete', 'off');
+    expect(phoneNumberId).toHaveAttribute(
+      'name',
+      'integration-whatsapp-phoneNumberId',
+    );
+    expect(phoneNumberId).toHaveAttribute('autocomplete', 'off');
+    expect(screen.getByLabelText(/API Token/i)).toHaveAttribute('autocomplete', 'new-password');
+    expect(screen.getByLabelText(/App Secret/i)).toHaveAttribute(
+      'autocomplete',
+      'new-password',
+    );
   });
 
   it('disables the Next button until required credentials are filled', () => {
