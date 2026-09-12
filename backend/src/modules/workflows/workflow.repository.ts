@@ -324,7 +324,11 @@ export async function claimEnrollmentById(
      WHERE e.id = $1
        AND e.status IN ('active', 'waiting')
        AND (e.next_run_at IS NULL OR e.next_run_at <= $2::timestamptz)
-       AND (e.locked_at IS NULL OR e.locked_at < NOW() - INTERVAL '5 minutes')
+       AND (
+         e.locked_by = $3
+         OR e.locked_at IS NULL
+         OR e.locked_at < NOW() - INTERVAL '5 minutes'
+       )
        AND EXISTS (
          SELECT 1 FROM workflows w
          WHERE w.id = e.workflow_id
@@ -412,45 +416,84 @@ export async function recordStepRun(input: {
   lockVersion: number;
   workerId: string;
 }): Promise<WorkflowStepRunRow> {
-  const params = [
-    input.enrollmentId,
-    input.nodeId,
-    input.nodeType,
-    input.status ?? 'running',
-    input.attempt ?? 1,
-    input.idempotencyKey,
-    input.jobId ?? null,
-    input.input ? JSON.stringify(input.input) : null,
-  ];
-  const result = await pool.query<WorkflowStepRunRow>(
-    `INSERT INTO workflow_step_runs
-       (enrollment_id, node_id, node_type, status, attempt,
-        idempotency_key, job_id, input, started_at)
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW()
-     WHERE EXISTS (
-       SELECT 1 FROM workflow_enrollments
-       WHERE id = $1 AND lock_version = $9 AND locked_by = $10
-     )
-     ON CONFLICT (idempotency_key) DO NOTHING
-     RETURNING id, enrollment_id, node_id, node_type, status, attempt,
-       idempotency_key, job_id, input, result, error_code, error_message,
-       started_at, finished_at, created_at`,
-    [...params, input.lockVersion, input.workerId],
-  );
-  const row = result.rows[0];
-  if (!row) {
-    const existingResult = await pool.query<WorkflowStepRunRow>(
+  return withTransaction(async (client) => {
+    // The enrollment lease serializes attempts for one logical node. Locking
+    // the row here also makes the max(attempt)+1 calculation safe if a stale
+    // worker and a recovery worker overlap during lease reclamation.
+    const leaseResult = await client.query<{ id: string }>(
+      `SELECT id
+       FROM workflow_enrollments
+       WHERE id = $1 AND lock_version = $2 AND locked_by = $3
+       FOR UPDATE`,
+      [input.enrollmentId, input.lockVersion, input.workerId],
+    );
+    if (!leaseResult.rows[0]) {
+      throw new AppError('Workflow lease lost before recording step run', 409);
+    }
+
+    const existingResult = await client.query<WorkflowStepRunRow>(
       `SELECT id, enrollment_id, node_id, node_type, status, attempt,
          idempotency_key, job_id, input, result, error_code, error_message,
          started_at, finished_at, created_at
        FROM workflow_step_runs
-       WHERE idempotency_key = $1`,
-      [input.idempotencyKey],
+       WHERE enrollment_id = $1
+         AND node_id = $2
+         AND status IN ('queued', 'running', 'succeeded', 'waiting', 'skipped')
+       ORDER BY attempt DESC, created_at DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [input.enrollmentId, input.nodeId],
     );
-    if (existingResult.rows[0]) return existingResult.rows[0];
-  }
-  if (!row) throw new AppError('Failed to record workflow step run', 500);
-  return row;
+    const existing = existingResult.rows[0];
+    if (existing) {
+      // A reclaimed job continues the same logical attempt. Refreshing the
+      // job ID keeps the run history tied to the worker that owns the lease.
+      if (input.jobId && existing.status === 'running' && existing.job_id !== input.jobId) {
+        const updatedResult = await client.query<WorkflowStepRunRow>(
+          `UPDATE workflow_step_runs
+           SET job_id = $2
+           WHERE id = $1
+           RETURNING id, enrollment_id, node_id, node_type, status, attempt,
+             idempotency_key, job_id, input, result, error_code, error_message,
+             started_at, finished_at, created_at`,
+          [existing.id, input.jobId],
+        );
+        return updatedResult.rows[0] ?? existing;
+      }
+      return existing;
+    }
+
+    const attemptResult = await client.query<{ attempt: number }>(
+      `SELECT COALESCE(MAX(attempt), 0) + 1 AS attempt
+       FROM workflow_step_runs
+       WHERE enrollment_id = $1 AND node_id = $2`,
+      [input.enrollmentId, input.nodeId],
+    );
+    const nextAttempt = Number(attemptResult.rows[0]?.attempt ?? 1);
+    const attempt = Math.max(input.attempt ?? 1, nextAttempt);
+    const result = await client.query<WorkflowStepRunRow>(
+      `INSERT INTO workflow_step_runs
+         (enrollment_id, node_id, node_type, status, attempt,
+          idempotency_key, job_id, input, started_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
+       RETURNING id, enrollment_id, node_id, node_type, status, attempt,
+         idempotency_key, job_id, input, result, error_code, error_message,
+         started_at, finished_at, created_at`,
+      [
+        input.enrollmentId,
+        input.nodeId,
+        input.nodeType,
+        input.status ?? 'running',
+        attempt,
+        input.idempotencyKey,
+        input.jobId ?? null,
+        input.input ? JSON.stringify(input.input) : null,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) throw new AppError('Failed to record workflow step run', 500);
+    return row;
+  });
 }
 
 export async function finishStepRun(input: {
@@ -615,6 +658,26 @@ export async function advanceEnrollment(input: {
   return result.rows[0] ?? null;
 }
 
+/** Reopens a failed enrollment at its current node for an operator-approved replay. */
+export async function replayFailedEnrollment(
+  id: string,
+  now = new Date().toISOString(),
+): Promise<WorkflowEnrollmentRow | null> {
+  const result = await pool.query<WorkflowEnrollmentRow>(
+    `UPDATE workflow_enrollments
+     SET status = 'active', next_run_at = $2::timestamptz, last_error = NULL,
+         finished_at = NULL, locked_at = NULL, locked_by = NULL,
+         lock_version = lock_version + 1, updated_at = NOW()
+     WHERE id = $1 AND status = 'failed'
+     RETURNING id, workflow_id, workflow_version_id, lead_id, status,
+       current_node_id, trigger_event_id, trigger_event_type, context,
+       next_run_at, lock_version, locked_at, locked_by, last_error,
+       enrolled_at, finished_at, updated_at`,
+    [id, now],
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function findEnrollmentTimeline(
   enrollmentId: string,
   limit = 100,
@@ -628,7 +691,7 @@ export async function findEnrollmentTimeline(
        started_at, finished_at, created_at
      FROM workflow_step_runs
      WHERE enrollment_id = $1
-     ORDER BY created_at DESC
+     ORDER BY created_at DESC, attempt DESC
      LIMIT $2`,
     [enrollmentId, limit],
   );

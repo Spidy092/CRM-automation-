@@ -8,6 +8,7 @@ import {
   listWorkflows,
   pauseWorkflow,
   publishWorkflow,
+  replayWorkflowEnrollment,
   resumeWorkflow,
   validateWorkflow,
 } from './workflow.service';
@@ -97,6 +98,18 @@ export async function resumeWorkflowHandler(
 ): Promise<void> {
   try {
     sendSuccess(res, await resumeWorkflow(workflowIdFromReq(req), actorFromReq(req)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function replayWorkflowEnrollmentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    sendSuccess(res, await replayWorkflowEnrollment(workflowIdFromReq(req), actorFromReq(req)));
   } catch (err) {
     next(err);
   }

@@ -26,7 +26,7 @@ jest.mock('../shared/utils/metrics', () => ({
 }));
 
 jest.mock('../shared/utils/logger', () => ({
-  logger: { info: jest.fn(), error: jest.fn() },
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 jest.mock('../shared/utils/sentry', () => ({
@@ -246,6 +246,77 @@ describe('workflow worker', () => {
           changed: true,
           details: { tag: 'priority' },
         },
+      }),
+    );
+  });
+
+  it('records a transient action failure and releases the lease for retry', async () => {
+    mockExecuteAction.mockRejectedValueOnce(new Error('temporary CRM dependency failure'));
+    mockFindExecution.mockResolvedValueOnce({
+      enrollment: { ...baseEnrollment },
+      workflow_status: 'published',
+      workflow_created_by: 'manager-1',
+      workflow_created_by_role: 'manager',
+      definition: {
+        name: 'Retry workflow',
+        entryNodeId: 'trigger',
+        nodes: [
+          { id: 'trigger', type: 'trigger', trigger: { event: 'lead.created' }, next: ['action'] },
+          {
+            id: 'action',
+            type: 'action',
+            action: { type: 'lead.add_tag', input: { tag: 'priority' } },
+            next: ['end'],
+          },
+          { id: 'end', type: 'end', next: [] },
+        ],
+      },
+    });
+
+    const result = await executeWorkflowEnrollment('enrollment-1', 'worker-1', 'job-1');
+
+    expect(result).toEqual({ status: 'retry_scheduled', processedNodes: 2 });
+    expect(mockFinishAndAdvance).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        stepStatus: 'failed',
+        enrollmentStatus: 'active',
+        currentNodeId: 'action',
+        nextRunAt: expect.any(String),
+        releaseLock: true,
+        errorCode: 'ACTION_EXECUTION_FAILED',
+      }),
+    );
+  });
+
+  it('continues long workflows in a later job after the per-job node budget', async () => {
+    const chain = Array.from({ length: 21 }, (_, index) => `goal-${index}`);
+    mockFindExecution.mockResolvedValueOnce({
+      enrollment: { ...baseEnrollment },
+      workflow_status: 'published',
+      definition: {
+        name: 'Long workflow',
+        entryNodeId: 'trigger',
+        nodes: [
+          { id: 'trigger', type: 'trigger', trigger: { event: 'lead.created' }, next: [chain[0]] },
+          ...chain.map((id, index) => ({
+            id,
+            type: 'goal' as const,
+            goal: { field: 'score', operator: 'gte' as const, value: 1000 },
+            next: [chain[index + 1] ?? 'end'],
+          })),
+          { id: 'end', type: 'end', next: [] },
+        ],
+      },
+    });
+
+    const result = await executeWorkflowEnrollment('enrollment-1', 'worker-1', 'job-1');
+
+    expect(result).toEqual({ status: 'continued', processedNodes: 20 });
+    expect(mockAdvance).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        currentNodeId: 'goal-19',
+        status: 'active',
+        releaseLock: true,
       }),
     );
   });

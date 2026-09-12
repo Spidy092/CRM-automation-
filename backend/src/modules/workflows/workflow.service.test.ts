@@ -3,7 +3,12 @@ jest.mock('./workflow.repository', () => ({
   findWorkflows: jest.fn(),
   insertWorkflow: jest.fn(),
   publishWorkflow: jest.fn(),
+  replayFailedEnrollment: jest.fn(),
   updateWorkflowStatus: jest.fn(),
+}));
+
+jest.mock('../../workers/queue', () => ({
+  enqueueWorkflowExecution: jest.fn(),
 }));
 
 jest.mock('../../shared/utils/audit', () => ({
@@ -13,12 +18,14 @@ jest.mock('../../shared/utils/audit', () => ({
 import { AppError } from '../../shared/middleware/errorHandler';
 import * as repository from './workflow.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { enqueueWorkflowExecution } from '../../workers/queue';
 import {
   createWorkflow,
   getWorkflow,
   listWorkflows,
   pauseWorkflow,
   publishWorkflow,
+  replayWorkflowEnrollment,
   resumeWorkflow,
 } from './workflow.service';
 import type { WorkflowDetail } from './workflow.types';
@@ -60,6 +67,7 @@ const workflow: WorkflowDetail = {
 
 const mockedRepository = repository as jest.Mocked<typeof repository>;
 const mockedAudit = writeAuditLog as jest.MockedFunction<typeof writeAuditLog>;
+const mockedEnqueue = enqueueWorkflowExecution as jest.MockedFunction<typeof enqueueWorkflowExecution>;
 
 describe('workflow service', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -149,6 +157,45 @@ describe('workflow service', () => {
     expect(mockedRepository.updateWorkflowStatus).toHaveBeenCalledWith('workflow-1', 'published');
     expect(mockedAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'workflow.resumed' }),
+    );
+  });
+
+  it('replays a failed workflow run from its current node', async () => {
+    const replayed = {
+      id: 'enrollment-1',
+      workflow_id: 'workflow-1',
+      workflow_version_id: 'version-1',
+      lead_id: 'lead-1',
+      status: 'active' as const,
+      current_node_id: 'action',
+      trigger_event_id: 'event-1',
+      trigger_event_type: 'lead.created',
+      context: {},
+      next_run_at: 'now',
+      lock_version: 4,
+      locked_at: null,
+      locked_by: null,
+      last_error: null,
+      enrolled_at: 'now',
+      finished_at: null,
+      updated_at: 'now',
+    };
+    mockedRepository.replayFailedEnrollment.mockResolvedValueOnce(replayed);
+    mockedEnqueue.mockResolvedValueOnce(undefined);
+
+    await expect(
+      replayWorkflowEnrollment('enrollment-1', {
+        id: 'user-1',
+        ipAddress: '127.0.0.1',
+      }),
+    ).resolves.toEqual(replayed);
+
+    expect(mockedEnqueue).toHaveBeenCalledWith(
+      { enrollmentId: 'enrollment-1' },
+      { jobIdSuffix: 'replay-4' },
+    );
+    expect(mockedAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'workflow.enrollment_replayed' }),
     );
   });
 
