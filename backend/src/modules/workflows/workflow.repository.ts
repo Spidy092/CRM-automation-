@@ -678,6 +678,7 @@ export async function replayFailedEnrollment(
   return result.rows[0] ?? null;
 }
 
+/** Retrieves execution history timeline of step runs for a workflow enrollment. */
 export async function findEnrollmentTimeline(
   enrollmentId: string,
   limit = 100,

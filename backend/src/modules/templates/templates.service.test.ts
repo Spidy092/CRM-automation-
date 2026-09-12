@@ -364,6 +364,17 @@ describe('addTemplateAttachment', () => {
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
+  it('rejects an extension that does not match declared mime type', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(baseRow);
+    await expect(
+      addTemplateAttachment(
+        baseRow.id,
+        { ...file, originalname: 'exploit.html', mimetype: 'image/png' },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
   it('rejects once the per-template attachment limit is reached', async () => {
     const full: TemplateRow = {
       ...baseRow,

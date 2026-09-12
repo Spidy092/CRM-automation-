@@ -199,6 +199,41 @@ describe('workflow service', () => {
     );
   });
 
+  it('still audits and returns replayed enrollment when enqueueing fails', async () => {
+    const replayed = {
+      id: 'enrollment-2',
+      workflow_id: 'workflow-1',
+      workflow_version_id: 'version-1',
+      lead_id: 'lead-1',
+      status: 'active' as const,
+      current_node_id: 'action',
+      trigger_event_id: 'event-1',
+      trigger_event_type: 'lead.created',
+      context: {},
+      next_run_at: 'now',
+      lock_version: 5,
+      locked_at: null,
+      locked_by: null,
+      last_error: null,
+      enrolled_at: 'now',
+      finished_at: null,
+      updated_at: 'now',
+    };
+    mockedRepository.replayFailedEnrollment.mockResolvedValueOnce(replayed);
+    mockedEnqueue.mockRejectedValueOnce(new Error('Redis connection down'));
+
+    await expect(
+      replayWorkflowEnrollment('enrollment-2', {
+        id: 'user-1',
+        ipAddress: '127.0.0.1',
+      }),
+    ).resolves.toEqual(replayed);
+
+    expect(mockedAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'workflow.enrollment_replayed' }),
+    );
+  });
+
   it('keeps AppError available for consumers without leaking raw repository errors', () => {
     expect(new AppError('test', 422).statusCode).toBe(422);
   });
