@@ -4,6 +4,7 @@ import { renderWithProviders } from '@/lib/test-utils';
 import { CampaignBriefPage } from '../CampaignBriefPage';
 
 const mockUseBrief = vi.fn();
+const mockGenerateMutateAsync = vi.fn();
 const mockApproveMutateAsync = vi.fn();
 const mockRejectMutateAsync = vi.fn();
 
@@ -14,6 +15,7 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('@/api/aiCampaignBrain', () => ({
   useCampaignBrief: () => mockUseBrief(),
+  useGenerateCampaignBrief: () => ({ mutateAsync: mockGenerateMutateAsync, isPending: false }),
   useApproveBrief: () => ({ mutateAsync: mockApproveMutateAsync, isPending: false }),
   useRejectBrief: () => ({ mutateAsync: mockRejectMutateAsync, isPending: false }),
 }));
@@ -46,6 +48,7 @@ const fakeBrief = {
 describe('CampaignBriefPage', () => {
   beforeEach(() => {
     mockUseBrief.mockReset();
+    mockGenerateMutateAsync.mockReset();
     mockApproveMutateAsync.mockReset();
     mockRejectMutateAsync.mockReset();
   });
@@ -62,6 +65,18 @@ describe('CampaignBriefPage', () => {
     mockUseBrief.mockReturnValue({ data: null, isLoading: false, error: null });
     renderWithProviders(<CampaignBriefPage />);
     expect(screen.getByText(/No brief generated yet/i)).toBeInTheDocument();
+  });
+
+  it('generates a brief when the user clicks Generate AI Brief', async () => {
+    mockUseBrief.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockGenerateMutateAsync.mockResolvedValue(fakeBrief);
+    renderWithProviders(<CampaignBriefPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Generate AI Brief/i }));
+
+    await waitFor(() => {
+      expect(mockGenerateMutateAsync).toHaveBeenCalledOnce();
+    });
   });
 
   it('shows loading state', () => {

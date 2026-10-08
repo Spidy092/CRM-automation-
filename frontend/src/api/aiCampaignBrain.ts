@@ -55,6 +55,21 @@ export const useCampaignBrief = (campaignId: string) => {
   });
 };
 
+export const useGenerateCampaignBrief = (campaignId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<CampaignBrief> => {
+      const { data } = await api.post<{ data: CampaignBrief }>(
+        `/ai-campaign-brain/campaigns/${campaignId}/brief/generate`,
+      );
+      return data.data;
+    },
+    onSuccess: (brief) => {
+      queryClient.setQueryData(['campaign-brief', campaignId], brief);
+    },
+  });
+};
+
 export const useApproveBrief = (campaignId: string) => {
   const queryClient = useQueryClient();
   return useMutation({

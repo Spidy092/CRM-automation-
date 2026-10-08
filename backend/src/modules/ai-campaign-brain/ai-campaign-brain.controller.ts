@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { campaignIdParamSchema } from './ai-campaign-brain.schema';
 import {
   getCampaignBrief,
+  generateCampaignBrief,
   approveCampaignBrief,
   rejectCampaignBrief,
 } from './ai-campaign-brain.service';
@@ -20,6 +21,34 @@ export async function getBrief(req: Request, res: Response, next: NextFunction):
     res.json(successResponse(brief));
   } catch (err) {
     next(err);
+  }
+}
+
+/** POST /ai-campaign-brain/campaigns/:campaignId/brief/generate */
+export async function generateBrief(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignIdParamSchema.safeParse(req.params);
+    if (!params.success) throw new AppError(params.error.message, 400);
+
+    const brief = await generateCampaignBrief(params.data.campaignId, req.user!.id);
+    res.status(201).json(successResponse(brief));
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('AI not configured')) {
+      next(
+        new AppError(
+          'Enable the AI engine and configure an API key in Settings before generating a brief.',
+          422,
+        ),
+      );
+    } else if (err instanceof Error && err.message.includes('Campaign not found')) {
+      next(new AppError(err.message, 404));
+    } else {
+      next(err);
+    }
   }
 }
 

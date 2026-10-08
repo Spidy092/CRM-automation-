@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
-import { getBrief, approveBriefHandler, rejectBriefHandler } from './ai-campaign-brain.controller';
+import {
+  getBrief,
+  generateBrief,
+  approveBriefHandler,
+  rejectBriefHandler,
+} from './ai-campaign-brain.controller';
 import { wrap as asyncHandler } from '../../shared/utils/asyncHandler';
 
 const router = Router();
@@ -12,6 +17,14 @@ router.get(
   asyncHandler(authenticate),
   authorize('admin', 'manager', 'marketing', 'sales', 'viewer'),
   asyncHandler(getBrief),
+);
+
+// Generate a campaign brief — managers and admins only
+router.post(
+  '/campaigns/:campaignId/brief/generate',
+  asyncHandler(authenticate),
+  authorize('admin', 'manager'),
+  asyncHandler(generateBrief),
 );
 
 // Approve / reject a brief — managers and admins only

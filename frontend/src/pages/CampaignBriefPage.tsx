@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import {
   useCampaignBrief,
+  useGenerateCampaignBrief,
   useApproveBrief,
   useRejectBrief,
   type BriefStatus,
@@ -13,6 +14,7 @@ import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import {
   ArrowLeft,
   FileText,
@@ -21,6 +23,7 @@ import {
   X,
   ShieldQuestion,
   Play,
+  Sparkles,
 } from 'lucide-react';
 
 const statusTones: Record<BriefStatus, StatusTone> = {
@@ -34,6 +37,7 @@ export function CampaignBriefPage() {
   const campaignId = id!;
   const { showToast } = useToast();
   const { data: brief, isLoading, error } = useCampaignBrief(campaignId);
+  const generate = useGenerateCampaignBrief(campaignId);
   const approve = useApproveBrief(campaignId);
   const reject = useRejectBrief(campaignId);
 
@@ -43,6 +47,18 @@ export function CampaignBriefPage() {
       showToast('Brief approved.', 'success');
     } catch {
       showToast('Failed to approve brief.', 'error');
+    }
+  };
+
+  const handleGenerate = async (): Promise<void> => {
+    try {
+      await generate.mutateAsync();
+      showToast('AI campaign brief generated.', 'success');
+    } catch (error) {
+      showToast(
+        getApiErrorMessage(error, 'Could not generate the campaign brief.'),
+        'error',
+      );
     }
   };
 
@@ -105,7 +121,13 @@ export function CampaignBriefPage() {
         <EmptyState
           icon={<FileText className="h-6 w-6" />}
           title="No brief generated yet"
-          description="The AI generates a strategy brief before launch. Trigger generation from the campaign, then review it here."
+          description="Generate a strategy brief to review the campaign’s audience fit, offer angle, and risks. AI must be enabled with a valid API key in Settings."
+          action={
+            <Button onClick={handleGenerate} disabled={generate.isPending}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              {generate.isPending ? 'Generating…' : 'Generate AI Brief'}
+            </Button>
+          }
         />
       )}
 
