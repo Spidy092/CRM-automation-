@@ -288,6 +288,43 @@ describe('CampaignsPage', () => {
     expect(screen.getByText('Skipped')).toBeInTheDocument();
   });
 
+  it('blocks launching and links to integrations when the sending provider is disconnected', async () => {
+    vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
+      if (url === '/campaigns') return { data: { success: true, data: [makeCampaign({ id: 'c1', status: 'draft' })] } };
+      if (url === '/campaigns/c1/automation-preview') {
+        return {
+          data: {
+            success: true,
+            data: {
+              campaignId: 'c1',
+              sequenceId: 'seq-1',
+              firstStep: { stepNumber: 1, channel: 'email', templateId: 'template-1', delayHours: 0 },
+              eligibleLeads: [],
+              skippedLeads: [],
+              templateIssues: [],
+              connectorIssues: ['No ready connector configured for email.'],
+              expectedJobs: 0,
+              mockMode: false,
+            },
+          },
+        };
+      }
+      return { data: { success: true, data: null } };
+    });
+    renderWithProviders(<CampaignsPage />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Launch$/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Launch$/i }));
+
+    const launchButton = await screen.findByRole('button', { name: 'Fix setup to launch' });
+    expect(launchButton).toBeDisabled();
+    expect(screen.getByText('This campaign will not start until its setup issues are fixed.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Connect and test a sending provider' })).toHaveAttribute(
+      'href',
+      '/settings/integrations',
+    );
+  });
+
   it('closes launch preview modal on Escape key', async () => {
     vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
       if (url === '/campaigns') return { data: { success: true, data: [makeCampaign({ id: 'c1', status: 'draft' })] } };

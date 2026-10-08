@@ -270,7 +270,7 @@ async function buildAutomationPreview(campaign: Campaign, mockMode = false): Pro
           if (names.length === 0) continue;
           const integrations = await Promise.all(names.map((name) => findIntegrationByName(name)));
           const ready = integrations.some(
-            (integration) => integration?.is_enabled && integration.last_test_status !== 'failed',
+            (integration) => integration?.is_enabled && integration.last_test_status === 'ok',
           );
           if (!ready) {
             connectorIssues.push(`No ready connector configured for ${channel}.`);
@@ -353,6 +353,13 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   }
 
   const preview = await buildAutomationPreview(existing, false);
+  const readinessIssues = [...preview.templateIssues, ...preview.connectorIssues];
+  if (readinessIssues.length > 0) {
+    throw new ValidationError(
+      `Campaign is not ready to launch. ${readinessIssues.join(' ')}`,
+    );
+  }
+
   const launched = await launchCampaign(id);
   let enqueued = 0;
 
