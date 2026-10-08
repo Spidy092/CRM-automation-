@@ -58,5 +58,25 @@ describe('WorkflowBuilderPage', () => {
     expect(mutateValidate).toHaveBeenCalledTimes(1);
     expect(mutateCreate.mock.calls[0][0].name).toBe('Save me');
   });
+
+  it('shows real-time JSON validation feedback and supports resetting template', async () => {
+    renderWithProviders(<WorkflowBuilderPage />);
+    expect(screen.getByText(/Valid JSON payload/i)).toBeInTheDocument();
+
+    const jsonInput = screen.getByLabelText('Action input JSON');
+    fireEvent.change(jsonInput, { target: { value: '{"tag":' } });
+    expect(screen.getByText(/Syntax issue:/i)).toBeInTheDocument();
+
+    const resetButton = screen.getByRole('button', { name: /reset to template/i });
+    fireEvent.click(resetButton);
+    expect(screen.getByText(/Valid JSON payload/i)).toBeInTheDocument();
+  });
+
+  it('allows applying quick tag buttons for tag actions', async () => {
+    renderWithProviders(<WorkflowBuilderPage />);
+    const hotLeadTagButton = screen.getByRole('button', { name: '+hot-lead' });
+    fireEvent.click(hotLeadTagButton);
+    expect(screen.getByLabelText('Action input JSON')).toHaveValue('{"tag":"hot-lead"}');
+  });
 });
 
