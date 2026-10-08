@@ -6,6 +6,8 @@ Simplify the work users must understand before completing a task. The strongest 
 
 This review combines direct source inspection and an independent GPT-6 Luna assessment. It is a product review, not a runtime usability test. Recommendations are proposals, not measured improvements.
 
+Implementation note (8 October 2026): the observations below describe the initial review snapshot. The accompanying changes reduce campaign setup to Basics → Messages → Leads → Review & Launch, place automatic enrollment in optional settings, add a PDF “View portfolio” button to email templates, and allow a shared tag to be appended to selected leads without replacing existing tags. The select-all checkbox covers the current page. These changes do not establish live email delivery or measured usability improvements; the broader proposals below remain proposals.
+
 ## What I Found
 
 The code supports a practical sales journey: capture or import a lead, identify who needs attention, contact them, record the result, schedule follow-up, and manage their pipeline stage. It also supports a marketing journey: choose an audience, configure messages, review readiness, launch, and handle resulting tasks.
