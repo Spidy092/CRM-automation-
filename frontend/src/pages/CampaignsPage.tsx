@@ -182,6 +182,21 @@ export function CampaignsPage() {
                     {[...preview.templateIssues, ...preview.connectorIssues].map((issue) => (
                       <div key={issue}>{issue}</div>
                     ))}
+                    <p className="mt-2">
+                      This campaign will not start until its setup issues are fixed.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-3 font-medium">
+                      {preview.connectorIssues.length > 0 && (
+                        <Link className="underline" to="/settings/integrations">
+                          Connect and test a sending provider
+                        </Link>
+                      )}
+                      {preview.templateIssues.length > 0 && (
+                        <Link className="underline" to={`/campaigns/${previewCampaignId}/edit`}>
+                          Review campaign sequence
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -200,10 +215,16 @@ export function CampaignsPage() {
                   <Button variant="outline" onClick={() => setPreviewCampaignId(null)}>Cancel</Button>
                   <Button
                     onClick={() => handleLaunch(previewCampaignId)}
-                    disabled={launchCampaign.isPending}
+                    disabled={
+                      launchCampaign.isPending ||
+                      preview.templateIssues.length > 0 ||
+                      preview.connectorIssues.length > 0
+                    }
                   >
                     <Play className="mr-2 h-4 w-4" />
-                    Launch {preview.eligibleLeads.length}
+                    {preview.templateIssues.length > 0 || preview.connectorIssues.length > 0
+                      ? 'Fix setup to launch'
+                      : `Launch ${preview.eligibleLeads.length}`}
                   </Button>
                 </div>
               </div>

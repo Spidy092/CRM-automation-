@@ -327,15 +327,17 @@ export function useAddLeadsToCampaign() {
 
   return useMutation({
     mutationFn: async ({ campaignId, leadIds }: { campaignId: string; leadIds: string[] }) => {
-      const response = await apiClient.post<ApiResponse<{ added: number }>>(
+      const response = await apiClient.post<ApiResponse<{ added: number; enqueued: number }>>(
         `/campaigns/${campaignId}/leads`,
         { lead_ids: leadIds }
       );
       return response.data.data;
     },
     onSuccess: (_, { campaignId }) => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId] });
       queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'stats'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'leads'] });
     },
   });
 }

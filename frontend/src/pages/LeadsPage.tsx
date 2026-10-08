@@ -539,8 +539,18 @@ export function LeadsPage() {
     if (!selectedCampaign) return;
     const ids = Array.from(selected);
     try {
-      await addLeadsToCampaign.mutateAsync({ campaignId: selectedCampaign, leadIds: ids });
-      showToast(`${ids.length} leads added to campaign.`, 'success');
+      const result = await addLeadsToCampaign.mutateAsync({ campaignId: selectedCampaign, leadIds: ids });
+      const selectedCampaignRecord = campaigns?.find((campaign) => campaign.id === selectedCampaign);
+      if (selectedCampaignRecord?.status === 'active') {
+        showToast(
+          result.enqueued > 0
+            ? `${result.added} leads added; ${result.enqueued} first messages queued.`
+            : `${result.added} leads added, but no messages were queued. Check their email addresses and sequence.`,
+          result.enqueued > 0 ? 'success' : 'error',
+        );
+      } else {
+        showToast(`${result.added} leads added to campaign.`, 'success');
+      }
       setSelected(new Set());
       setSelectedCampaign('');
     } catch (error) {
