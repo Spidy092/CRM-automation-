@@ -140,14 +140,31 @@ describe('personalizeMessage', () => {
     const result = await personalizeMessage(leadFixture(), { ...templateFixture(), body: `Hello school\n${button}` });
     expect(result.message).toBe(`Personalized greeting\n\n${button}`);
     expect(mockCreate.mock.calls[0][0].messages[1].content).not.toContain(button);
-    expect(mockRedisSetex).toHaveBeenCalledWith('ai:msg:lead-1:tmpl-1', expect.any(Number), 'Personalized greeting');
+    expect(mockRedisGet).toHaveBeenCalledWith(expect.stringContaining(':portfolio-v1'));
+  });
+
+  it('keeps the button in its HTML position when its attributes are reordered', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test';
+    mockRedisGet.mockResolvedValue(null);
+    const mockCreate = jest.fn().mockResolvedValue({
+      choices: [{ message: { content: '<html><body><p>Hello CRM_PORTFOLIO_BUTTON_0</p></body></html>' } }],
+      usage: { total_tokens: 10 },
+    });
+    MockedOpenAI.mockImplementation(() => ({ chat: { completions: { create: mockCreate } } }));
+    const button = '<a href="https://files.example.com/p.pdf" data-crm-portfolio="true">View portfolio</a>';
+    const template = { ...templateFixture(), body: `<html><body><p>Hello ${button}</p></body></html>` };
+
+    const result = await personalizeMessage(leadFixture(), template);
+
+    expect(result.message).toBe(`<html><body><p>Hello ${button}</p></body></html>`);
+    expect(mockCreate.mock.calls[0][0].messages[1].content).not.toContain('https://files.example.com/p.pdf');
   });
 
   test('preserves the portfolio button with AI disabled and with a cached message', async () => {
     const button = '<a data-crm-portfolio="true" href="https://files.example.com/p.pdf">View portfolio</a>';
     const template = { ...templateFixture(), body: `Hi {{contact_name}}\n${button}` };
     const plain = await personalizeMessage(leadFixture(), template, { enabled: false });
-    expect(plain.message).toBe(`Hi Alice\n\n${button}`);
+    expect(plain.message).toBe(`Hi Alice\n${button}`);
     mockRedisGet.mockResolvedValue('Cached greeting');
     const cached = await personalizeMessage(leadFixture(), template);
     expect(cached.message).toBe(`Cached greeting\n\n${button}`);

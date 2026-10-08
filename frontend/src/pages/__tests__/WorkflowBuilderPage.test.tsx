@@ -72,6 +72,12 @@ describe('WorkflowBuilderPage', () => {
     expect(screen.getByText(/Valid JSON payload/i)).toBeInTheDocument();
   });
 
+  it('uses the workflow parser for real-time action input validation', () => {
+    renderWithProviders(<WorkflowBuilderPage />);
+    fireEvent.change(screen.getByLabelText('Action input JSON'), { target: { value: '{"tag":{}}' } });
+    expect(screen.getByText(/Action input “tag” must be a scalar or scalar array/i)).toBeInTheDocument();
+  });
+
   it('allows applying quick tag buttons for tag actions', async () => {
     renderWithProviders(<WorkflowBuilderPage />);
     const hotLeadTagButton = screen.getByRole('button', { name: '+hot-lead' });
@@ -79,4 +85,3 @@ describe('WorkflowBuilderPage', () => {
     expect(screen.getByLabelText('Action input JSON')).toHaveValue('{"tag":"hot-lead"}');
   });
 });
-

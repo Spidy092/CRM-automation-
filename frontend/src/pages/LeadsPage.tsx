@@ -436,6 +436,10 @@ export function LeadsPage() {
     setSelected(new Set());
   }, [filterSignature, prefs.pageSize, prefs.sortBy, prefs.sortDir]);
 
+  useEffect(() => {
+    setSelected(new Set());
+  }, [page]);
+
   const { data, isLoading, isFetching, error, refetch } = useLeadsTable({
     ...apiFilters,
     limit: prefs.pageSize,

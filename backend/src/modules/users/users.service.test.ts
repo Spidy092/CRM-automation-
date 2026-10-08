@@ -16,6 +16,11 @@ jest.mock('../auth/auth.repository', () => ({
 jest.mock('bcrypt', () => ({ hash: jest.fn(), compare: jest.fn() }));
 jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid-v4') }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('../../shared/utils/db', () => ({
+  withTransaction: jest.fn(async (callback: (client: unknown) => Promise<unknown>) =>
+    callback({ query: jest.fn() }),
+  ),
+}));
 
 import bcrypt from 'bcrypt';
 import { createUser, listUsers, getUser, updateProfile, updatePermissions, changePassword } from './users.service';
@@ -31,6 +36,8 @@ import * as authRepository from '../auth/auth.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { User } from './users.types';
 import { AuthenticatedUser } from '../../shared/types';
+import { withTransaction } from '../../shared/utils/db';
+import type { PoolClient } from 'pg';
 
 const adminUser: AuthenticatedUser = {
   id: 'admin-1',
@@ -320,8 +327,36 @@ describe('changePassword', () => {
 
     await changePassword('sales-1', 'OldPw123', 'NewPw123', salesUser);
 
-    expect(authRepository.updatePasswordHash).toHaveBeenCalledWith('sales-1', 'hashed-new');
-    expect(authRepository.revokeAllRefreshTokensForUser).toHaveBeenCalledWith('sales-1');
+    expect(withTransaction).toHaveBeenCalledTimes(1);
+    expect(authRepository.updatePasswordHash).toHaveBeenCalledWith('sales-1', 'hashed-new', expect.any(Object));
+    expect(authRepository.revokeAllRefreshTokensForUser).toHaveBeenCalledWith('sales-1', expect.any(Object));
+  });
+
+  it('does not leave a changed password when refresh-token revocation fails inside the transaction', async () => {
+    (authRepository.findUserById as jest.Mock<any>).mockResolvedValue({
+      id: 'sales-1',
+      password_hash: 'hashed-old',
+    });
+    (bcrypt.compare as jest.Mock<any>).mockResolvedValue(true);
+    (bcrypt.hash as jest.Mock<any>).mockResolvedValue('hashed-new');
+    let rollbackCalled = false;
+    (withTransaction as jest.Mock).mockImplementationOnce(async (...args: unknown[]) => {
+      const callback = args[0] as (client: PoolClient) => Promise<unknown>;
+      const client = { query: jest.fn(async (sql: string) => {
+        if (sql === 'ROLLBACK') rollbackCalled = true;
+        return undefined;
+      }) } as unknown as PoolClient;
+      try {
+        return await callback(client);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    });
+    (authRepository.revokeAllRefreshTokensForUser as jest.Mock<any>).mockRejectedValueOnce(new Error('revoke failed'));
+
+    await expect(changePassword('sales-1', 'OldPw123', 'NewPw123', salesUser)).rejects.toThrow('revoke failed');
+    expect(authRepository.updatePasswordHash).toHaveBeenCalledWith('sales-1', 'hashed-new', expect.any(Object));
+    expect(rollbackCalled).toBe(true);
   });
 });
-

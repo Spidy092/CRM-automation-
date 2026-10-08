@@ -101,4 +101,19 @@ describe('LeadsPage', () => {
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(container).toBeTruthy();
   });
+
+  it('clears selected leads when moving to another page', async () => {
+    const generic = await apiClient.get('/leads');
+    const fixture = generic.data.data[0];
+    vi.mocked(apiClient.get).mockImplementation(async (url) => url === '/leads'
+      ? { data: { success: true, data: [
+          { ...fixture, id: 'lead-1', business_name: 'School One', status: 'active', tags: [] },
+        ], meta: { total: 50, limit: 25, hasMore: true } } }
+      : generic);
+    renderWithProviders(<LeadsPage />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all' }));
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.queryByText('1 selected')).not.toBeInTheDocument());
+  });
 });

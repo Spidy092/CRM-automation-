@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { PoolClient } from 'pg';
 import { pool, queryOne } from '../../shared/utils/db';
 import { UserRecord, ApiKeyListItem, ApiKeyRecordRow } from './auth.types';
 
@@ -52,12 +53,22 @@ export async function revokeRefreshToken(refreshToken: string): Promise<void> {
   await pool.query(`DELETE FROM refresh_tokens WHERE token_hash = $1`, [tokenHash]);
 }
 
-export async function revokeAllRefreshTokensForUser(userId: string): Promise<void> {
-  await pool.query(`DELETE FROM refresh_tokens WHERE user_id = $1`, [userId]);
+export async function revokeAllRefreshTokensForUser(
+  userId: string,
+  client?: PoolClient,
+): Promise<void> {
+  await (client ?? pool).query(`DELETE FROM refresh_tokens WHERE user_id = $1`, [userId]);
 }
 
-export async function updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
-  await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [passwordHash, userId]);
+export async function updatePasswordHash(
+  userId: string,
+  passwordHash: string,
+  client?: PoolClient,
+): Promise<void> {
+  await (client ?? pool).query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [
+    passwordHash,
+    userId,
+  ]);
 }
 
 export async function createApiKey(

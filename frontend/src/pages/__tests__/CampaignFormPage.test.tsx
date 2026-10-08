@@ -29,10 +29,12 @@ describe('CampaignFormPage (wizard)', () => {
   beforeEach(() => {
     vi.mocked(apiClient.get).mockReset();
     vi.mocked(apiClient.post).mockReset();
-    vi.mocked(apiClient.get).mockResolvedValue({ data: { success: true, data: [] } });
+    vi.mocked(apiClient.put).mockReset();
+    vi.mocked(apiClient.get).mockImplementation(async (url) => ({ data: { success: true, data: String(url).includes('automation-preview') ? { templateIssues: [], connectorIssues: [], eligibleLeads: [], skippedLeads: [], expectedJobs: 0 } : [] } }));
     vi.mocked(apiClient.post).mockResolvedValue({
       data: { success: true, data: { id: 'campaign-1', name: 'Q3 Push', steps: [] } },
     });
+    vi.mocked(apiClient.put).mockResolvedValue({ data: { success: true, data: {} } });
   });
 
   it('renders the step indicator with four steps without a required pipeline step', async () => {
@@ -117,6 +119,7 @@ describe('CampaignFormPage (wizard)', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Automatically add future leads' }));
     fireEvent.click(screen.getByLabelText('Google Business / Places'));
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
+    await screen.findByText(/Messages and follow-ups/i);
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
     await screen.findByRole('heading', { name: /Who gets contacted/i });
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/campaigns', expect.objectContaining({ trigger_source: ['google_business'] })));
@@ -125,7 +128,9 @@ describe('CampaignFormPage (wizard)', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Automatically add future leads' }));
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Next$/i })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
+    await screen.findByRole('heading', { name: 'Readiness Check' });
     fireEvent.click(screen.getByRole('button', { name: /Save as draft/i }));
     await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith('/campaigns/campaign-1', expect.objectContaining({ trigger_source: null, trigger_tags: null, pipeline_id: null, trigger_stage_id: null })));
   });
@@ -240,6 +245,31 @@ describe('CampaignFormPage (wizard)', () => {
 
   // ── Step 5: Review ─────────────────────────────────────────────────────
 
+  it('saves a sequence attached after the first draft before checking readiness again', async () => {
+    let savedSequence: string | null = null;
+    const sequence = { id: 'seq-1', name: 'Cold Email', steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }] };
+    vi.mocked(apiClient.get).mockImplementation(async (url) => ({ data: { success: true, data:
+      url === '/outreach/sequences' ? [sequence] : String(url).includes('automation-preview')
+        ? { templateIssues: savedSequence ? [] : ['Campaign has no outreach sequence.'], connectorIssues: [], eligibleLeads: [], skippedLeads: [], expectedJobs: 0 }
+        : [] } }));
+    vi.mocked(apiClient.put).mockImplementation(async (_url, input) => {
+      savedSequence = (input as { sequence_id?: string }).sequence_id ?? null;
+      return { data: { success: true, data: { id: 'campaign-1' } } };
+    });
+    renderWithProviders(<CampaignFormPage />);
+    await fillNameAndNext();
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
+    await screen.findByRole('heading', { name: /Who gets contacted/i });
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
+    await screen.findByText('Campaign has no outreach sequence.');
+    fireEvent.click(screen.getByRole('button', { name: /Choose messages/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Cold Email/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Review & Launch/i }));
+    await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith('/campaigns/campaign-1', expect.objectContaining({ sequence_id: 'seq-1' })));
+    await screen.findByRole('heading', { name: 'Review' });
+    await waitFor(() => expect(screen.queryByText('Campaign has no outreach sequence.')).not.toBeInTheDocument());
+  });
+
   it('shows review summary with campaign details', async () => {
     renderWithProviders(<CampaignFormPage />);
     await fillNameAndNext();
@@ -249,6 +279,7 @@ describe('CampaignFormPage (wizard)', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /Who gets contacted/i })).toBeInTheDocument();
     });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Next$/i })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
 
     await waitFor(() => {
@@ -268,6 +299,7 @@ describe('CampaignFormPage (wizard)', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /Who gets contacted/i })).toBeInTheDocument();
     });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Next$/i })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
 
     await waitFor(() => {
@@ -310,7 +342,7 @@ describe('CampaignFormPage (wizard)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
 
     // Step 5: review + readiness check
-    expect(screen.getByRole('heading', { name: 'Readiness Check' })).toBeInTheDocument();
+    await screen.findByRole('heading', { name: 'Readiness Check' });
     expect(
       screen.queryByRole('button', { name: /Save draft & check readiness/i }),
     ).not.toBeInTheDocument();

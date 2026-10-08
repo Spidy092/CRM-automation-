@@ -87,10 +87,12 @@ function StepIndicator({
   current,
   onSelect,
   maxReached,
+  disabled,
 }: {
   current: number;
   onSelect: (step: number) => void;
   maxReached: number;
+  disabled: boolean;
 }) {
   return (
     <ol className="flex flex-wrap items-center gap-2">
@@ -101,7 +103,7 @@ function StepIndicator({
           <li key={step.title} className="flex items-center gap-2">
             <button
               type="button"
-              disabled={!reachable}
+              disabled={!reachable || disabled}
               onClick={() => onSelect(i)}
               className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
                 state === 'active'
@@ -456,12 +458,7 @@ export function CampaignFormPage() {
    * the user do it — this is the same save `handleLaunch` already performs.
    */
   const handleNext = async () => {
-    const next = step + 1;
-    if (next === LEADS_STEP && !savedCampaignId) {
-      const saved = await handleSave();
-      if (!saved) return;
-    }
-    goTo(next);
+    await handleStepChange(step + 1);
   };
 
   // When pipeline changes, clear trigger stage if it no longer belongs to the new pipeline
@@ -514,6 +511,14 @@ export function CampaignFormPage() {
       showToast(getApiErrorMessage(error, 'Failed to save campaign.'), 'error');
       return null;
     }
+  };
+
+  const handleStepChange = async (next: number): Promise<void> => {
+    if (next >= LEADS_STEP) {
+      const campaignId = await handleSave();
+      if (!campaignId) return;
+    }
+    goTo(next);
   };
 
   const handleLaunch = async () => {
@@ -576,7 +581,7 @@ export function CampaignFormPage() {
         title={isEditMode ? 'Edit Campaign' : 'Create Campaign'}
         description="Choose messages, select your leads, then review and send. Pipeline setup is optional."
       />
-      <StepIndicator current={step} onSelect={goTo} maxReached={maxReached} />
+      <StepIndicator current={step} onSelect={(next) => void handleStepChange(next)} maxReached={maxReached} disabled={isSaving} />
 
       {/* ── Step 1: Basics ─────────────────────────────────────────────────── */}
       {step === 0 && (
@@ -954,7 +959,10 @@ export function CampaignFormPage() {
       {/* ── Step 4: Review & Launch ────────────────────────────────────────── */}
       {/* ── Step 4: Leads ───────────────────────────────────────────────────── */}
       {step === LEADS_STEP && savedCampaignId && (
-        <CampaignLeadPicker campaignId={savedCampaignId} hasTrigger={!!pipelineId} />
+        <CampaignLeadPicker
+          campaignId={savedCampaignId}
+          hasTrigger={automaticEnrollmentEnabled && (!!pipelineId || triggerSource.length > 0 || triggerTags.length > 0)}
+        />
       )}
 
       {step === REVIEW_STEP && (
@@ -1178,7 +1186,9 @@ export function CampaignFormPage() {
                       <Link to="/leads" className="font-medium underline">
                         Leads page
                       </Link>
-                      {pipelineId ? ', or let the pipeline trigger enroll them automatically.' : '.'}
+                      {automaticEnrollmentEnabled && pipelineId
+                        ? ', or let the pipeline trigger enroll them automatically.'
+                        : '.'}
                     </p>
                   )}
                 </>

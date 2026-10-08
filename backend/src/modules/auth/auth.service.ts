@@ -35,9 +35,11 @@ function signAccessToken(payload: JwtPayload): string {
   // its own ms() (string → seconds). Do NOT pre-convert with ms() here — that
   // returns milliseconds, which jsonwebtoken would read as seconds (e.g.
   // ms('15m') = 900000 → ~10.4 days instead of 15 minutes).
+  const configuredTtl = process.env.JWT_ACCESS_EXPIRES_IN ?? '15m';
+  const expiresIn = /^\d+(?:\.\d+)?$/.test(configuredTtl) ? Number(configuredTtl) : configuredTtl;
   const options: jwt.SignOptions = {
     algorithm: 'RS256',
-    expiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',
+    expiresIn,
   };
   return jwt.sign(payload, getPrivateKey(), options);
 }

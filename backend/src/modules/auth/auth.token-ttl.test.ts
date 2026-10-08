@@ -105,4 +105,11 @@ describe('access token TTL (real RS256, no jwt mock)', () => {
     const { exp, iat } = verifyRealToken(accessToken);
     expect(exp - iat).toBe(2 * 60 * 60);
   });
+
+  it('treats unitless numeric configuration as seconds', async () => {
+    process.env.JWT_ACCESS_EXPIRES_IN = '900';
+    const { accessToken } = await login({ email: 'admin@crm.com', password: 'correct' });
+    const { exp, iat } = verifyRealToken(accessToken);
+    expect(exp - iat).toBe(900);
+  });
 });

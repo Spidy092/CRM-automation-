@@ -361,10 +361,7 @@ export function WorkflowBuilderPage() {
 
   const actionJsonState = useMemo(() => {
     try {
-      const parsed = JSON.parse(actionInput);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        return { valid: false, error: 'Must be a JSON object, e.g. {"key": "value"}' };
-      }
+      parseActionInput(actionInput);
       return { valid: true, error: null };
     } catch (err) {
       return { valid: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
