@@ -355,9 +355,7 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   const preview = await buildAutomationPreview(existing, false);
   const readinessIssues = [...preview.templateIssues, ...preview.connectorIssues];
   if (readinessIssues.length > 0) {
-    throw new ValidationError(
-      `Campaign is not ready to launch. ${readinessIssues.join(' ')}`,
-    );
+    throw new ValidationError(`Campaign is not ready to launch. ${readinessIssues.join(' ')}`);
   }
 
   const launched = await launchCampaign(id);
