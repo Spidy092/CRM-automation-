@@ -19,7 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
-import { extractVariables } from '@/lib/templateVars';
+import { buildPortfolioButton, extractVariables, splitPortfolioButton } from '@/lib/templateVars';
 import type { MessageChannel, TemplateAttachment } from '@/types';
 import { ArrowLeft, FileStack, FileText, FolderOpen, Image as ImageIcon, Link as LinkIcon, Paperclip, Save, Trash2, Upload, X } from 'lucide-react';
 
@@ -91,11 +91,14 @@ function PagePickerModal({
 function FileLinkPickerModal({
   onSelect,
   onClose,
+  portfolioOnly = false,
 }: {
   onSelect: (file: LibraryFile) => void;
   onClose: () => void;
+  portfolioOnly?: boolean;
 }) {
-  const { data: files = [], isLoading } = useFiles();
+  const { data: allFiles = [], isLoading, error } = useFiles();
+  const files = portfolioOnly ? allFiles.filter((file) => file.mime_type === 'application/pdf') : allFiles;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -104,15 +107,17 @@ function FileLinkPickerModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Insert Library File Link</h3>
-          <Button variant="ghost" size="icon" onClick={onClose}>
+          <h3 className="text-sm font-semibold text-slate-900">{portfolioOnly ? 'Choose your portfolio PDF' : 'Insert Library File Link'}</h3>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close file picker">
             <X className="h-4 w-4" />
           </Button>
         </div>
         {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        {!isLoading && files.length === 0 && (
+        {error && <p role="alert" className="text-sm text-red-600">Could not load files. Close this picker and try again.</p>}
+        {!isLoading && !error && files.length === 0 && (
           <p className="text-sm text-slate-500">
-            No files in library. Upload files in Content &gt; Files first.
+            {portfolioOnly ? 'Upload your portfolio PDF to the Files library, then choose it here.' : 'No files in library. Upload files in Content > Files first.'}
+            {' '}<Link to="/files" target="_blank" rel="noopener noreferrer" className="underline">Open Files library (new tab)</Link>
           </p>
         )}
         <div className="space-y-2">
@@ -347,6 +352,7 @@ export function TemplateFormPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showPagePicker, setShowPagePicker] = useState(false);
   const [showFilePicker, setShowFilePicker] = useState(false);
+  const [portfolioPicker, setPortfolioPicker] = useState(false);
 
   useEffect(() => {
     if (existing) {
@@ -366,11 +372,22 @@ export function TemplateFormPage() {
 
   const handleInsertFileLink = (file: LibraryFile) => {
     setShowFilePicker(false);
+    if (portfolioPicker) {
+      try {
+        const button = buildPortfolioButton(file.url);
+        setBody((prev) => `${splitPortfolioButton(prev).text}\n\n${button}`.trim());
+        showToast('View portfolio button added. Save the template to keep it.', 'success');
+      } catch (error) {
+        showToast(getApiErrorMessage(error, 'Could not add this portfolio link.'), 'error');
+      }
+      return;
+    }
     setBody((prev) => (prev ? `${prev}\n${file.url}` : file.url));
     showToast('File URL inserted into body text.', 'success');
   };
 
   const detectedVars = extractVariables(body);
+  const portfolioPreview = splitPortfolioButton(body);
 
   function validate(): boolean {
     const errs: Record<string, string> = {};
@@ -447,7 +464,13 @@ export function TemplateFormPage() {
               <select
                 id="channel"
                 value={channel}
-                onChange={(e) => setChannel(e.target.value as MessageChannel)}
+                onChange={(e) => {
+                  const nextChannel = e.target.value as MessageChannel;
+                  if (nextChannel !== 'email' && portfolioPreview.url) {
+                    setBody(`${portfolioPreview.text}\n\nView portfolio: ${portfolioPreview.url}`.trim());
+                  }
+                  setChannel(nextChannel);
+                }}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="email">✉️ Email</option>
@@ -489,11 +512,17 @@ export function TemplateFormPage() {
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => setShowFilePicker(true)}
+                    onClick={() => { setPortfolioPicker(false); setShowFilePicker(true); }}
                   >
                     <LinkIcon className="mr-1 h-3.5 w-3.5 text-blue-600" />
                     Insert File Link
                   </Button>
+                  {channel === 'email' && (
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs"
+                      onClick={() => { setPortfolioPicker(true); setShowFilePicker(true); }}>
+                      Add portfolio button
+                    </Button>
+                  )}
                 </div>
               </div>
               <p className="text-xs text-slate-500">
@@ -503,12 +532,26 @@ export function TemplateFormPage() {
               </p>
               <Textarea
                 id="body"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
+                value={portfolioPreview.url ? portfolioPreview.text : body}
+                onChange={(e) => setBody(portfolioPreview.url
+                  ? `${e.target.value}\n\n${buildPortfolioButton(portfolioPreview.url)}`
+                  : e.target.value)}
                 rows={8}
                 placeholder="Hi {{contact_name}}, I noticed {{business_name}} is in the {{industry}} space…"
               />
               {errors.body && <p className="text-xs text-red-600">{errors.body}</p>}
+              {channel === 'email' && portfolioPreview.url && (
+                <div className="space-y-2 pt-3">
+                  <p className="text-sm text-slate-600">This button appears in your email and opens the selected PDF.</p>
+                  <a href={portfolioPreview.url} target="_blank" rel="noopener noreferrer"
+                    className="inline-block rounded-md bg-indigo-700 px-5 py-3 text-sm font-semibold text-white">
+                    View portfolio
+                  </a>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setBody(portfolioPreview.text)}>
+                    Remove portfolio button
+                  </Button>
+                </div>
+              )}
             </div>
 
             {detectedVars.length > 0 && (
@@ -546,6 +589,7 @@ export function TemplateFormPage() {
 
       {showFilePicker && (
         <FileLinkPickerModal
+          portfolioOnly={portfolioPicker}
           onSelect={handleInsertFileLink}
           onClose={() => setShowFilePicker(false)}
         />
@@ -564,4 +608,3 @@ export function TemplateFormPage() {
     </div>
   );
 }
-

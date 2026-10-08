@@ -235,9 +235,12 @@ export async function bulkUpdateHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { ids, patch } = bulkUpdateSchema.parse(req.body);
+    const { ids, patch, tag_mode } = bulkUpdateSchema.parse(req.body);
     const actor = actorFromReq(req);
-    const updated = await leadsService.bulkUpdateLeads(ids, patch, actor);
+    const updated =
+      tag_mode === 'append'
+        ? await leadsService.bulkUpdateLeads(ids, patch, actor, tag_mode)
+        : await leadsService.bulkUpdateLeads(ids, patch, actor);
     sendSuccess(res, { updated });
   } catch (err) {
     next(err);

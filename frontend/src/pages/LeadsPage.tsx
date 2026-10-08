@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useLeadsTable, useDeleteLead, usePauseLead, useBulkPauseLeads, useBulkClassifyLeads } from '@/api/leads';
+import { useLeadsTable, useDeleteLead, usePauseLead, useBulkPauseLeads, useBulkClassifyLeads, useBulkUpdateLeads } from '@/api/leads';
 import { useCampaigns, useAddLeadsToCampaign } from '@/api/campaigns';
 import { usePipelines, useBulkMoveLead } from '@/api/pipelines';
 import { useCustomFields } from '@/api/customFields';
@@ -448,6 +448,8 @@ export function LeadsPage() {
   const pauseLead = usePauseLead();
   const bulkPause = useBulkPauseLeads();
   const bulkClassify = useBulkClassifyLeads();
+  const bulkUpdate = useBulkUpdateLeads();
+  const [bulkTag, setBulkTag] = useState('');
   const { data: campaigns } = useCampaigns();
   const addLeadsToCampaign = useAddLeadsToCampaign();
   const [selectedCampaign, setSelectedCampaign] = useState('');
@@ -514,6 +516,18 @@ export function LeadsPage() {
       setSelected(new Set());
     } catch {
       showToast('Bulk action failed.', 'error');
+    }
+  };
+
+  const handleAddTag = async (): Promise<void> => {
+    const tag = bulkTag.trim();
+    if (!tag || tag.includes(',') || bulkUpdate.isPending) return;
+    try {
+      const result = await bulkUpdate.mutateAsync({ ids: Array.from(selected), patch: { tags: [tag] }, tag_mode: 'append' });
+      showToast(`Tag "${tag}" added to ${result.updated} leads. Existing tags kept.`, 'success');
+      setBulkTag('');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Could not add the tag. Try again.'), 'error');
     }
   };
 
@@ -708,6 +722,18 @@ export function LeadsPage() {
           {selected.size > 0 && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/40 px-4 py-2 mt-3">
               <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{selected.size} selected</span>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="bulk-tag" className="text-xs font-medium">Tag name</label>
+                <Input id="bulk-tag" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)}
+                  placeholder="e.g., school" maxLength={100} disabled={bulkUpdate.isPending}
+                  className="h-8 w-36 text-xs" />
+                <Button type="button" size="sm" disabled={!bulkTag.trim() || bulkTag.includes(',') || bulkUpdate.isPending}
+                  onClick={handleAddTag}>
+                  {bulkUpdate.isPending ? 'Adding tag…' : 'Add tag'}
+                </Button>
+                {bulkTag.includes(',') && <span role="alert" className="text-xs text-red-600">Enter one tag at a time.</span>}
+              </div>
 
               {/* Pause / Resume */}
               <div className="flex gap-2">

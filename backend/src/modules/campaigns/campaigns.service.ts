@@ -1,3 +1,5 @@
+import { getLeadEnrollmentOptions } from '../leads/leads.service';
+import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 /* eslint-disable @typescript-eslint/no-explicit-any -- TODO: replace with a proper runtime type (legacy debt) */
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -52,6 +54,10 @@ class ValidationError extends AppError {
   }
 }
 
+export async function getCampaignEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
+  return getLeadEnrollmentOptions();
+}
+
 export async function getAllCampaigns(filter?: { pipeline_id?: string }): Promise<Campaign[]> {
   return findCampaigns(filter);
 }
@@ -64,6 +70,16 @@ export async function getCampaignById(id: string): Promise<Campaign> {
   return campaign;
 }
 
+/** Read current campaign message settings through the campaign service boundary. */
+export async function getCampaignMessageSettings(
+  id: string,
+): Promise<Pick<Campaign, 'tone' | 'ai_personalization_enabled'> | null> {
+  const campaign = await findCampaignById(id);
+  return campaign
+    ? { tone: campaign.tone, ai_personalization_enabled: campaign.ai_personalization_enabled }
+    : null;
+}
+
 export async function createCampaign(input: CreateCampaignInput, actor: Actor): Promise<Campaign> {
   const campaign = await insertCampaign(
     {
@@ -74,6 +90,8 @@ export async function createCampaign(input: CreateCampaignInput, actor: Actor): 
       sequence_id: input.sequence_id,
       pipeline_id: input.pipeline_id,
       trigger_stage_id: input.trigger_stage_id ?? null,
+      trigger_source: input.trigger_source ?? null,
+      trigger_tags: input.trigger_tags ?? null,
       ai_personalization_enabled: input.ai_personalization_enabled ?? false,
       ab_test_enabled: input.ab_test_enabled ?? false,
       ab_test_metric: input.ab_test_metric ?? 'open_rate',
@@ -128,6 +146,8 @@ export async function updateCampaignById(
     sequence_id: input.sequence_id,
     pipeline_id: input.pipeline_id,
     ...('trigger_stage_id' in input ? { trigger_stage_id: input.trigger_stage_id } : {}),
+    ...('trigger_source' in input ? { trigger_source: input.trigger_source } : {}),
+    ...('trigger_tags' in input ? { trigger_tags: input.trigger_tags } : {}),
     ai_personalization_enabled: input.ai_personalization_enabled,
     ab_test_enabled: input.ab_test_enabled,
     ab_test_metric: input.ab_test_metric,

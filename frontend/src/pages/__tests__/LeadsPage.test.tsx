@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { LeadsPage } from '../LeadsPage';
+import { apiClient } from '@/api/client';
 
 vi.mock('@/api/client', () => {
   const genericData = Object.assign([
@@ -73,6 +74,28 @@ vi.mock('@/api/client', () => {
 });
 
 describe('LeadsPage', () => {
+  it('adds one tag to the selected page using append mode and keeps the selection', async () => {
+    const generic = await apiClient.get('/leads');
+    const fixture = generic.data.data[0];
+    vi.mocked(apiClient.get).mockImplementation(async (url) => url === '/leads'
+      ? { data: { success: true, data: [
+          { ...fixture, id: 'lead-1', business_name: 'School One', contact_name: 'Principal', industry: 'Education', status: 'active', lead_score: 20, tags: ['vip'] },
+          { ...fixture, id: 'lead-2', business_name: 'School Two', contact_name: 'Principal', industry: 'Education', status: 'active', lead_score: 30, tags: [] },
+        ], meta: { total: 20, limit: 25, hasMore: false } } }
+      : generic);
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true, data: { updated: 2 } } });
+    renderWithProviders(<LeadsPage />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all' }));
+    expect(screen.getByRole('button', { name: 'Add tag' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Tag name'), { target: { value: ' school ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/leads/bulk-update', {
+      ids: ['lead-1', 'lead-2'], patch: { tags: ['school'] }, tag_mode: 'append',
+    }));
+    await waitFor(() => expect(screen.getByLabelText('Tag name')).toHaveValue(''));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+  });
+
   it('renders successfully', async () => {
     const { container } = renderWithProviders(<LeadsPage />);
     await new Promise(resolve => setTimeout(resolve, 50));

@@ -91,10 +91,29 @@ export const bulkClassifySchema = z.object({
 });
 
 /** POST /leads/bulk-update — update fields on a batch of lead IDs */
-export const bulkUpdateSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(500),
-  patch: updateLeadSchema,
-});
+export const bulkUpdateSchema = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(500),
+    patch: updateLeadSchema,
+    tag_mode: z.enum(['replace', 'append']).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.tag_mode !== 'append') return;
+    if (
+      Object.keys(value.patch).some((key) => key !== 'tags') ||
+      !value.patch.tags?.length ||
+      value.patch.tags.some((tag) => !tag.trim() || tag.trim().length > 100 || tag.includes(','))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['patch', 'tags'],
+        message:
+          'Add tags requires only non-empty tags, up to 100 characters each, without commas.',
+      });
+    }
+  });
+
+export type BulkTagMode = NonNullable<z.infer<typeof bulkUpdateSchema>['tag_mode']>;
 
 /** POST /leads/bulk-pause — pause or resume outreach on a batch of lead IDs */
 export const bulkPauseSchema = z.object({

@@ -295,10 +295,12 @@ export function useBulkUpdateLeads() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ ids, patch }: { ids: string[]; patch: Partial<import('@/types').LeadInput> }) => {
+    mutationFn: async ({ ids, patch, tag_mode }: {
+      ids: string[]; patch: Partial<import('@/types').LeadInput>; tag_mode?: 'append';
+    }) => {
       const response = await apiClient.post<ApiResponse<{ updated: number }>>(
         '/leads/bulk-update',
-        { ids, patch },
+        { ids, patch, ...(tag_mode ? { tag_mode } : {}) },
       );
       return response.data.data;
     },

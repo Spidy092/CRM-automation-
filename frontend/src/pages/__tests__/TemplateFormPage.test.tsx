@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { TemplateFormPage } from '../TemplateFormPage';
+import { useFiles } from '@/api/files';
+import { useCreateTemplate } from '@/api/templates';
 
 let mockParams: { id?: string } = {};
 
@@ -87,6 +89,54 @@ describe('TemplateFormPage', () => {
     mockParams = {};
     mockUploadMutateAsync.mockClear();
     mockDeleteMutateAsync.mockClear();
+    vi.mocked(useFiles).mockReturnValue({ data: [], isLoading: false } as ReturnType<typeof useFiles>);
+  });
+
+  it('adds a portfolio button, saves its link, and keeps it while editing the message', async () => {
+    vi.mocked(useFiles).mockReturnValue({ data: [
+      { id: 'pdf-1', filename: 'school-portfolio.pdf', mime_type: 'application/pdf', size_bytes: 1024,
+        url: 'https://files.example.com/portfolio.pdf', tags: [], created_by: 'u1', created_at: '', updated_at: '' },
+      { id: 'img-1', filename: 'photo.png', mime_type: 'image/png', size_bytes: 100,
+        url: 'https://files.example.com/photo.png', tags: [], created_by: 'u1', created_at: '', updated_at: '' },
+    ], isLoading: false } as ReturnType<typeof useFiles>);
+    renderWithProviders(<TemplateFormPage />);
+    fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'School outreach' } });
+    fireEvent.change(screen.getByLabelText(/subject/i), { target: { value: 'Our portfolio' } });
+    fireEvent.change(screen.getByLabelText(/body/i), { target: { value: 'Hello school' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add portfolio button' }));
+    expect(screen.queryByText('photo.png')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /school-portfolio.pdf/i }));
+    expect(screen.getByRole('link', { name: 'View portfolio' })).toHaveAttribute('href', 'https://files.example.com/portfolio.pdf');
+    expect(screen.getByLabelText(/body/i)).toHaveValue('Hello school');
+    fireEvent.change(screen.getByLabelText(/body/i), { target: { value: 'Hello principal' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Template' }));
+    await waitFor(() => expect(useCreateTemplate().mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining('data-crm-portfolio="true"'),
+    })));
+    expect(useCreateTemplate().mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({
+      body: expect.stringContaining('Hello principal'),
+    }));
+  });
+
+  it('removes the portfolio button without deleting the message', () => {
+    mockParams = { id: 'tmpl-1' };
+    const previousBody = templateWithAttachment.body;
+    templateWithAttachment.body = 'Hello school <a data-crm-portfolio="true" href="https://files.example.com/p.pdf">View portfolio</a>';
+    renderWithProviders(<TemplateFormPage />);
+    templateWithAttachment.body = previousBody;
+    fireEvent.click(screen.getByRole('button', { name: 'Remove portfolio button' }));
+    expect(screen.queryByRole('link', { name: 'View portfolio' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/body/i)).toHaveValue('Hello school');
+  });
+
+  it('keeps the portfolio as a visible plain link when switching to SMS', () => {
+    mockParams = { id: 'tmpl-1' };
+    const previousBody = templateWithAttachment.body;
+    templateWithAttachment.body = 'Hello school <a data-crm-portfolio="true" href="https://files.example.com/p.pdf">View portfolio</a>';
+    renderWithProviders(<TemplateFormPage />);
+    templateWithAttachment.body = previousBody;
+    fireEvent.change(screen.getByLabelText(/channel/i), { target: { value: 'sms' } });
+    expect(screen.getByLabelText(/body/i)).toHaveValue('Hello school\n\nView portfolio: https://files.example.com/p.pdf');
   });
 
   it('renders create template form', () => {

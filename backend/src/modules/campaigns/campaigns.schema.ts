@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+export const enrollmentOptionsQuerySchema = z.object({}).strict();
+const triggerValuesSchema = z
+  .array(
+    z
+      .string()
+      .min(1)
+      .refine((value) => value.trim().length > 0, 'Trigger labels must not be blank'),
+  )
+  .transform((values) => [...new Set(values)])
+  .nullable()
+  .optional();
+
 function isValidTimezone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
@@ -51,10 +63,10 @@ export const createCampaignSchema = z
     target_industries: z.array(z.string()).optional().default([]),
     target_countries: z.array(z.string()).optional().default([]),
     sequence_id: z.string().uuid().optional(),
-    pipeline_id: z.string().uuid().optional(),
+    pipeline_id: z.string().uuid().nullable().optional(),
     trigger_stage_id: z.string().uuid().optional().nullable(),
-    trigger_source: z.array(z.string()).optional().nullable(),
-    trigger_tags: z.array(z.string()).optional().nullable(),
+    trigger_source: triggerValuesSchema,
+    trigger_tags: triggerValuesSchema,
     ai_personalization_enabled: z.boolean().optional().default(false),
     ab_test_enabled: z.boolean().optional().default(false),
     ab_test_metric: z
@@ -75,10 +87,10 @@ export const updateCampaignSchema = z
     target_industries: z.array(z.string()).optional(),
     target_countries: z.array(z.string()).optional(),
     sequence_id: z.string().uuid().optional(),
-    pipeline_id: z.string().uuid().optional(),
+    pipeline_id: z.string().uuid().nullable().optional(),
     trigger_stage_id: z.string().uuid().optional().nullable(),
-    trigger_source: z.array(z.string()).optional().nullable(),
-    trigger_tags: z.array(z.string()).optional().nullable(),
+    trigger_source: triggerValuesSchema,
+    trigger_tags: triggerValuesSchema,
     ai_personalization_enabled: z.boolean().optional(),
     ab_test_enabled: z.boolean().optional(),
     ab_test_metric: z.enum(['open_rate', 'click_rate', 'reply_rate']).optional(),

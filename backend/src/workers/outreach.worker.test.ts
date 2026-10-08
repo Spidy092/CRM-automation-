@@ -73,6 +73,10 @@ import {
   countSentTodayForCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
+jest.mock('../modules/campaigns/campaigns.service', () => ({
+  getCampaignMessageSettings: jest.fn().mockResolvedValue(null),
+}));
+import { getCampaignMessageSettings } from '../modules/campaigns/campaigns.service';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from './queue';
 
@@ -87,7 +91,10 @@ describe('startOutreachWorker', () => {
 });
 
 describe('handleDispatch', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getCampaignMessageSettings as jest.Mock).mockResolvedValue(null);
+  });
 
   const baseSeq = {
     id: 'seq1',
@@ -252,6 +259,19 @@ describe('handleDispatch', () => {
         mockMode: false,
       }),
     ).rejects.toMatchObject({ statusCode: 502 });
+  });
+
+  it.each([true, false])('uses current campaign tone settings when enabled=%s, overriding queued settings', async (enabled) => {
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com' });
+    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
+    (getCampaignMessageSettings as jest.Mock).mockResolvedValue({ tone: 'conversational', ai_personalization_enabled: enabled });
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+    await handleDispatch({ leadId: 'lead1', campaignId: 'camp1', sequenceId: 'seq1', stepNumber: 1, channel: 'email', templateId: 't1', mockMode: false, aiPersonalizationEnabled: !enabled });
+    expect(getCampaignMessageSettings).toHaveBeenCalledWith('camp1');
+    expect(personalizeMessage).toHaveBeenCalledWith(expect.anything(), expect.anything(), enabled ? { enabled: true, tone: 'conversational' } : { enabled: false });
   });
 
   it('updates log to sent and enqueues follow-up when dispatch succeeds', async () => {
