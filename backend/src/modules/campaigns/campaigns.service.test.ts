@@ -277,6 +277,9 @@ describe('addLeads / removeLead', () => {
     (addLeadsToCampaign as jest.Mock).mockResolvedValue([
       { id: 'cl-1', campaign_id: 'camp-1', lead_id: 'lead-1' },
     ]);
+    (findCampaignLeadsWithProgress as jest.Mock).mockResolvedValue([
+      { lead_id: 'lead-1', latest_step: null },
+    ]);
 
     const res = await addLeads('camp-1', ['lead-1'], actor);
 
@@ -288,6 +291,31 @@ describe('addLeads / removeLead', () => {
       stepNumber: 1,
       channel: 'email',
       templateId: 'tmpl-1',
+    }));
+  });
+
+  it('queues an already-enrolled lead with no outreach history when added again', async () => {
+    const activeCampaignWithSequence = { ...baseCampaign, status: 'active', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaignWithSequence);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([
+      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
+    ]);
+    (addLeadsToCampaign as jest.Mock).mockResolvedValue([]);
+    (findCampaignLeadsWithProgress as jest.Mock).mockResolvedValue([
+      { lead_id: 'lead-1', latest_step: null },
+    ]);
+
+    const res = await addLeads('camp-1', ['lead-1'], actor);
+
+    expect(res).toEqual({ added: 0, enqueued: 1 });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      leadId: 'lead-1',
+      campaignId: 'camp-1',
+      stepNumber: 1,
     }));
   });
 

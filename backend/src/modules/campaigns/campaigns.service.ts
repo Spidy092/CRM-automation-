@@ -485,12 +485,18 @@ export async function addLeads(
   const added = await addLeadsToCampaign(campaignId, leadIds);
   let enqueued = 0;
 
-  if (campaign.status === 'active' && added.length > 0 && campaign.sequence_id) {
-    const addedLeadIds = new Set(added.map((row) => row.lead_id));
+  if (campaign.status === 'active' && campaign.sequence_id) {
+    const enrolledWithoutOutreach = await findCampaignLeadsWithProgress(campaignId);
+    const requestedLeadIds = new Set(leadIds);
+    const pendingLeadIds = new Set(
+      enrolledWithoutOutreach
+        .filter((row) => requestedLeadIds.has(row.lead_id) && row.latest_step === null)
+        .map((row) => row.lead_id),
+    );
     const preview = await buildAutomationPreview(campaign, false);
     if (preview.firstStep) {
       for (const lead of preview.eligibleLeads) {
-        if (!addedLeadIds.has(lead.leadId)) continue;
+        if (!pendingLeadIds.has(lead.leadId)) continue;
         try {
           await enqueueOutreachDispatch({
             leadId: lead.leadId,
