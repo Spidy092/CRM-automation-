@@ -116,7 +116,7 @@ jobs:
             cd /home/ubuntu/crm
 
             echo "Running database migrations..."
-            docker compose -f docker-compose.prod.yml run --rm --entrypoint '' api npx node-pg-migrate up -m /migrations
+            docker compose -f docker-compose.prod.yml run --rm -T --entrypoint '' api npx node-pg-migrate up -m /migrations </dev/null
 
             echo "Recreating containers..."
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
@@ -133,4 +133,3 @@ jobs:
           sleep 5
           curl -f https://soft.swaragh.net/health
           echo "Deployment verified successfully!"
-
