@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { sendSuccess } from '../../shared/utils/response';
 import {
+  getCampaignEnrollmentOptions,
   getAllCampaigns,
   getCampaignById,
   getCampaignAutomationPreview,
@@ -18,7 +19,12 @@ import {
   getStepStats,
   retryLeadOutreachStep,
 } from './campaigns.service';
-import { createCampaignSchema, updateCampaignSchema, addLeadsSchema } from './campaigns.schema';
+import {
+  enrollmentOptionsQuerySchema,
+  createCampaignSchema,
+  updateCampaignSchema,
+  addLeadsSchema,
+} from './campaigns.schema';
 
 function actorFromReq(req: Request) {
   if (!req.user) throw new AppError('Unauthorized', 401);
@@ -219,6 +225,19 @@ export async function getCampaignStepStatsHandler(
   try {
     const stats = await getStepStats(req.params.id);
     sendSuccess(res, stats);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function enrollmentOptionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    enrollmentOptionsQuerySchema.parse(req.query);
+    sendSuccess(res, await getCampaignEnrollmentOptions());
   } catch (err) {
     next(err);
   }

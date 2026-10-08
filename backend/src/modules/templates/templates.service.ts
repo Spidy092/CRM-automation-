@@ -37,6 +37,13 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/gif',
   'application/pdf',
 ]);
+const ALLOWED_EXTENSIONS_BY_MIME: Record<string, string[]> = {
+  'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/webp': ['.webp'],
+  'image/gif': ['.gif'],
+  'application/pdf': ['.pdf'],
+};
 
 function publicBaseUrl(): string {
   return process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
@@ -288,8 +295,16 @@ export async function addTemplateAttachment(
     );
   }
 
+  const ext = (path.extname(file.originalname) || '').toLowerCase();
+  const allowedExtensions = ALLOWED_EXTENSIONS_BY_MIME[file.mimetype] ?? [];
+  if (!allowedExtensions.includes(ext)) {
+    throw new AppError(
+      `File extension "${ext}" does not match declared type "${file.mimetype}".`,
+      400,
+    );
+  }
+
   const attachmentId = randomUUID();
-  const ext = path.extname(file.originalname) || '';
   const diskFilename = `${attachmentId}${ext}`;
   await mkdir(UPLOAD_DIR, { recursive: true });
   const storagePath = path.join(UPLOAD_DIR, diskFilename);

@@ -2,6 +2,7 @@ import { workflowDefinitionSchema } from './workflow.schema';
 import type { WorkflowDefinition, WorkflowValidationIssue } from './workflow.types';
 import { validateWorkflowDefinition } from './workflow.engine';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { logger } from '../../shared/utils/logger';
 import {
   findWorkflowById,
   findWorkflows,
@@ -158,10 +159,17 @@ export async function replayWorkflowEnrollment(
 
   // The database state is already due, so the scheduler remains a recovery
   // path if Redis is temporarily unavailable after this request commits.
-  await enqueueWorkflowExecution(
-    { enrollmentId: replayed.id },
-    { jobIdSuffix: `replay-${replayed.lock_version}` },
-  );
+  try {
+    await enqueueWorkflowExecution(
+      { enrollmentId: replayed.id },
+      { jobIdSuffix: `replay-${replayed.lock_version}` },
+    );
+  } catch (err) {
+    logger.warn('Failed to enqueue workflow replay job directly; scheduler will pick it up', {
+      enrollmentId: replayed.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   await writeAuditLog({
     userId: actor.id,
     action: 'workflow.enrollment_replayed',

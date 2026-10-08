@@ -7,6 +7,8 @@ jest.mock('../../shared/utils/db', () => ({
 
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import {
+  bulkUpdateLeads,
+  findLeadEnrollmentOptions,
   findLeads,
   countLeads,
   findLeadById,
@@ -495,5 +497,27 @@ describe('findActivityForLead', () => {
     const result = await findActivityForLead('lead-1', 50);
     expect(result).toEqual(entries);
     expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('UNION ALL'), ['lead-1', 50]);
+  });
+});
+
+describe('findLeadEnrollmentOptions', () => {
+  it('returns sources and tags without exposing lead records', async () => {
+    mockPoolQuery.mockResolvedValue({ rows: [{ sources: ['custom_source'], tags: ['vip'] }] });
+    expect(await findLeadEnrollmentOptions()).toEqual({ sources: ['custom_source'], tags: ['vip'] });
+    expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('deleted_at IS NULL');
+  });
+});
+
+
+describe('bulk tag append', () => {
+  it('merges tags atomically in the database and deduplicates without overwriting existing tags', async () => {
+    mockPoolQuery.mockResolvedValue({ rowCount: 2 });
+    expect(await bulkUpdateLeads(['lead-1', 'lead-2'], { tags: ['school'] }, true)).toBe(2);
+    expect(mockPoolQuery).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(tags, '{}'::text[]) || $1::text[]"),
+      [['school'], ['lead-1', 'lead-2']],
+    );
+    expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('SELECT DISTINCT tag');
+    expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('deleted_at IS NULL');
   });
 });

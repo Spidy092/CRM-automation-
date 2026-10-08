@@ -1,3 +1,4 @@
+import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { LeadStatus } from '../../shared/types';
 import { LeadInput, LeadListFilters, LeadRow, LeadSortBy } from './leads.types';
@@ -392,7 +393,11 @@ export async function findActivityForLead(
   return rows;
 }
 
-export async function bulkUpdateLeads(ids: string[], input: Partial<LeadInput>): Promise<number> {
+export async function bulkUpdateLeads(
+  ids: string[],
+  input: Partial<LeadInput>,
+  appendTags = false,
+): Promise<number> {
   if (ids.length === 0) return 0;
 
   const sets: string[] = ['updated_at = NOW()'];
@@ -435,7 +440,11 @@ export async function bulkUpdateLeads(ids: string[], input: Partial<LeadInput>):
     params.push(jsonArray(input.custom_fields) ?? '{}');
   }
   if (input.tags !== undefined) {
-    sets.push(`tags = $${i++}`);
+    sets.push(
+      appendTags
+        ? `tags = ARRAY(SELECT DISTINCT tag FROM unnest(COALESCE(tags, '{}'::text[]) || $${i++}::text[]) AS tag)`
+        : `tags = $${i++}`,
+    );
     params.push(input.tags ?? []);
   }
 
@@ -457,4 +466,18 @@ export async function bulkPauseLeads(ids: string[], status: LeadStatus): Promise
     [status, ids],
   );
   return res.rowCount ?? 0;
+}
+
+/** Only labels, excluding deleted leads; no lead identities or contact data. */
+export async function findLeadEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
+  const result = await pool.query<LeadEnrollmentOptions>(
+    `SELECT
+       ARRAY(SELECT DISTINCT source_platform FROM leads
+         WHERE deleted_at IS NULL AND btrim(source_platform) <> ''
+         ORDER BY source_platform) AS sources,
+       ARRAY(SELECT DISTINCT tag FROM leads CROSS JOIN LATERAL unnest(tags) AS tag
+         WHERE deleted_at IS NULL AND btrim(tag) <> ''
+         ORDER BY tag) AS tags`,
+  );
+  return result.rows[0] ?? { sources: [], tags: [] };
 }

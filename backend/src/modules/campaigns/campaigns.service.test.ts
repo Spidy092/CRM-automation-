@@ -1,3 +1,4 @@
+jest.mock('../leads/leads.service', () => ({ getLeadEnrollmentOptions: jest.fn() }));
 jest.mock('./campaigns.repository', () => ({
   findCampaigns: jest.fn(),
   findCampaignById: jest.fn(),
@@ -142,6 +143,12 @@ describe('getAllCampaigns', () => {
 });
 
 describe('createCampaign', () => {
+  it('persists source and tag enrollment rules on creation', async () => {
+    (insertCampaign as jest.Mock).mockResolvedValue(baseCampaign);
+    await createCampaign({ name: 'Sources', trigger_source: ['google_business'], trigger_tags: ['vip'] }, actor);
+    expect(insertCampaign).toHaveBeenCalledWith(expect.objectContaining({ trigger_source: ['google_business'], trigger_tags: ['vip'] }), actor.id);
+  });
+
   it('inserts and audits', async () => {
     (insertCampaign as jest.Mock).mockResolvedValue(baseCampaign);
     const res = await createCampaign(
@@ -154,6 +161,21 @@ describe('createCampaign', () => {
 });
 
 describe('updateCampaignById', () => {
+  it.each([null, ['facebook']])('saves or clears enrollment rules: %s', async (value) => {
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (updateCampaign as jest.Mock).mockResolvedValue(baseCampaign);
+    await updateCampaignById('camp-1', { trigger_source: value, trigger_tags: value, pipeline_id: null }, actor);
+    expect(updateCampaign).toHaveBeenCalledWith('camp-1', expect.objectContaining({ trigger_source: value, trigger_tags: value, pipeline_id: null }));
+  });
+
+  it('leaves trigger rules unchanged when omitted in an update', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (updateCampaign as jest.Mock).mockResolvedValue(baseCampaign);
+    await updateCampaignById('camp-1', { name: 'Renamed' }, actor);
+    expect((updateCampaign as jest.Mock).mock.calls[0][1]).not.toHaveProperty('trigger_source');
+    expect((updateCampaign as jest.Mock).mock.calls[0][1]).not.toHaveProperty('trigger_tags');
+  });
+
   it('refuses to edit an active campaign', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
     await expect(updateCampaignById('camp-1', { name: 'x' }, actor)).rejects.toMatchObject({

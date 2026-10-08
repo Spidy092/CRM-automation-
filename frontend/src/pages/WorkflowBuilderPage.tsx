@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   GitBranch,
   Play,
+  RotateCcw,
   Save,
   Send,
   Zap,
@@ -358,6 +359,15 @@ export function WorkflowBuilderPage() {
 
   const selectedAction = useMemo(() => ACTIONS.find((action) => action.value === actionType) ?? ACTIONS[0], [actionType]);
 
+  const actionJsonState = useMemo(() => {
+    try {
+      parseActionInput(actionInput);
+      return { valid: true, error: null };
+    } catch (err) {
+      return { valid: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
+    }
+  }, [actionInput]);
+
   const liveDefinition = useMemo(() => {
     if (!name.trim()) return null;
     try {
@@ -535,7 +545,63 @@ export function WorkflowBuilderPage() {
               {includeAction && (
                 <div className="space-y-4 rounded-md border border-amber-100 bg-amber-50/30 p-3">
                   <div className="space-y-2"><Label htmlFor="workflow-action">Action type</Label><select id="workflow-action" className={selectClassName} value={actionType} onChange={handleActionTypeChange}>{ACTIONS.map((action) => <option key={action.value} value={action.value}>{action.label}</option>)}</select></div>
-                  <div className="space-y-2"><Label htmlFor="workflow-action-input">Action input JSON</Label><Textarea id="workflow-action-input" value={actionInput} onChange={(event) => setActionInput(event.target.value)} className="min-h-28 font-mono text-xs" spellCheck={false} aria-describedby="workflow-action-help" /><p id="workflow-action-help" className="text-xs text-slate-500">Example: <code className="rounded bg-white px-1 text-[11px] text-slate-700">{selectedAction.example}</code></p></div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="workflow-action-input">Action input JSON</Label>
+                      <button
+                        type="button"
+                        onClick={() => setActionInput(selectedAction.example)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 transition-colors hover:text-amber-800"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Reset to template
+                      </button>
+                    </div>
+
+                    {['lead.add_tag', 'lead.remove_tag'].includes(actionType) && (
+                      <div className="flex flex-wrap items-center gap-1.5 rounded border border-amber-100 bg-amber-50/40 p-2 text-xs">
+                        <span className="font-medium text-amber-800">Quick tags:</span>
+                        {['hot-lead', 'qualified', 'needs-followup', 'demo-requested', 'high-priority'].map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => setActionInput(JSON.stringify({ tag }))}
+                            className="rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:border-amber-400 hover:bg-amber-100/50"
+                          >
+                            +{tag}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <Textarea
+                      id="workflow-action-input"
+                      value={actionInput}
+                      onChange={(event) => setActionInput(event.target.value)}
+                      className={`min-h-28 font-mono text-xs ${
+                        !actionJsonState.valid ? 'border-red-300 focus-visible:ring-red-400' : ''
+                      }`}
+                      spellCheck={false}
+                      aria-describedby="workflow-action-help"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div>
+                        {actionJsonState.valid ? (
+                          <span className="inline-flex items-center gap-1 font-medium text-emerald-600">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Valid JSON payload
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 font-medium text-red-600">
+                            <AlertTriangle className="h-3.5 w-3.5" /> Syntax issue: {actionJsonState.error}
+                          </span>
+                        )}
+                      </div>
+                      <p id="workflow-action-help" className="text-slate-500">
+                        Example: <code className="rounded bg-white px-1 text-[11px] text-slate-700">{selectedAction.example}</code>
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
             </CardContent>

@@ -1,4 +1,5 @@
 import { LeadRow } from './leads.types';
+import { bulkUpdateSchema } from './leads.schema';
 
 jest.mock('../../workers/queue');
 jest.mock('./leads.repository', () => ({
@@ -578,6 +579,36 @@ describe('bulkClassifyLeads', () => {
 });
 
 describe('bulkUpdateLeads', () => {
+  it('appends trimmed tags without replacing old tags and emits events only for new tags', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([
+      { ...baseRow, id: 'lead-1', tags: ['vip'] },
+      { ...baseRow, id: 'lead-2', tags: ['school'] },
+    ]);
+    (repoBulkUpdate as jest.Mock).mockResolvedValue(2);
+    const result = await bulkUpdateLeads(['lead-1', 'lead-2'], { tags: [' school ', 'school'] }, { id: 'admin-1', role: 'admin' }, 'append');
+    expect(result).toBe(2);
+    expect(repoBulkUpdate).toHaveBeenCalledWith(['lead-1', 'lead-2'], { tags: ['school'] }, true);
+    expect(enqueueLeadEvent).toHaveBeenCalledWith({ event: 'lead.tag_added', leadId: 'lead-1', payload: { tag: 'school' } });
+    expect(enqueueLeadEvent).not.toHaveBeenCalledWith({ event: 'lead.tag_added', leadId: 'lead-2', payload: { tag: 'school' } });
+  });
+
+  it('rejects the whole tag operation if sales selects a lead owned by another rep', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([
+      { ...baseRow, id: 'lead-1', assigned_to: 'sales-1' },
+      { ...baseRow, id: 'lead-2', assigned_to: 'sales-2' },
+    ]);
+    await expect(bulkUpdateLeads(['lead-1', 'lead-2'], { tags: ['school'] }, { id: 'sales-1', role: 'sales' }, 'append')).rejects.toMatchObject({ statusCode: 403 });
+    expect(repoBulkUpdate).not.toHaveBeenCalled();
+  });
+
+  it('validates append-only tag requests at the API boundary', () => {
+    const ids = ['11111111-1111-4111-8111-111111111111'];
+    expect(bulkUpdateSchema.safeParse({ ids, patch: { tags: ['school'] }, tag_mode: 'append' }).success).toBe(true);
+    for (const patch of [{ tags: [' '] }, { tags: ['school, vip'] }, { tags: ['school'], notes: 'unexpected' }]) {
+      expect(bulkUpdateSchema.safeParse({ ids, patch, tag_mode: 'append' }).success).toBe(false);
+    }
+  });
+
   it('updates leads in bulk and audits', async () => {
     (repoBulkUpdate as jest.Mock).mockResolvedValue(3);
     const actor = { id: 'admin-1', role: 'admin' as const };

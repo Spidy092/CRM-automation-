@@ -31,9 +31,15 @@ function getPrivateKey(): string {
 }
 
 function signAccessToken(payload: JwtPayload): string {
+  // Pass the duration string straight through: jsonwebtoken parses it with
+  // its own ms() (string → seconds). Do NOT pre-convert with ms() here — that
+  // returns milliseconds, which jsonwebtoken would read as seconds (e.g.
+  // ms('15m') = 900000 → ~10.4 days instead of 15 minutes).
+  const configuredTtl = process.env.JWT_ACCESS_EXPIRES_IN ?? '15m';
+  const expiresIn = /^\d+(?:\.\d+)?$/.test(configuredTtl) ? Number(configuredTtl) : configuredTtl;
   const options: jwt.SignOptions = {
     algorithm: 'RS256',
-    expiresIn: ms(process.env.JWT_ACCESS_EXPIRES_IN ?? '15m'),
+    expiresIn,
   };
   return jwt.sign(payload, getPrivateKey(), options);
 }
@@ -44,6 +50,42 @@ function generateOpaqueRefreshToken(): string {
 
 function failedLoginKey(userId: string): string {
   return `auth:failed_login:${userId}`;
+}
+
+function refreshReuseKey(tokenHash: string): string {
+  return `auth:refresh_reuse:${tokenHash}`;
+}
+
+function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// Replays arriving within this window after rotation are treated as benign
+// races (two tabs refreshing at once, or a client retry after a lost
+// response) — plain 401, family left intact. Replays after the window are
+// treated as theft and revoke the whole family.
+const REFRESH_REUSE_LEEWAY_SECONDS = 60;
+
+interface RefreshReuseMarker {
+  u: string;
+  t: number;
+}
+
+function parseReuseMarker(raw: string): { userId: string; rotatedAtMs: number } | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<RefreshReuseMarker>;
+    if (parsed && typeof parsed.u === 'string') {
+      return {
+        userId: parsed.u,
+        rotatedAtMs: typeof parsed.t === 'number' ? parsed.t : 0,
+      };
+    }
+    return null;
+  } catch {
+    // Legacy marker format (plain userId string written before timestamps
+    // were added). Age unknown — fail closed via rotatedAtMs 0.
+    return { userId: raw, rotatedAtMs: 0 };
+  }
 }
 
 async function isAccountLocked(email: string): Promise<boolean> {
@@ -114,6 +156,35 @@ export async function refresh(
 ): Promise<{ accessToken: string; refreshToken: string }> {
   const tokenRecord = await findValidRefreshToken(refreshToken);
   if (!tokenRecord) {
+    // Reuse detection: a rotated-out (revoked) token presented again signals
+    // possible theft. Rotation stores a short-lived Redis marker keyed by the
+    // old token hash (see below); expired/never-issued tokens have no marker
+    // and simply return 401 without touching the token family.
+    try {
+      const markerKey = refreshReuseKey(hashRefreshToken(refreshToken));
+      const rawMarker = await redis.get(markerKey);
+      const marker = rawMarker ? parseReuseMarker(rawMarker) : null;
+      if (marker) {
+        const ageSeconds = (Date.now() - marker.rotatedAtMs) / 1000;
+        if (ageSeconds <= REFRESH_REUSE_LEEWAY_SECONDS) {
+          // Benign race, not theft: keep the family (and the marker, so a
+          // later replay past the leeway still triggers revocation).
+          logger.warn('Refresh token replayed inside rotation leeway — likely concurrent refresh', {
+            userId: marker.userId,
+          });
+        } else {
+          await revokeAllRefreshTokensForUser(marker.userId);
+          await redis.del(markerKey);
+          logger.warn('Refresh token reuse detected — revoked token family', {
+            userId: marker.userId,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn('Refresh reuse check failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     throw new AppError('Invalid or expired refresh token', 401);
   }
 
@@ -122,13 +193,34 @@ export async function refresh(
     throw new AppError('User account is not active', 401);
   }
 
+  const refreshTtlMs = ms(process.env.JWT_REFRESH_EXPIRES_IN ?? '7d');
+
   // Rotate: revoke old token and issue a fresh one to limit replay window
   await revokeRefreshToken(refreshToken);
+
+  // Leave a short-lived reuse marker so a replay of this revoked token can be
+  // detected as theft (and the whole family revoked) instead of a plain 401.
+  // Marker TTL matches the refresh TTL; failures must not fail the refresh.
+  // The embedded timestamp lets the reuse check forgive replays inside the
+  // rotation leeway window (concurrent refresh races).
+  try {
+    const marker: RefreshReuseMarker = { u: user.id, t: Date.now() };
+    await redis.set(
+      refreshReuseKey(hashRefreshToken(refreshToken)),
+      JSON.stringify(marker),
+      'EX',
+      Math.floor(refreshTtlMs / 1000),
+    );
+  } catch (err) {
+    logger.warn('Failed to store refresh reuse marker', {
+      error: err instanceof Error ? err.message : String(err),
+      userId: user.id,
+    });
+  }
 
   const payload: JwtPayload = { id: user.id, email: user.email, role: user.role, name: user.name };
   const accessToken = signAccessToken(payload);
   const newRefreshToken = generateOpaqueRefreshToken();
-  const refreshTtlMs = ms(process.env.JWT_REFRESH_EXPIRES_IN ?? '7d');
   const expiresAt = new Date(Date.now() + refreshTtlMs);
   await storeRefreshToken(user.id, newRefreshToken, expiresAt);
 

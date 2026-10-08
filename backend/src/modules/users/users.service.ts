@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { AuthenticatedUser } from '../../shared/types';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { withTransaction } from '../../shared/utils/db';
 import { UpdateProfileInput, CreateUserInput, UpdatePermissionsInput, User } from './users.types';
 import * as usersRepository from './users.repository';
 import * as authRepository from '../auth/auth.repository';
@@ -144,5 +145,9 @@ export async function changePassword(
   }
 
   const newHash = await bcrypt.hash(newPassword, BCRYPT_COST_FACTOR);
-  await authRepository.updatePasswordHash(id, newHash);
+  await withTransaction(async (client) => {
+    await authRepository.updatePasswordHash(id, newHash, client);
+    // Revoke sessions in the same transaction so a failure rolls back the password change.
+    await authRepository.revokeAllRefreshTokensForUser(id, client);
+  });
 }

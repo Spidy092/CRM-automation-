@@ -97,6 +97,39 @@ describe('SequenceMessagePreview', () => {
     expect(firstNameTags.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('shows the portfolio filename and an edit link for the selected email', () => {
+    const templates = new Map(templateById);
+    templates.set('tpl-1', {
+      ...mockTemplates[0],
+      attachments: [{
+        id: 'attachment-1', filename: 'school-portfolio.pdf', mimeType: 'application/pdf',
+        sizeBytes: 2048, url: '/uploads/school-portfolio.pdf',
+      }],
+    });
+    renderWithProviders(<SequenceMessagePreview sequence={mockSequence} templateById={templates} />);
+    expect(screen.getByText('school-portfolio.pdf')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /add portfolio or images/i })[0]).toHaveAttribute(
+      'href', '/templates/tpl-1/edit',
+    );
+    expect(screen.getByText('No files attached.')).toBeInTheDocument();
+  });
+
+  it('previews the portfolio as a safe clickable button without showing its HTML', () => {
+    const templates = new Map(templateById);
+    templates.set('tpl-1', { ...mockTemplates[0], body: 'Hello school\n<a data-crm-portfolio="true" href="https://files.example.com/p.pdf">View portfolio</a>' });
+    renderWithProviders(<SequenceMessagePreview sequence={mockSequence} templateById={templates} />);
+    expect(screen.getByRole('link', { name: 'View portfolio' })).toHaveAttribute('href', 'https://files.example.com/p.pdf');
+    expect(screen.getByText('Hello school')).toBeInTheDocument();
+    expect(screen.queryByText(/data-crm-portfolio/)).not.toBeInTheDocument();
+  });
+
+  it('does not make an unsafe portfolio URL clickable', () => {
+    const templates = new Map(templateById);
+    templates.set('tpl-1', { ...mockTemplates[0], body: '<a data-crm-portfolio="true" href="javascript:alert(1)">View portfolio</a>' });
+    renderWithProviders(<SequenceMessagePreview sequence={mockSequence} templateById={templates} />);
+    expect(screen.queryByRole('link', { name: 'View portfolio' })).not.toBeInTheDocument();
+  });
+
   it('can toggle hide/view message content', () => {
     renderWithProviders(
       <SequenceMessagePreview

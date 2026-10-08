@@ -79,6 +79,7 @@ export async function publishWorkflowHandler(
   }
 }
 
+/** Handles pausing an active workflow. */
 export async function pauseWorkflowHandler(
   req: Request,
   res: Response,
@@ -91,6 +92,7 @@ export async function pauseWorkflowHandler(
   }
 }
 
+/** Handles resuming a paused workflow. */
 export async function resumeWorkflowHandler(
   req: Request,
   res: Response,
@@ -103,6 +105,7 @@ export async function resumeWorkflowHandler(
   }
 }
 
+/** Handles operator request to replay a failed workflow enrollment. */
 export async function replayWorkflowEnrollmentHandler(
   req: Request,
   res: Response,

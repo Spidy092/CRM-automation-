@@ -96,6 +96,16 @@ describe('sendgrid sendEmail', () => {
     if (res.ok) expect(res.externalId).toBe('x');
   });
 
+  it('sends the portfolio button in HTML and its URL in plain text', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: true, status: 202, externalId: 'x', latencyMs: 10 });
+    const html = 'Hello <a data-crm-portfolio="true" href="https://files.example.com/p.pdf?a=1&amp;b=2">View portfolio</a>';
+    await sendEmail({ leadId: 'l1', to: 'dest@example.com', subject: 'Portfolio', htmlBody: html });
+    const payload = JSON.parse(mockLoggedFetch.mock.calls[0][1].body);
+    expect(payload.content).toContainEqual({ type: 'text/plain', value: 'Hello View portfolio (https://files.example.com/p.pdf?a=1&b=2)' });
+    expect(payload.content).toContainEqual({ type: 'text/html', value: html });
+  });
+
   it('propagates a failure result', async () => {
     primeValidCreds();
     mockLoggedFetch.mockResolvedValue({
@@ -143,7 +153,7 @@ describe('sendgrid sendEmail', () => {
     ]);
   });
 
-  it('skips an attachment that fails to read from disk instead of failing the whole send', async () => {
+  it('blocks sending when an attachment cannot be read', async () => {
     primeValidCreds();
     mockLoggedFetch.mockResolvedValue({ ok: true, status: 200, externalId: 'x', latencyMs: 10 });
     (readFile as jest.Mock).mockRejectedValue(new Error('ENOENT'));
@@ -156,9 +166,7 @@ describe('sendgrid sendEmail', () => {
       attachments: [{ filename: 'flyer.png', mimeType: 'image/png', storagePath: '/x/flyer.png' }],
     });
 
-    expect(res.ok).toBe(true);
-    const [, options] = mockLoggedFetch.mock.calls[0];
-    const body = JSON.parse(options.body as string);
-    expect(body.attachments).toBeUndefined();
+    expect(res).toMatchObject({ ok: false, status: 422, retryable: false });
+    expect(mockLoggedFetch).not.toHaveBeenCalled();
   });
 });

@@ -56,6 +56,9 @@ jest.mock('../modules/leads/leads.repository', () => ({
 jest.mock('../modules/templates/templates.repository', () => ({
   findTemplateById: jest.fn(),
 }));
+jest.mock('../modules/campaigns/campaigns.service', () => ({
+  getCampaignMessageSettings: jest.fn(async (): Promise<null> => null),
+}));
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findCampaignById: jest.fn(),
   countSentTodayForCampaign: jest.fn(),

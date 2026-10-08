@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { createHash } from 'crypto';
+import type { OutreachTone } from '../campaigns/campaigns.types';
 import { redis } from '../../shared/utils/redis';
 import { logger } from '../../shared/utils/logger';
 import { type LeadRow } from '../leads/leads.types';
@@ -36,6 +38,18 @@ function buildPromptContext(lead: LeadRow): PromptContext {
   };
 }
 
+interface PersonalizeOptions {
+  enabled?: boolean;
+  tone?: OutreachTone;
+  includesPortfolioMarker?: boolean;
+}
+
+const toneInstructions: Record<OutreachTone, string> = {
+  formal: 'Use formal, respectful wording without slang or casual expressions.',
+  professional: 'Use clear, polished, business-friendly wording.',
+  conversational: 'Use friendly, natural, conversational wording without being overly familiar.',
+};
+
 function buildSystemPrompt(): string {
   return (
     'You are a helpful CRM outreach assistant. ' +
@@ -43,7 +57,7 @@ function buildSystemPrompt(): string {
     'by naturally weaving in details about the business name, industry, location, ' +
     'and any notable context (e.g. rating, source platform). ' +
     'Do NOT include placeholders like {business_name} in the final output. ' +
-    'Keep the message concise and professional. ' +
+    'Keep the message concise. Preserve the template meaning, facts, offers, links, HTML structure, and any CRM_PORTFOLIO_BUTTON_n markers exactly in place. ' +
     'Do NOT mention internal IDs or personal contact information.'
   );
 }
@@ -62,8 +76,24 @@ function buildUserPrompt(templateBody: string, ctx: PromptContext): string {
   );
 }
 
-function cacheKey(leadId: string, templateId: string): string {
-  return `ai:msg:${leadId}:${templateId}`;
+function cacheKey(
+  leadId: string,
+  templateId: string,
+  tone?: OutreachTone,
+  includesPortfolioMarker = false,
+): string {
+  if (!tone && !includesPortfolioMarker) return `ai:msg:${leadId}:${templateId}`;
+  const identity = createHash('sha256')
+    .update(JSON.stringify([leadId, templateId]))
+    .digest('hex');
+  return `ai:msg:v2:${identity}:${tone ?? 'default'}${includesPortfolioMarker ? ':portfolio-v1' : ''}`;
+}
+
+function insertBeforeDocumentClose(message: string, html: string): string {
+  const closeTag = /<\/(?:body|html)\s*>/i;
+  const match = closeTag.exec(message);
+  if (!match || match.index === undefined) return `${message.trimEnd()}\n\n${html}`;
+  return `${message.slice(0, match.index)}${html}\n${message.slice(match.index)}`;
 }
 
 function performFallback(templateBody: string, lead: LeadRow): string {
@@ -100,11 +130,44 @@ function performFallback(templateBody: string, lead: LeadRow): string {
 export async function personalizeMessage(
   lead: LeadRow,
   template: TemplateRow,
-  options?: { enabled?: boolean },
+  options?: PersonalizeOptions,
+): Promise<PersonalizeResult> {
+  // Keep the chosen portfolio outside AI rewriting and cache the message text only.
+  const portfolioPattern = /<a\b(?=[^>]*\sdata-crm-portfolio="true")[^>]*>[\s\S]*?<\/a>/gi;
+  const portfolioButtons: string[] = [];
+  let contentBody = template.body;
+  if (template.channel === 'email') {
+    contentBody = template.body.replace(portfolioPattern, (button) => {
+      const index = portfolioButtons.push(button) - 1;
+      return `CRM_PORTFOLIO_BUTTON_${index}`;
+    });
+  }
+  const hasPortfolioButtons = portfolioButtons.length > 0;
+  const result = await personalizeMessageContent(
+    lead,
+    hasPortfolioButtons ? { ...template, body: contentBody } : template,
+    { ...options, includesPortfolioMarker: hasPortfolioButtons },
+  );
+  if (!hasPortfolioButtons) return result;
+
+  let message = result.message;
+  portfolioButtons.forEach((button, index) => {
+    const marker = `CRM_PORTFOLIO_BUTTON_${index}`;
+    message = message.includes(marker)
+      ? message.replace(marker, button)
+      : insertBeforeDocumentClose(message, button);
+  });
+  return { ...result, message };
+}
+
+async function personalizeMessageContent(
+  lead: LeadRow,
+  template: TemplateRow,
+  options?: PersonalizeOptions,
 ): Promise<PersonalizeResult> {
   const leadId = lead.id;
   const templateId = template.id;
-  const key = cacheKey(leadId, templateId);
+  const key = cacheKey(leadId, templateId, options?.tone, options?.includesPortfolioMarker);
   const start = Date.now();
 
   if (options?.enabled === false) {
@@ -166,7 +229,11 @@ export async function personalizeMessage(
   });
 
   const ctx = buildPromptContext(lead);
-  const system = aiConfig.systemPromptOverride || buildSystemPrompt();
+  const system =
+    (aiConfig.systemPromptOverride || buildSystemPrompt()) +
+    (options?.tone
+      ? `\nMessage tone: ${options.tone}. ${toneInstructions[options.tone]} Preserve the template meaning, facts, offers, links, and HTML structure.`
+      : '');
   const user = buildUserPrompt(template.body, ctx);
 
   try {

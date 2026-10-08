@@ -28,6 +28,7 @@ import { computeDispatchDeferralMs } from '../modules/campaigns/campaigns.sendWi
 import { createLog, updateLogStatus } from '../modules/outreach/outreach.service';
 import { OutreachStatus } from '../shared/types';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
+import { getCampaignMessageSettings } from '../modules/campaigns/campaigns.service';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import { isPlaceholderPhone, isPlaceholderEmail } from '../shared/utils/phone';
 import { findLeadById } from '../modules/leads/leads.repository';
@@ -610,8 +611,11 @@ async function sendViaConnector(opts: {
   }
 
   // 4. Personalize message
+  const settings = await getCampaignMessageSettings(opts.campaignId);
+  const enabled = settings?.ai_personalization_enabled ?? opts.aiPersonalizationEnabled === true;
   const { message } = await personalizeMessage(lead, template, {
-    enabled: opts.aiPersonalizationEnabled === true,
+    enabled,
+    ...(enabled && settings ? { tone: settings.tone } : {}),
   });
 
   // 5. Determine destination

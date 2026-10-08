@@ -122,12 +122,75 @@ describe('refresh', () => {
     await expect(refresh('bad-token')).rejects.toMatchObject({ statusCode: 401 });
   });
 
+  it('does not revoke the family for an unknown token with no reuse marker', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue(null);
+    (redis.get as jest.Mock).mockResolvedValue(null);
+    await expect(refresh('never-issued')).rejects.toMatchObject({ statusCode: 401 });
+    expect(revokeAllRefreshTokensForUser).not.toHaveBeenCalled();
+  });
+
+  it('revokes the token family when a rotated token is reused past the leeway (theft signal)', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue(null);
+    (redis.get as jest.Mock).mockResolvedValue('u1');
+    await expect(refresh('reused-token')).rejects.toMatchObject({ statusCode: 401 });
+    expect(revokeAllRefreshTokensForUser).toHaveBeenCalledWith('u1');
+    expect(redis.del).toHaveBeenCalled();
+  });
+
+  it('revokes the family for a legacy plain-userId marker (age unknown, fail closed)', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue(null);
+    (redis.get as jest.Mock).mockResolvedValue('u1');
+    await expect(refresh('legacy-marker-token')).rejects.toMatchObject({ statusCode: 401 });
+    expect(revokeAllRefreshTokensForUser).toHaveBeenCalledWith('u1');
+  });
+
+  it('does NOT revoke the family when replayed inside the leeway window (benign race)', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue(null);
+    (redis.get as jest.Mock).mockResolvedValue(JSON.stringify({ u: 'u1', t: Date.now() }));
+    await expect(refresh('raced-token')).rejects.toMatchObject({ statusCode: 401 });
+    expect(revokeAllRefreshTokensForUser).not.toHaveBeenCalled();
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
+  it('revokes the family when replayed after the leeway window', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue(null);
+    (redis.get as jest.Mock).mockResolvedValue(
+      JSON.stringify({ u: 'u1', t: Date.now() - 120 * 1000 }),
+    );
+    await expect(refresh('stale-reused-token')).rejects.toMatchObject({ statusCode: 401 });
+    expect(revokeAllRefreshTokensForUser).toHaveBeenCalledWith('u1');
+    expect(redis.del).toHaveBeenCalled();
+  });
+
+  it('still returns 401 when the reuse check itself fails (fail-closed)', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue(null);
+    (redis.get as jest.Mock).mockRejectedValue(new Error('redis down'));
+    await expect(refresh('bad-token')).rejects.toMatchObject({ statusCode: 401 });
+  });
+
   it('issues a new access token for a valid refresh token', async () => {
     (findValidRefreshToken as jest.Mock).mockResolvedValue({ id: 't1', user_id: 'u1' });
     (findUserById as jest.Mock).mockResolvedValue(user);
     (jwt.sign as jest.Mock).mockReturnValue('access-token');
     const result = await refresh('good-token');
     expect(result.accessToken).toBe('access-token');
+  });
+
+  it('stores a reuse marker with userId and rotation timestamp on successful rotation', async () => {
+    (findValidRefreshToken as jest.Mock).mockResolvedValue({ id: 't1', user_id: 'u1' });
+    (findUserById as jest.Mock).mockResolvedValue(user);
+    (jwt.sign as jest.Mock).mockReturnValue('access-token');
+    await refresh('good-token');
+    expect(redis.set).toHaveBeenCalledWith(
+      expect.stringContaining('auth:refresh_reuse:'),
+      expect.stringMatching(/"u":"u1"/),
+      'EX',
+      expect.any(Number),
+    );
+    const markerValue = (redis.set as jest.Mock).mock.calls.find((call) =>
+      String(call[0]).includes('auth:refresh_reuse:'),
+    )?.[1] as string;
+    expect(JSON.parse(markerValue).t).toBeLessThanOrEqual(Date.now());
   });
 
   it('rejects when the user is no longer active (401)', async () => {

@@ -1,3 +1,5 @@
+import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
+import type { BulkTagMode } from './leads.schema';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
@@ -10,6 +12,7 @@ import { findStageById } from '../pipeline/pipeline.repository';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
 import { enqueueLeadEvent, enqueueScoringCalculate, type LeadEventJob } from '../../workers/queue';
 import {
+  findLeadEnrollmentOptions,
   countLeads,
   findExistingForDedup,
   findLeadById,
@@ -468,8 +471,35 @@ export async function bulkUpdateLeads(
   ids: string[],
   patch: Partial<LeadInput>,
   actor: Actor,
+  tagMode: BulkTagMode = 'replace',
 ): Promise<number> {
   if (ids.length === 0) return 0;
+
+  if (tagMode === 'append') {
+    const leads = await findLeadsByIds(ids);
+    for (const lead of leads) assertAccess(lead.assigned_to, actor, true);
+    const tags = [...new Set((patch.tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+    if (!tags.length) return 0;
+    const updated = await repoBulkUpdate(
+      leads.map((lead) => lead.id),
+      { tags },
+      true,
+    );
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'lead.bulk_tags_added',
+      entityType: 'lead',
+      entityId: 'bulk',
+      newValue: { ids: leads.map((lead) => lead.id), tags, updated },
+      ipAddress: actor.ipAddress ?? null,
+    });
+    for (const lead of leads) {
+      for (const tag of tags.filter((tag) => !(lead.tags ?? []).includes(tag))) {
+        enqueueLeadDomainEvent({ event: 'lead.tag_added', leadId: lead.id, payload: { tag } });
+      }
+    }
+    return updated;
+  }
 
   if (patch.custom_fields !== undefined) {
     const defs = await findActiveDefinitions();
@@ -573,3 +603,7 @@ export async function bulkPauseLeads(
 }
 
 export { clampLimit, decodeCursor };
+
+export async function getLeadEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
+  return findLeadEnrollmentOptions();
+}

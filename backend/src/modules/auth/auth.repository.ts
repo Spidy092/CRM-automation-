@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { PoolClient } from 'pg';
 import { pool, queryOne } from '../../shared/utils/db';
 import { UserRecord, ApiKeyListItem, ApiKeyRecordRow } from './auth.types';
 
@@ -6,7 +7,7 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
   return queryOne<UserRecord>(
     `SELECT id, name, email, password_hash, role, is_available, is_active
      FROM users
-     WHERE lower(email) = lower($1)`,
+     WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
     [email],
   );
 }
@@ -15,7 +16,7 @@ export async function findUserById(id: string): Promise<UserRecord | null> {
   return queryOne<UserRecord>(
     `SELECT id, name, email, password_hash, role, is_available, is_active
      FROM users
-     WHERE id = $1`,
+     WHERE id = $1 AND deleted_at IS NULL`,
     [id],
   );
 }
@@ -52,12 +53,22 @@ export async function revokeRefreshToken(refreshToken: string): Promise<void> {
   await pool.query(`DELETE FROM refresh_tokens WHERE token_hash = $1`, [tokenHash]);
 }
 
-export async function revokeAllRefreshTokensForUser(userId: string): Promise<void> {
-  await pool.query(`DELETE FROM refresh_tokens WHERE user_id = $1`, [userId]);
+export async function revokeAllRefreshTokensForUser(
+  userId: string,
+  client?: PoolClient,
+): Promise<void> {
+  await (client ?? pool).query(`DELETE FROM refresh_tokens WHERE user_id = $1`, [userId]);
 }
 
-export async function updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
-  await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [passwordHash, userId]);
+export async function updatePasswordHash(
+  userId: string,
+  passwordHash: string,
+  client?: PoolClient,
+): Promise<void> {
+  await (client ?? pool).query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [
+    passwordHash,
+    userId,
+  ]);
 }
 
 export async function createApiKey(
@@ -101,7 +112,7 @@ export async function findApiKeyByHash(keyHash: string): Promise<ApiKeyRecordRow
     `SELECT k.id, k.user_id, k.expires_at, k.deleted_at, u.id as u_id, u.email, u.role, u.name, u.is_active
      FROM api_keys k
      JOIN users u ON k.user_id = u.id
-     WHERE k.key_hash = $1`,
+     WHERE k.key_hash = $1 AND u.deleted_at IS NULL`,
     [keyHash],
   );
 }

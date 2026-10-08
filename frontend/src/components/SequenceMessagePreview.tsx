@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Sequence, SequenceStep } from '@/api/outreach';
 import type { Template } from '@/types';
+import { splitPortfolioButton } from '@/lib/templateVars';
 import { CHANNEL_COLORS, CHANNEL_ICONS, CHANNEL_LABELS } from '@/components/SequenceStepEditor';
 import {
   ChevronDown,
@@ -115,6 +116,7 @@ function StepPreviewCard({
 }) {
   const channelClass =
     CHANNEL_COLORS[step.channel] ?? 'bg-slate-50 border-slate-200 text-slate-800';
+  const portfolio = splitPortfolioButton(template?.body ?? '');
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/30">
@@ -187,8 +189,34 @@ function StepPreviewCard({
               Message Body:
             </div>
             <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-slate-700 dark:text-slate-300">
-              {renderTextWithVariables(template.body)}
+              {renderTextWithVariables(portfolio.text)}
             </div>
+            {step.channel === 'email' && portfolio.url && (
+              <a href={portfolio.url} target="_blank" rel="noopener noreferrer"
+                className="mt-3 inline-block rounded-md bg-indigo-700 px-5 py-3 text-sm font-semibold text-white">
+                View portfolio
+              </a>
+            )}
+          </div>
+          <div className="text-sm text-slate-700 dark:text-slate-300">
+            <p className="font-medium">Attachments</p>
+            {template.attachments?.length ? (
+              <ul className="mt-1 space-y-1">
+                {template.attachments.map((attachment) => (
+                  <li key={attachment.id}>{attachment.filename}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-slate-500">No files attached.</p>
+            )}
+            <Link
+              to={`/templates/${template.id}/edit`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-block text-indigo-700 underline dark:text-indigo-300"
+            >
+              Edit message and add portfolio or images (opens in a new tab)
+            </Link>
           </div>
         </div>
       )}
