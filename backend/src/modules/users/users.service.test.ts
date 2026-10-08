@@ -11,6 +11,7 @@ jest.mock('./users.repository', () => ({
 jest.mock('../auth/auth.repository', () => ({
   findUserById: jest.fn(),
   updatePasswordHash: jest.fn(),
+  revokeAllRefreshTokensForUser: jest.fn(),
 }));
 jest.mock('bcrypt', () => ({ hash: jest.fn(), compare: jest.fn() }));
 jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid-v4') }));
@@ -320,6 +321,7 @@ describe('changePassword', () => {
     await changePassword('sales-1', 'OldPw123', 'NewPw123', salesUser);
 
     expect(authRepository.updatePasswordHash).toHaveBeenCalledWith('sales-1', 'hashed-new');
+    expect(authRepository.revokeAllRefreshTokensForUser).toHaveBeenCalledWith('sales-1');
   });
 });
 

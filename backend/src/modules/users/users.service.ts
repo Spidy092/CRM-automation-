@@ -145,4 +145,7 @@ export async function changePassword(
 
   const newHash = await bcrypt.hash(newPassword, BCRYPT_COST_FACTOR);
   await authRepository.updatePasswordHash(id, newHash);
+  // Invalidate all other sessions so a compromised password cannot be reused
+  // from another device. Matches resetPassword() behavior.
+  await authRepository.revokeAllRefreshTokensForUser(id);
 }

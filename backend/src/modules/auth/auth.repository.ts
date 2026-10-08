@@ -6,7 +6,7 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
   return queryOne<UserRecord>(
     `SELECT id, name, email, password_hash, role, is_available, is_active
      FROM users
-     WHERE lower(email) = lower($1)`,
+     WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
     [email],
   );
 }
@@ -15,7 +15,7 @@ export async function findUserById(id: string): Promise<UserRecord | null> {
   return queryOne<UserRecord>(
     `SELECT id, name, email, password_hash, role, is_available, is_active
      FROM users
-     WHERE id = $1`,
+     WHERE id = $1 AND deleted_at IS NULL`,
     [id],
   );
 }
@@ -101,7 +101,7 @@ export async function findApiKeyByHash(keyHash: string): Promise<ApiKeyRecordRow
     `SELECT k.id, k.user_id, k.expires_at, k.deleted_at, u.id as u_id, u.email, u.role, u.name, u.is_active
      FROM api_keys k
      JOIN users u ON k.user_id = u.id
-     WHERE k.key_hash = $1`,
+     WHERE k.key_hash = $1 AND u.deleted_at IS NULL`,
     [keyHash],
   );
 }

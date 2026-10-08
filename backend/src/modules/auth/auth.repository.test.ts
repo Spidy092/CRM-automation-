@@ -8,6 +8,7 @@ import {
   revokeRefreshToken,
   revokeAllRefreshTokensForUser,
   updatePasswordHash,
+  findApiKeyByHash,
 } from './auth.repository';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -147,6 +148,36 @@ describe('auth.repository', () => {
         expect.stringContaining('UPDATE users SET password_hash = $1 WHERE id = $2'),
         ['new-hash', 'u1'],
       );
+    });
+  });
+
+  describe('findApiKeyByHash', () => {
+    const apiKeyRow = {
+      id: 'k1',
+      user_id: 'u1',
+      expires_at: null,
+      deleted_at: null,
+      u_id: 'u1',
+      email: 'test@crm.com',
+      role: 'admin',
+      name: 'Test',
+      is_active: true,
+    };
+
+    it('returns the joined row and excludes soft-deleted users', async () => {
+      mockQueryOne.mockResolvedValueOnce(apiKeyRow);
+      const result = await findApiKeyByHash('raw-key-hash');
+      expect(result).toEqual(apiKeyRow);
+      expect(mockQueryOne).toHaveBeenCalledWith(
+        expect.stringContaining('u.deleted_at IS NULL'),
+        ['raw-key-hash'],
+      );
+    });
+
+    it('returns null when the key is unknown or the owner is soft-deleted', async () => {
+      mockQueryOne.mockResolvedValueOnce(null);
+      const result = await findApiKeyByHash(hashToken('crm_unknown'));
+      expect(result).toBeNull();
     });
   });
 });
