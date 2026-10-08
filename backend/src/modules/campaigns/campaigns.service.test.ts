@@ -254,10 +254,56 @@ describe('launch / pause / resume', () => {
 describe('addLeads / removeLead', () => {
   it('adds leads and audits', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
-    (addLeadsToCampaign as jest.Mock).mockResolvedValue([{ id: 'cl-1' }, { id: 'cl-2' }]);
+    (addLeadsToCampaign as jest.Mock).mockResolvedValue([
+      { id: 'cl-1', lead_id: 'lead-1' },
+      { id: 'cl-2', lead_id: 'lead-2' },
+    ]);
     const res = await addLeads('camp-1', ['lead-1', 'lead-2'], actor);
     expect(res.added).toBe(2);
+    expect(res.enqueued).toBe(0);
     expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('queues the first message when leads are manually added to an active campaign', async () => {
+    const activeCampaignWithSequence = { ...baseCampaign, status: 'active', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaignWithSequence);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([
+      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
+    ]);
+    (addLeadsToCampaign as jest.Mock).mockResolvedValue([
+      { id: 'cl-1', campaign_id: 'camp-1', lead_id: 'lead-1' },
+    ]);
+
+    const res = await addLeads('camp-1', ['lead-1'], actor);
+
+    expect(res).toEqual({ added: 1, enqueued: 1 });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      leadId: 'lead-1',
+      campaignId: 'camp-1',
+      sequenceId: 'seq-1',
+      stepNumber: 1,
+      channel: 'email',
+      templateId: 'tmpl-1',
+    }));
+  });
+
+  it('refuses to add leads to an active campaign when its sending provider is disconnected', async () => {
+    const activeCampaignWithSequence = { ...baseCampaign, status: 'active', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaignWithSequence);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (findByName as jest.Mock).mockResolvedValue(null);
+
+    await expect(addLeads('camp-1', ['lead-1'], actor)).rejects.toThrow(
+      'Campaign is not ready to contact leads. No ready connector configured for email.',
+    );
+    expect(addLeadsToCampaign).not.toHaveBeenCalled();
   });
 
   it('throws 404 when adding to missing campaign', async () => {

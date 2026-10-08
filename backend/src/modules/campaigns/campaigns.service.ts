@@ -466,24 +466,64 @@ export async function addLeads(
   campaignId: string,
   leadIds: string[],
   actor: Actor,
-): Promise<{ added: number }> {
+): Promise<{ added: number; enqueued: number }> {
   const campaign = await findCampaignById(campaignId);
   if (!campaign) {
     throw new AppError('Campaign not found', 404);
   }
 
+  if (campaign.status === 'active') {
+    const readiness = await buildAutomationPreview(campaign, false);
+    const readinessIssues = [...readiness.templateIssues, ...readiness.connectorIssues];
+    if (readinessIssues.length > 0) {
+      throw new ValidationError(
+        `Campaign is not ready to contact leads. ${readinessIssues.join(' ')}`,
+      );
+    }
+  }
+
   const added = await addLeadsToCampaign(campaignId, leadIds);
+  let enqueued = 0;
+
+  if (campaign.status === 'active' && added.length > 0 && campaign.sequence_id) {
+    const addedLeadIds = new Set(added.map((row) => row.lead_id));
+    const preview = await buildAutomationPreview(campaign, false);
+    if (preview.firstStep) {
+      for (const lead of preview.eligibleLeads) {
+        if (!addedLeadIds.has(lead.leadId)) continue;
+        try {
+          await enqueueOutreachDispatch({
+            leadId: lead.leadId,
+            campaignId: campaign.id,
+            sequenceId: campaign.sequence_id,
+            stepNumber: preview.firstStep.stepNumber,
+            channel: preview.firstStep.channel,
+            templateId: preview.firstStep.templateId,
+            mockMode: preview.mockMode,
+            aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+          });
+          enqueued += 1;
+        } catch (enqueueErr) {
+          logger.error('Failed to enqueue outreach dispatch for newly added lead', {
+            campaignId: campaign.id,
+            leadId: lead.leadId,
+            error: enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
+          });
+        }
+      }
+    }
+  }
 
   await writeAuditLog({
     userId: actor.id,
     action: 'campaign.leads_added',
     entityType: 'campaign',
     entityId: campaignId,
-    newValue: { lead_ids: leadIds, count: added.length },
+    newValue: { lead_ids: leadIds, count: added.length, enqueued },
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return { added: added.length };
+  return { added: added.length, enqueued };
 }
 
 export async function removeLead(campaignId: string, leadId: string, actor: Actor): Promise<void> {
