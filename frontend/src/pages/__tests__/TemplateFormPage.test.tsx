@@ -184,3 +184,13 @@ describe('TemplateFormPage', () => {
     });
   });
 });
+
+
+it('prompts before switching away from unsaved visual work', () => {
+  mockParams = {};
+  renderWithProviders(<TemplateFormPage />, { initialEntries: ['/templates/new?mode=visual'] });
+  fireEvent.click(screen.getByRole('button', { name: /\+ divider/i }));
+  fireEvent.click(screen.getByRole('tab', { name: /^Simple$/i }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Undo change' })).toBeInTheDocument();
+});

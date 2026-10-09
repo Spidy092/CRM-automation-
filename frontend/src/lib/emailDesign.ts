@@ -492,7 +492,7 @@ export function estimateSmsSegmentsClient(body: string): SmsEstimate {
     ucs2 = true;
     break;
   }
-  const characters = ucs2 ? Array.from(body).length : body.length + extended;
+  const characters = ucs2 ? body.length : body.length + extended;
   if (characters === 0) return { encoding: 'GSM-7', characters: 0, segments: 0, remainingInSegment: 160 };
   if (!ucs2) {
     if (characters <= 160) return { encoding: 'GSM-7', characters, segments: 1, remainingInSegment: 160 - characters };

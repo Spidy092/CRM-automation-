@@ -9,6 +9,7 @@ import {
   isSafeLink,
   previewValues,
   renderDesignToHtml,
+  resolveEmailPayload,
   sanitizeCustomHtml,
   sanitizeInlineStyle,
   substituteVariables,
@@ -28,10 +29,51 @@ function validDesign(): TemplateDesign {
       preheader: 'Preview text',
     },
     blocks: [
-      { id: 'h1', type: 'header', props: { logoSrc: '', logoAlt: 'Co', title: 'Hello {{first_name}}', backgroundColor: '#ffffff', textColor: '#0f172a' } },
-      { id: 't1', type: 'text', props: { text: 'Hi {{first_name}}, welcome to {{business_name}}.', fontSize: 16, color: '#1e293b', align: 'left', bold: false, italic: false } },
-      { id: 'b1', type: 'button', props: { label: 'View portfolio', href: 'https://example.com/work', backgroundColor: '#4338ca', textColor: '#ffffff', shape: 'rounded', align: 'center' } },
-      { id: 'f1', type: 'footer', props: { text: 'Acme Co, 1 Main St', backgroundColor: '#f8fafc', textColor: '#64748b', unsubscribeHref: '{{unsubscribe_link}}' } },
+      {
+        id: 'h1',
+        type: 'header',
+        props: {
+          logoSrc: '',
+          logoAlt: 'Co',
+          title: 'Hello {{first_name}}',
+          backgroundColor: '#ffffff',
+          textColor: '#0f172a',
+        },
+      },
+      {
+        id: 't1',
+        type: 'text',
+        props: {
+          text: 'Hi {{first_name}}, welcome to {{business_name}}.',
+          fontSize: 16,
+          color: '#1e293b',
+          align: 'left',
+          bold: false,
+          italic: false,
+        },
+      },
+      {
+        id: 'b1',
+        type: 'button',
+        props: {
+          label: 'View portfolio',
+          href: 'https://example.com/work',
+          backgroundColor: '#4338ca',
+          textColor: '#ffffff',
+          shape: 'rounded',
+          align: 'center',
+        },
+      },
+      {
+        id: 'f1',
+        type: 'footer',
+        props: {
+          text: 'Acme Co, 1 Main St',
+          backgroundColor: '#f8fafc',
+          textColor: '#64748b',
+          unsubscribeHref: '{{unsubscribe_link}}',
+        },
+      },
     ],
   };
 }
@@ -68,7 +110,14 @@ describe('validateDesign', () => {
     const blocks = Array.from({ length: 61 }, (_, i) => ({
       id: `t${i}`,
       type: 'text' as const,
-      props: { text: 'x', fontSize: 16, color: '#1e293b', align: 'left' as const, bold: false, italic: false },
+      props: {
+        text: 'x',
+        fontSize: 16,
+        color: '#1e293b',
+        align: 'left' as const,
+        bold: false,
+        italic: false,
+      },
     }));
     const result = validateDesign({ ...validDesign(), blocks });
     expect(result.ok).toBe(false);
@@ -93,8 +142,32 @@ describe('renderDesignToHtml', () => {
   it('renders two-column sections as table cells', () => {
     const design = validDesign();
     design.blocks = [
-      { id: 'c1', type: 'columns', props: { columns: '2', left: { text: 'Left {{industry}}', imageSrc: '', imageAlt: '', buttonLabel: '', buttonHref: '' }, right: { text: 'Right', imageSrc: '', imageAlt: '', buttonLabel: '', buttonHref: '' }, gap: 16 } },
-      { id: 'f1', type: 'footer', props: { text: 'Bye', backgroundColor: '#f8fafc', textColor: '#64748b', unsubscribeHref: 'https://example.com/unsub' } },
+      {
+        id: 'c1',
+        type: 'columns',
+        props: {
+          columns: '2',
+          left: {
+            text: 'Left {{industry}}',
+            imageSrc: '',
+            imageAlt: '',
+            buttonLabel: '',
+            buttonHref: '',
+          },
+          right: { text: 'Right', imageSrc: '', imageAlt: '', buttonLabel: '', buttonHref: '' },
+          gap: 16,
+        },
+      },
+      {
+        id: 'f1',
+        type: 'footer',
+        props: {
+          text: 'Bye',
+          backgroundColor: '#f8fafc',
+          textColor: '#64748b',
+          unsubscribeHref: 'https://example.com/unsub',
+        },
+      },
     ];
     const { html, text } = renderDesignToHtml(design);
     expect(html).toContain('Left {{industry}}');
@@ -164,7 +237,9 @@ describe('personalization', () => {
 
   it('escapes values in HTML context but not in plain text', () => {
     const values = { ...previewValues(), first_name: '<b>Jordan</b>' };
-    expect(substituteVariables('Hi {{first_name}}', values, true)).toBe('Hi &lt;b&gt;Jordan&lt;/b&gt;');
+    expect(substituteVariables('Hi {{first_name}}', values, true)).toBe(
+      'Hi &lt;b&gt;Jordan&lt;/b&gt;',
+    );
     expect(substituteVariables('Hi {{first_name}}', values, false)).toBe('Hi <b>Jordan</b>');
     expect(substituteVariables('Hi {{unknown_var}}!', values, false)).toBe('Hi !');
   });
@@ -183,9 +258,9 @@ describe('link safety', () => {
     expect(isSafeLink('/p/slug')).toBe(true);
     expect(isSafeLink('javascript:alert(1)')).toBe(false);
     expect(isSafeLink('data:text/html,hi')).toBe(false);
-    expect(findUnsafeLinks('<a href="javascript:x">a</a><a href="https://ok.example">b</a>')).toEqual([
-      'javascript:x',
-    ]);
+    expect(
+      findUnsafeLinks('<a href="javascript:x">a</a><a href="https://ok.example">b</a>'),
+    ).toEqual(['javascript:x']);
   });
 });
 
@@ -215,7 +290,7 @@ describe('estimateSmsSegments', () => {
     expect(est.encoding).toBe('UCS-2');
     expect(est.segments).toBe(1);
     const long = estimateSmsSegments(`👋`.repeat(80));
-    expect(long.segments).toBe(2);
+    expect(long.segments).toBe(3);
   });
 });
 
@@ -241,4 +316,31 @@ describe('checkEmailCompliance', () => {
     const present = checkEmailCompliance('<p>Hello</p><a href="https://x.example">Unsubscribe</a>');
     expect(present.warnings).toEqual([]);
   });
+});
+
+it('renders a preheader only once and excludes it from the plain-text alternative', () => {
+  const rendered = renderDesignToHtml(validDesign());
+  expect(rendered.html.match(/Preview text/g)).toHaveLength(1);
+  expect(rendered.text).not.toContain('Preview text');
+});
+
+it('counts astral Unicode characters using UTF-16 units for SMS segmentation', () => {
+  expect(estimateSmsSegments('😀'.repeat(60))).toMatchObject({
+    encoding: 'UCS-2',
+    characters: 120,
+    segments: 2,
+  });
+});
+
+it('rejects delivery when an unsubscribe placeholder has no recipient link', () => {
+  expect(() =>
+    resolveEmailPayload(
+      {
+        editor_mode: 'visual',
+        body: '',
+        html_body: '<a href="{{unsubscribe_link}}">Unsubscribe</a>',
+      },
+      {},
+    ),
+  ).toThrow('unsubscribe link');
 });

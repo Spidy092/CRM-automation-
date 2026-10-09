@@ -70,6 +70,7 @@ export async function insertTemplate(data: {
    * to the column default of 'pending'.
    */
   approved_by?: string | null;
+  attachments?: TemplateAttachment[];
   editor_mode?: string;
   design?: unknown;
   html_body?: string | null;
@@ -78,7 +79,7 @@ export async function insertTemplate(data: {
 }): Promise<TemplateRow> {
   const approvedBy = data.approved_by ?? null;
   const row = await queryOne<TemplateRow>(
-    `INSERT INTO templates (name, channel, subject, body, variables, created_by, approval_status, approved_by, approved_at, editor_mode, design, html_body, text_body, preheader)
+    `INSERT INTO templates (name, channel, subject, body, variables, created_by, approval_status, approved_by, approved_at, editor_mode, design, html_body, text_body, preheader, attachments)
      VALUES ($1, $2, $3, $4, $5, $6,
              (CASE WHEN $7::uuid IS NULL THEN 'pending' ELSE 'approved' END)::template_approval_status,
              $7::uuid,
@@ -87,7 +88,7 @@ export async function insertTemplate(data: {
              $9::jsonb,
              $10,
              $11,
-             $12)
+             $12, $13::jsonb)
      RETURNING ${COLS}`,
     [
       data.name,
@@ -102,6 +103,7 @@ export async function insertTemplate(data: {
       data.html_body ?? null,
       data.text_body ?? null,
       data.preheader ?? null,
+      JSON.stringify(data.attachments ?? []),
     ],
   );
   if (!row) throw new AppError('Failed to create template', 500);

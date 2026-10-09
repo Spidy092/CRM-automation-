@@ -63,6 +63,7 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then(m => ({ defa
 const NewsletterPage = lazy(() => import('@/pages/NewsletterPage').then(m => ({ default: m.NewsletterPage })));
 const PublicSubscribePage = lazy(() => import('@/pages/PublicSubscribePage').then(m => ({ default: m.PublicSubscribePage })));
 const PublicNewsletterActionPage = lazy(() => import('@/pages/PublicNewsletterActionPage').then(m => ({ default: m.PublicNewsletterActionPage })));
+const PublicOutreachUnsubscribePage = lazy(() => import('@/pages/PublicOutreachUnsubscribePage').then(m => ({ default: m.PublicOutreachUnsubscribePage })));
 const AccountPage = lazy(() => import('@/pages/AccountPage').then(m => ({ default: m.AccountPage })));
 
 const queryClient = new QueryClient({
@@ -270,6 +271,7 @@ function App() {
               <Route path="/p/:slug" element={<LazyPage><PublicLandingPage /></LazyPage>} />
               <Route path="/subscribe" element={<LazyPage><PublicSubscribePage /></LazyPage>} />
               <Route path="/newsletter/:action" element={<LazyPage><PublicNewsletterActionPage /></LazyPage>} />
+              <Route path="/outreach/unsubscribe" element={<LazyPage><PublicOutreachUnsubscribePage /></LazyPage>} />
               <Route path="*" element={<LazyPage><NotFoundPage /></LazyPage>} />
             </Routes>
           </AppInitializer>

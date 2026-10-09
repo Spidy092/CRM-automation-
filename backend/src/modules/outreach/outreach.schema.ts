@@ -12,6 +12,11 @@
 import { z } from 'zod';
 import { MessageChannel } from '../../shared/types';
 
+/** Opaque capability token; never accepts a client-supplied lead identifier. */
+export const unsubscribeOutreachSchema = z
+  .object({ token: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict();
+
 // ── Shared enums ────────────────────────────────────────────────────────────
 
 const channelEnum = z.enum(['whatsapp', 'email', 'sms', 'phone_call']) as z.ZodEnum<

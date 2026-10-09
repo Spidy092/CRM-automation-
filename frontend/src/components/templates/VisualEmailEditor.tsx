@@ -153,12 +153,13 @@ function CanvasBlockView({ block }: { block: EmailBlock }) {
   }
 }
 
-export function VisualEmailEditor({ templateId, initial, starter, approvalStatus, onSaved }: {
+export function VisualEmailEditor({ templateId, initial, starter, approvalStatus, onSaved, onDirtyChange }: {
   templateId?: string;
   initial?: VisualEditorInitial | null;
   starter?: StarterTemplate | null;
   approvalStatus?: string;
   onSaved?: (id: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { showToast } = useToast();
   const createTemplate = useCreateTemplate();
@@ -173,8 +174,8 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
 
   const [name, setName] = useState(seed.name);
   const [subject, setSubject] = useState(seed.subject);
-  const [preheader, setPreheader] = useState(seed.preheader);
-  const [design, setDesign] = useState<EmailDesign>(seed.design);
+  const [design, setDesign] = useState<EmailDesign>({ ...seed.design, global: { ...seed.design.global, preheader: seed.preheader } });
+  const preheader = design.global.preheader;
   const [past, setPast] = useState<EmailDesign[]>([]);
   const [future, setFuture] = useState<EmailDesign[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -186,7 +187,8 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
   const [imageTarget, setImageTarget] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const dirty = saveState === 'dirty' || saveState === 'error';
+  const dirty = saveState !== 'saved';
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
     if (!dirty) return;
     const handler = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -223,6 +225,7 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
     });
   }, [design]);
 
+  const setPreheader = (value: string) => pushDesign({ ...design, global: { ...design.global, preheader: value } });
   const markDirty = () => setSaveState('dirty');
 
   const addBlock = (type: EmailBlockType) => {
@@ -408,6 +411,7 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
                   tabIndex={0}
                   onClick={() => setSelectedId(block.id)}
                   onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedId(block.id); }
                     else if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); moveBlock(index, -1); }
                     else if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); moveBlock(index, 1); }

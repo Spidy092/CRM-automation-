@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { wrap } from '../../shared/utils/asyncHandler';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
-import { authenticatedLimiter } from '../../shared/middleware/rateLimiter';
+import { authenticatedLimiter, publicLimiter } from '../../shared/middleware/rateLimiter';
 import {
   listSequencesHandler,
   getSequenceHandler,
@@ -17,9 +17,13 @@ import {
   quickSendHandler,
   createTaskHandler,
   updateTaskHandler,
+  unsubscribeOutreachHandler,
 } from './outreach.controller';
 
 const router = Router();
+
+// Recipient capability tokens authorize only opt-out; scanners cannot mutate via GET.
+router.post('/unsubscribe', publicLimiter, wrap(unsubscribeOutreachHandler));
 
 router.use(wrap(authenticate), authenticatedLimiter);
 

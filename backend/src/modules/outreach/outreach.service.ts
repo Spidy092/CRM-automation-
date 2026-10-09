@@ -43,6 +43,7 @@ import {
   substituteVariables,
 } from '../templates/templateDesign';
 import { dispatchOutbound } from '../integrations/dispatch';
+import { createOutreachUnsubscribeUrl } from './unsubscribe.service';
 
 function toSequenceResponse(row: SequenceRow) {
   return { ...row };
@@ -456,6 +457,7 @@ export async function sendQuickMessage(
     // deterministic substitution; simple templates keep the legacy path.
     const values = leadToVariableValues(lead);
     if (input.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
+      values.unsubscribe_link = await createOutreachUnsubscribeUrl(lead.id, lead.email);
       const payload = resolveEmailPayload(template, values);
       message = payload.text;
       dispatchBody = payload.html;

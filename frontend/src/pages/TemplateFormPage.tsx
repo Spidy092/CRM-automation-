@@ -667,6 +667,7 @@ export function TemplateFormPage() {
   const [initialized, setInitialized] = useState(false);
   const [hasUnsaved, setHasUnsaved] = useState(false);
   const [pendingMode, setPendingMode] = useState<EmailMode | null>(null);
+  const [pendingChannel, setPendingChannel] = useState<MessageChannel | null>(null);
   const [draft, setDraftState] = useState<SimpleDraft>({ name: '', subject: '', body: '' });
 
   const setDraft = (patch: Partial<SimpleDraft>) => setDraftState((d) => ({ ...d, ...patch }));
@@ -706,11 +707,22 @@ export function TemplateFormPage() {
 
   const confirmModeSwitch = () => {
     if (pendingMode) setMode(pendingMode);
+    if (pendingChannel) applyChannelChange(pendingChannel);
+    setPendingChannel(null);
     setPendingMode(null);
     setHasUnsaved(false);
   };
 
   const handleChannelChange = (next: MessageChannel) => {
+    if (next === channel) return;
+    if (hasUnsaved && channel === 'email' && mode !== 'simple') {
+      setPendingChannel(next);
+      return;
+    }
+    applyChannelChange(next);
+  };
+
+  const applyChannelChange = (next: MessageChannel) => {
     // Preserve the original behavior: a portfolio button becomes a visible
     // plain link when leaving email — text is never silently dropped.
     if (channel === 'email' && next !== 'email') {
@@ -812,6 +824,7 @@ export function TemplateFormPage() {
               initial={visualInitial}
               starter={starter}
               approvalStatus={existing?.approval_status}
+              onDirtyChange={setHasUnsaved}
               onSaved={(newId) => navigate(`/templates/${newId}/edit`, { replace: true })}
             />
           )}
@@ -843,13 +856,13 @@ export function TemplateFormPage() {
       )}
 
       <AlertDialog
-        open={pendingMode !== null}
+        open={pendingMode !== null || pendingChannel !== null}
         title="Switch editor?"
         description="Switching views discards unsaved edits in the current view. Anything you already saved is preserved — including the other mode's content, which is restored when you switch back."
         confirmLabel="Switch (discard unsaved edits)"
         cancelLabel="Stay here"
         onConfirm={confirmModeSwitch}
-        onCancel={() => setPendingMode(null)}
+        onCancel={() => { setPendingMode(null); setPendingChannel(null); }}
       />
     </div>
   );

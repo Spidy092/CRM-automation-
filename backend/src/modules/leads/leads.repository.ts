@@ -3,6 +3,15 @@ import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { LeadStatus } from '../../shared/types';
 import { LeadInput, LeadListFilters, LeadRow, LeadSortBy } from './leads.types';
 
+/** Update only the recipient whose email still matches the verified token. */
+export async function optOutLeadByEmail(id: string, email: string): Promise<LeadRow | null> {
+  return queryOne<LeadRow>(
+    `UPDATE leads SET status = 'opted_out', updated_at = NOW()
+     WHERE id = $1 AND lower(email) = $2 AND deleted_at IS NULL RETURNING ${COLS}`,
+    [id, email.trim().toLowerCase()],
+  );
+}
+
 /** Whitelist of sortable columns — the only place a column name reaches the SQL string. */
 const SORT_COLUMNS: Record<LeadSortBy, string> = {
   created_at: 'created_at',

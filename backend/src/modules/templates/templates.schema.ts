@@ -13,6 +13,10 @@ export const templateIdParamSchema = z.object({
   id: z.string().uuid('Template id must be a valid UUID'),
 });
 
+const queryBoolean = z
+  .union([z.boolean(), z.enum(['true', 'false'])])
+  .transform((value) => value === true || value === 'true');
+
 const editorModeEnum = z.enum(['simple', 'visual', 'html']);
 
 const baseTemplateSchema = z.object({
@@ -37,9 +41,9 @@ export const listTemplatesQuerySchema = z.object({
   channel: channelEnum.optional(),
   approval_status: approvalStatusEnum.optional(),
   search: z.string().max(255).optional(),
-  include_archived: z.coerce.boolean().optional(),
-  archived_only: z.coerce.boolean().optional(),
-  mine: z.coerce.boolean().optional(),
+  include_archived: queryBoolean.optional(),
+  archived_only: queryBoolean.optional(),
+  mine: queryBoolean.optional(),
 });
 
 export const approveTemplateSchema = z.object({

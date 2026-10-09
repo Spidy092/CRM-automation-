@@ -30,6 +30,7 @@ import { OutreachStatus } from '../shared/types';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { getCampaignMessageSettings } from '../modules/campaigns/campaigns.service';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
+import { createOutreachUnsubscribeUrl } from '../modules/outreach/unsubscribe.service';
 import {
   leadToVariableValues,
   resolveEmailPayload,
@@ -626,6 +627,7 @@ async function sendViaConnector(opts: {
   let message: string;
   let subject: string | undefined;
   if (opts.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
+    values.unsubscribe_link = await createOutreachUnsubscribeUrl(lead.id, lead.email);
     const payload = resolveEmailPayload(template, values);
     message = payload.html;
     subject = payload.subject ?? undefined;

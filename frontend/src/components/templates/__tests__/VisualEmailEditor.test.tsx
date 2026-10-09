@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
@@ -99,4 +100,33 @@ describe('VisualEmailEditor', () => {
     expect(await screen.findByText(/template name is required/i)).toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
   });
+});
+
+
+it('synchronizes both preheader controls and includes changes in undo history', () => {
+  renderWithProviders(<VisualEmailEditor />);
+  const fields = screen.getAllByLabelText('Preheader');
+  fireEvent.change(fields[1], { target: { value: 'New preview text' } });
+  expect(fields[0]).toHaveValue('New preview text');
+  fireEvent.click(screen.getByRole('button', { name: 'Undo change' }));
+  expect(fields[0]).toHaveValue('');
+  expect(fields[1]).toHaveValue('');
+});
+
+it('lets keyboard users activate nested block action buttons', async () => {
+  const user = userEvent.setup();
+  renderWithProviders(<VisualEmailEditor starter={starterTemplates()[0]} />);
+  const before = screen.getAllByRole('option').filter((el) => el.tagName === 'ARTICLE').length;
+  screen.getAllByRole('button', { name: 'Duplicate text block' })[0].focus();
+  await user.keyboard('{Enter}');
+  expect(screen.getAllByRole('option').filter((el) => el.tagName === 'ARTICLE')).toHaveLength(before + 1);
+});
+
+it('notifies its page of unsaved visual edits', () => {
+  const onDirtyChange = vi.fn();
+  const starter = starterTemplates()[0];
+  renderWithProviders(<VisualEmailEditor templateId="saved" initial={{ name: starter.name, subject: starter.subject, preheader: starter.preheader, design: starter.design }} onDirtyChange={onDirtyChange} />);
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  fireEvent.click(screen.getByRole('button', { name: /\+ divider/i }));
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 });

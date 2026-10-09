@@ -28,6 +28,7 @@
  */
 
 import { z } from 'zod';
+import { AppError } from '../../shared/middleware/errorHandler';
 
 // ── Variable catalog ─────────────────────────────────────────────────────────
 // Mirrors the fallback vocabulary in `outreach.prompt.ts performFallback`
@@ -781,8 +782,8 @@ export function renderDesignToHtml(design: TemplateDesign): RenderedEmail {
   const preheader = g.preheader
     ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(g.preheader)}</div>`
     : '';
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><style>@media only screen and (max-width:480px){.crm-col{display:block !important;width:100% !important;}}</style></head><body style="margin:0;padding:0;background-color:${g.backgroundColor};"><div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(g.preheader)}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${g.backgroundColor};margin:0;padding:0;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="${g.contentWidth}" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${g.contentWidth}px;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tbody>${rows}</tbody></table></td></tr></table>${preheader}</body></html>`;
-  return { html, text: emailHtmlToText(html) };
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><style>@media only screen and (max-width:480px){.crm-col{display:block !important;width:100% !important;}}</style></head><body style="margin:0;padding:0;background-color:${g.backgroundColor};">${preheader}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${g.backgroundColor};margin:0;padding:0;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="${g.contentWidth}" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${g.contentWidth}px;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tbody>${rows}</tbody></table></td></tr></table></body></html>`;
+  return { html, text: emailHtmlToText(`<table>${rows}</table>`) };
 }
 
 /** Plain-text alternative preserving link destinations (matches emailContent.ts). */
@@ -842,7 +843,6 @@ export function leadToVariableValues(lead: MinimalLeadForVariables): Record<stri
         : String(lead.google_rating),
     source_platform: lead.source_platform,
     classification: lead.classification ?? '',
-    unsubscribe_link: '',
   };
 }
 
@@ -867,6 +867,18 @@ export function resolveEmailPayload(
     ? substituteVariables(template.subject, values, false)
     : (template.subject ?? null);
   if (template.editor_mode !== 'simple' && template.html_body) {
+    if (/\{\{\s*unsubscribe_link\s*\}\}/.test(template.html_body)) {
+      try {
+        const url = new URL(values.unsubscribe_link ?? '');
+        if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password)
+          throw new Error('invalid URL');
+      } catch {
+        throw new AppError(
+          'A valid recipient unsubscribe link is required before email delivery',
+          422,
+        );
+      }
+    }
     return {
       html: substituteVariables(template.html_body, values, true),
       text: substituteVariables(
@@ -908,7 +920,7 @@ export function estimateSmsSegments(body: string): SmsEstimate {
     ucs2 = true;
     break;
   }
-  const characters = ucs2 ? Array.from(body).length : body.length + extended;
+  const characters = ucs2 ? body.length : body.length + extended;
   if (characters === 0)
     return { encoding: 'GSM-7', characters: 0, segments: 0, remainingInSegment: 160 };
   if (!ucs2) {

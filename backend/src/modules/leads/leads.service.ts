@@ -1,4 +1,5 @@
 import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
+import { createHash } from 'crypto';
 import type { BulkTagMode } from './leads.schema';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -13,6 +14,7 @@ import { AuthenticatedUser, LeadStatus } from '../../shared/types';
 import { enqueueLeadEvent, enqueueScoringCalculate, type LeadEventJob } from '../../workers/queue';
 import {
   findLeadEnrollmentOptions,
+  optOutLeadByEmail as optOutLeadByEmailRepo,
   countLeads,
   findExistingForDedup,
   findLeadById,
@@ -48,6 +50,35 @@ interface Actor {
   id: string;
   role: AuthenticatedUser['role'];
   ipAddress?: string | null;
+}
+
+/** Apply only an email-bound recipient opt-out; stop pending outreach on every retry. */
+export async function optOutLeadByEmail(id: string, emailHash: string): Promise<void> {
+  const before = await findLeadById(id);
+  if (
+    !before?.email ||
+    createHash('sha256').update(before.email.trim().toLowerCase()).digest('hex') !== emailHash
+  ) {
+    throw new AppError('This unsubscribe link is invalid or expired', 404);
+  }
+  const updated = await optOutLeadByEmailRepo(id, before.email);
+  if (!updated) throw new AppError('This unsubscribe link is invalid or expired', 404);
+  await cancelPendingOutreachJobs({ leadId: id });
+  if (before.status !== 'opted_out') {
+    await writeAuditLog({
+      userId: null,
+      action: 'lead.opted_out',
+      entityType: 'lead',
+      entityId: id,
+      oldValue: { status: before.status },
+      newValue: { status: 'opted_out', reason: 'recipient_unsubscribe' },
+    });
+    enqueueLeadDomainEvent({
+      event: 'lead.status_changed',
+      leadId: id,
+      payload: { status: 'opted_out' },
+    });
+  }
 }
 
 /** Queue delivery is asynchronous; surface failures without creating an

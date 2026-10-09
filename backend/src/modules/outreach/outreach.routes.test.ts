@@ -1,4 +1,5 @@
 jest.mock('./outreach.controller', () => ({
+  unsubscribeOutreachHandler: jest.fn(),
   listSequencesHandler: jest.fn(),
   getSequenceHandler: jest.fn(),
   createSequenceHandler: jest.fn(),
@@ -23,6 +24,7 @@ jest.mock('../../shared/middleware/rbac', () => ({
 }));
 
 jest.mock('../../shared/middleware/rateLimiter', () => ({
+  publicLimiter: jest.fn((_req: any, _res: any, next: any) => next()),
   authenticatedLimiter: jest.fn((_req: any, _res: any, next: any) => next()),
 }));
 

@@ -78,7 +78,7 @@ export function TemplatesPage() {
     mine: tab === 'mine' || undefined,
   });
 
-  const templates = (data?.items ?? []).filter((t) => (showArchived ? true : !t.archived_at));
+  const templates = data?.items ?? [];
   const hasMore = data?.meta?.hasMore ?? false;
   const nextCursor = data?.meta?.nextCursor;
 

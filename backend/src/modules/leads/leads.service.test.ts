@@ -1,8 +1,10 @@
+import { createHash } from 'crypto';
 import { LeadRow } from './leads.types';
 import { bulkUpdateSchema } from './leads.schema';
 
 jest.mock('../../workers/queue');
 jest.mock('./leads.repository', () => ({
+  optOutLeadByEmail: jest.fn(),
   findLeads: jest.fn(),
   countLeads: jest.fn(),
   findLeadById: jest.fn(),
@@ -35,7 +37,11 @@ jest.mock('../custom-fields/customFields.service', () => ({
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 
-import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
+import {
+  enqueueLeadEvent,
+  enqueueScoringCalculate,
+  cancelPendingOutreachJobs,
+} from '../../workers/queue';
 import {
   bulkClassifyLeads,
   bulkPauseLeads,
@@ -49,12 +55,14 @@ import {
   setLeadPaused,
   softDeleteLeadById,
   updateLeadFields,
+  optOutLeadByEmail,
 } from './leads.service';
 import {
   createOutboundActivityAndUpdateLead,
   insertActivity,
 } from '../activities/activities.repository';
 import {
+  optOutLeadByEmail as optOutRepo,
   countLeads,
   findExistingForDedup,
   findLeadById,
@@ -585,11 +593,24 @@ describe('bulkUpdateLeads', () => {
       { ...baseRow, id: 'lead-2', tags: ['school'] },
     ]);
     (repoBulkUpdate as jest.Mock).mockResolvedValue(2);
-    const result = await bulkUpdateLeads(['lead-1', 'lead-2'], { tags: [' school ', 'school'] }, { id: 'admin-1', role: 'admin' }, 'append');
+    const result = await bulkUpdateLeads(
+      ['lead-1', 'lead-2'],
+      { tags: [' school ', 'school'] },
+      { id: 'admin-1', role: 'admin' },
+      'append',
+    );
     expect(result).toBe(2);
     expect(repoBulkUpdate).toHaveBeenCalledWith(['lead-1', 'lead-2'], { tags: ['school'] }, true);
-    expect(enqueueLeadEvent).toHaveBeenCalledWith({ event: 'lead.tag_added', leadId: 'lead-1', payload: { tag: 'school' } });
-    expect(enqueueLeadEvent).not.toHaveBeenCalledWith({ event: 'lead.tag_added', leadId: 'lead-2', payload: { tag: 'school' } });
+    expect(enqueueLeadEvent).toHaveBeenCalledWith({
+      event: 'lead.tag_added',
+      leadId: 'lead-1',
+      payload: { tag: 'school' },
+    });
+    expect(enqueueLeadEvent).not.toHaveBeenCalledWith({
+      event: 'lead.tag_added',
+      leadId: 'lead-2',
+      payload: { tag: 'school' },
+    });
   });
 
   it('rejects the whole tag operation if sales selects a lead owned by another rep', async () => {
@@ -597,14 +618,27 @@ describe('bulkUpdateLeads', () => {
       { ...baseRow, id: 'lead-1', assigned_to: 'sales-1' },
       { ...baseRow, id: 'lead-2', assigned_to: 'sales-2' },
     ]);
-    await expect(bulkUpdateLeads(['lead-1', 'lead-2'], { tags: ['school'] }, { id: 'sales-1', role: 'sales' }, 'append')).rejects.toMatchObject({ statusCode: 403 });
+    await expect(
+      bulkUpdateLeads(
+        ['lead-1', 'lead-2'],
+        { tags: ['school'] },
+        { id: 'sales-1', role: 'sales' },
+        'append',
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
     expect(repoBulkUpdate).not.toHaveBeenCalled();
   });
 
   it('validates append-only tag requests at the API boundary', () => {
     const ids = ['11111111-1111-4111-8111-111111111111'];
-    expect(bulkUpdateSchema.safeParse({ ids, patch: { tags: ['school'] }, tag_mode: 'append' }).success).toBe(true);
-    for (const patch of [{ tags: [' '] }, { tags: ['school, vip'] }, { tags: ['school'], notes: 'unexpected' }]) {
+    expect(
+      bulkUpdateSchema.safeParse({ ids, patch: { tags: ['school'] }, tag_mode: 'append' }).success,
+    ).toBe(true);
+    for (const patch of [
+      { tags: [' '] },
+      { tags: ['school, vip'] },
+      { tags: ['school'], notes: 'unexpected' },
+    ]) {
       expect(bulkUpdateSchema.safeParse({ ids, patch, tag_mode: 'append' }).success).toBe(false);
     }
   });
@@ -686,5 +720,32 @@ describe('bulkPauseLeads', () => {
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'lead.bulk_paused', entityId: 'bulk' }),
     );
+  });
+});
+
+describe('recipient email opt-out', () => {
+  beforeEach(() => jest.clearAllMocks());
+  const hash = createHash('sha256').update('john@acme.com').digest('hex');
+  it('marks a matching recipient opted out and cancels queued outreach', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+    (optOutRepo as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
+    await optOutLeadByEmail('lead-1', hash);
+    expect(optOutRepo).toHaveBeenCalledWith('lead-1', 'john@acme.com');
+    expect(cancelPendingOutreachJobs).toHaveBeenCalledWith({ leadId: 'lead-1' });
+  });
+  it('rejects a token after the recipient address changes', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      email: 'someone-else@example.com',
+    });
+    await expect(optOutLeadByEmail('lead-1', hash)).rejects.toMatchObject({ statusCode: 404 });
+    expect(optOutRepo).not.toHaveBeenCalled();
+  });
+  it('retries cancellation safely for an already opted-out recipient', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
+    (optOutRepo as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
+    await optOutLeadByEmail('lead-1', hash);
+    expect(cancelPendingOutreachJobs).toHaveBeenCalledWith({ leadId: 'lead-1' });
+    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 });

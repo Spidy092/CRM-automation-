@@ -99,3 +99,7 @@ describe('validateWhatsappClient', () => {
     expect(validateWhatsappClient('Hi', 2).warnings.length).toBeGreaterThan(0);
   });
 });
+
+it('counts emoji as two UTF-16 units in SMS estimates', () => {
+  expect(estimateSmsSegmentsClient('😀'.repeat(60))).toMatchObject({ encoding: 'UCS-2', characters: 120, segments: 2 });
+});

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import { unlink, writeFile, mkdir } from 'fs/promises';
+import { isDeepStrictEqual } from 'util';
+import { unlink, writeFile, mkdir, copyFile } from 'fs/promises';
 import path from 'path';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -339,6 +340,8 @@ export async function updateTemplate(
   assertMayEditApproved(before, actor);
 
   const nextChannel = input.channel ?? before.channel;
+  const nextMode =
+    input.editor_mode ?? (nextChannel !== before.channel ? 'simple' : before.editor_mode);
   const modeSwitching = input.editor_mode !== undefined && input.editor_mode !== before.editor_mode;
   const contentInputs =
     input.body !== undefined ||
@@ -356,12 +359,14 @@ export async function updateTemplate(
     const bodyForPrep =
       input.body !== undefined
         ? input.body
-        : before.editor_mode !== 'simple' && before.text_body
-          ? before.text_body
-          : before.body;
+        : nextMode === 'html'
+          ? (before.html_body ?? before.body)
+          : nextMode === 'simple' && before.editor_mode !== 'simple'
+            ? (before.text_body ?? before.body)
+            : before.body;
     prepared = prepareTemplateContent({
       channel: nextChannel,
-      editor_mode: input.editor_mode ?? (input.channel ? 'simple' : before.editor_mode),
+      editor_mode: nextMode,
       design: input.design !== undefined ? input.design : before.design,
       body: bodyForPrep,
       subject: input.subject !== undefined ? input.subject : before.subject,
@@ -410,7 +415,7 @@ export async function updateTemplate(
     (input.subject !== undefined && (input.subject ?? null) !== before.subject) ||
     (prepared !== null &&
       (prepared.html_body !== before.html_body ||
-        JSON.stringify(prepared.design ?? null) !== JSON.stringify(before.design ?? null) ||
+        !isDeepStrictEqual(prepared.design ?? null, before.design ?? null) ||
         (prepared.preheader ?? null) !== (before.preheader ?? null) ||
         renderedAfter !== renderedBefore));
   if (contentChanged && before.approval_status === 'approved') {
@@ -500,40 +505,54 @@ export async function duplicateTemplate(
   const before = await findTemplateById(id);
   if (!before) throw new AppError('Template not found', 404);
 
-  const row = await insertTemplate({
-    name: name?.trim() || `${before.name} (copy)`,
-    channel: before.channel,
-    subject: before.subject,
-    body: before.body,
-    variables: before.variables,
-    created_by: actor.id,
-    approved_by: null,
-    editor_mode: before.editor_mode,
-    design: (before.design as TemplateDesign | null) ?? null,
-    html_body: before.html_body,
-    text_body: before.text_body,
-    preheader: before.preheader,
-  });
-
-  // Attachments reference the same stored files (no disk copy); ownership stays
-  // with the original template's lifecycle for direct uploads.
-  if ((before.attachments ?? []).length > 0) {
-    for (const attachment of before.attachments) {
-      await appendTemplateAttachment(row.id, attachment);
-    }
-    const refreshed = await findTemplateById(row.id);
-    if (refreshed) {
-      await writeAuditLog({
-        userId: actor.id,
-        action: 'template.duplicated',
-        entityType: 'template',
-        entityId: row.id,
-        oldValue: { source_template_id: id },
-        newValue: { name: refreshed.name, channel: refreshed.channel },
-        ipAddress: actor.ipAddress ?? null,
+  const attachments: TemplateAttachment[] = [];
+  const copiedPaths: string[] = [];
+  let row: TemplateRow;
+  try {
+    for (const attachment of before.attachments ?? []) {
+      if (attachment.libraryFileId) {
+        attachments.push({ ...attachment, id: randomUUID() });
+        continue;
+      }
+      const attachmentId = randomUUID();
+      const diskFilename = `${attachmentId}${path.extname(attachment.storagePath)}`;
+      const storagePath = path.join(UPLOAD_DIR, diskFilename);
+      await mkdir(UPLOAD_DIR, { recursive: true });
+      await copyFile(attachment.storagePath, storagePath);
+      copiedPaths.push(storagePath);
+      attachments.push({
+        ...attachment,
+        id: attachmentId,
+        storagePath,
+        url: `${publicBaseUrl()}/uploads/templates/${diskFilename}`,
       });
-      return toResponse(refreshed);
     }
+    row = await insertTemplate({
+      name: name?.trim() || `${before.name} (copy)`,
+      channel: before.channel,
+      subject: before.subject,
+      body: before.body,
+      variables: before.variables,
+      created_by: actor.id,
+      approved_by: null,
+      editor_mode: before.editor_mode,
+      design: (before.design as TemplateDesign | null) ?? null,
+      html_body: before.html_body,
+      text_body: before.text_body,
+      preheader: before.preheader,
+      attachments,
+    });
+  } catch (error) {
+    await Promise.all(
+      copiedPaths.map((storagePath) =>
+        unlink(storagePath).catch((cleanupError: unknown) => {
+          logger.error('failed to clean up duplicated attachment', {
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }),
+      ),
+    );
+    throw error;
   }
 
   await writeAuditLog({

@@ -137,7 +137,12 @@ describe('design-system schemas', () => {
 
   it('create rejects unknown editor_mode values', () => {
     expect(
-      createTemplateSchema.safeParse({ name: 'X', channel: 'email', body: 'b', editor_mode: 'dragdrop' }).success,
+      createTemplateSchema.safeParse({
+        name: 'X',
+        channel: 'email',
+        body: 'b',
+        editor_mode: 'dragdrop',
+      }).success,
     ).toBe(false);
   });
 
@@ -162,7 +167,9 @@ describe('design-system schemas', () => {
 
   it('preview accepts optional sample values', () => {
     expect(previewTemplateSchema.safeParse({}).success).toBe(true);
-    expect(previewTemplateSchema.safeParse({ sample_values: { first_name: 'Sam' } }).success).toBe(true);
+    expect(previewTemplateSchema.safeParse({ sample_values: { first_name: 'Sam' } }).success).toBe(
+      true,
+    );
   });
 
   it('test-send requires a valid recipient email', () => {
@@ -170,4 +177,14 @@ describe('design-system schemas', () => {
     expect(testSendTemplateSchema.safeParse({ to: 'not-an-email' }).success).toBe(false);
     expect(testSendTemplateSchema.safeParse({}).success).toBe(false);
   });
+});
+
+it('parses false query strings as false and rejects unsupported boolean values', () => {
+  const parsed = listTemplatesQuerySchema.parse({
+    include_archived: 'false',
+    archived_only: 'false',
+    mine: 'false',
+  });
+  expect(parsed).toMatchObject({ include_archived: false, archived_only: false, mine: false });
+  expect(listTemplatesQuerySchema.safeParse({ mine: 'no' }).success).toBe(false);
 });
