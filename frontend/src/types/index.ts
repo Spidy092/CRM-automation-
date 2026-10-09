@@ -144,6 +144,8 @@ export interface TemplateAttachment {
   url: string;
 }
 
+export type TemplateEditorMode = 'simple' | 'visual' | 'html';
+
 export interface Template {
   id: string;
   name: string;
@@ -156,6 +158,15 @@ export interface Template {
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
+  editor_mode: TemplateEditorMode;
+  /** Versioned visual-design document (visual mode only). */
+  design: unknown | null;
+  /** Rendered email HTML (visual) or sanitized custom HTML (html mode). */
+  html_body: string | null;
+  /** Plain-text alternative generated alongside html_body. */
+  text_body: string | null;
+  preheader: string | null;
+  archived_at: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;

@@ -19,12 +19,31 @@ import {
   TemplateActor,
   TemplateApprovalInput,
   TemplateAttachment,
+  TemplateEditorMode,
   TemplateInput,
   TemplateListFilters,
   TemplateResponse,
   TemplateRow,
 } from './templates.types';
 import { getFileRow } from '../files/files.service';
+import {
+  checkEmailCompliance,
+  emailHtmlToText,
+  estimateSmsSegments,
+  extractVariableNames,
+  findInvalidVariables,
+  findUnsafeLinks,
+  leadToVariableValues,
+  previewValues,
+  renderDesignToHtml,
+  resolveEmailPayload,
+  sanitizeCustomHtml,
+  substituteVariables,
+  validateDesign,
+  validateWhatsappBody,
+  type SmsEstimate,
+  type TemplateDesign,
+} from './templateDesign';
 
 // ── Attachments ──────────────────────────────────────────────────────────────
 
@@ -61,6 +80,12 @@ function toResponse(row: {
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
+  editor_mode?: string | null;
+  design?: unknown;
+  html_body?: string | null;
+  text_body?: string | null;
+  preheader?: string | null;
+  archived_at?: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -78,11 +103,134 @@ function toResponse(row: {
     approved_by: row.approved_by,
     approved_at: row.approved_at,
     rejection_reason: row.rejection_reason,
+    editor_mode: (row.editor_mode as TemplateEditorMode) ?? 'simple',
+    design: row.design ?? null,
+    html_body: row.html_body ?? null,
+    text_body: row.text_body ?? null,
+    preheader: row.preheader ?? null,
+    archived_at: row.archived_at ?? null,
     created_by: row.created_by,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
 }
+
+// ── Design-system rendering ──────────────────────────────────────────────────
+
+export interface PreparedTemplateContent {
+  editor_mode: TemplateEditorMode;
+  design: TemplateDesign | null;
+  html_body: string | null;
+  text_body: string | null;
+  preheader: string | null;
+  variables: string[];
+}
+
+/**
+ * Resolve the stored representation for a create/update payload.
+ *
+ * - Non-email channels always use `simple` (email layout controls never apply
+ *   to WhatsApp/SMS); any design payload is ignored, never stored.
+ * - `visual`: the design doc is validated server-side, then deterministically
+ *   rendered to `html_body` + `text_body`. The structured doc is preserved so
+ *   reopening never depends on reverse-engineering HTML. `body` keeps the
+ *   plain-text alternative so legacy consumers (sequence previews, logs) keep
+ *   working.
+ * - `html`: pasted/imported HTML is sanitized against the explicit allowlist;
+ *   visual and HTML modes stay distinguishable (`editor_mode` + presence of
+ *   `design`). Arbitrary HTML is never converted into editable blocks.
+ * - `simple`: legacy behavior unchanged; html/design outputs are cleared only
+ *   when explicitly switching away (mode switches never silently drop the
+ *   other representation — callers pass through what they want to keep).
+ */
+export function prepareTemplateContent(input: {
+  channel: string;
+  editor_mode?: string;
+  design?: unknown;
+  body: string;
+  subject?: string | null;
+  preheader?: string | null;
+}): PreparedTemplateContent {
+  const requestedMode = (input.editor_mode ?? 'simple') as TemplateEditorMode;
+  const editor_mode: TemplateEditorMode = input.channel === 'email' ? requestedMode : 'simple';
+  const preheader = input.channel === 'email' ? (input.preheader ?? null) : null;
+
+  if (editor_mode === 'visual') {
+    const validated = validateDesign(input.design);
+    if (!validated.ok) {
+      throw new AppError(`Invalid design document: ${validated.errors.join('; ')}`, 422);
+    }
+    const design = validated.design;
+    if (preheader && design.global.preheader !== preheader) {
+      design.global.preheader = preheader;
+    }
+    const rendered = renderDesignToHtml(design);
+    const unsafe = findUnsafeLinks(rendered.html);
+    if (unsafe.length > 0) {
+      throw new AppError(
+        `Design contains unsafe link destinations: ${unsafe.slice(0, 3).join(', ')}`,
+        422,
+      );
+    }
+    const variables = Array.from(
+      new Set([
+        ...extractVariableNames(input.subject ?? ''),
+        ...extractVariableNames(rendered.html),
+        ...extractVariableNames(rendered.text),
+      ]),
+    );
+    return {
+      editor_mode,
+      design,
+      html_body: rendered.html,
+      text_body: rendered.text,
+      preheader: design.global.preheader || preheader,
+      variables,
+    };
+  }
+
+  if (editor_mode === 'html') {
+    const { html } = sanitizeCustomHtml(input.body);
+    if (!html.trim()) {
+      throw new AppError('Custom HTML has no supported content after sanitization', 422);
+    }
+    const unsafe = findUnsafeLinks(html);
+    if (unsafe.length > 0) {
+      throw new AppError(
+        `Custom HTML contains unsafe link destinations: ${unsafe.slice(0, 3).join(', ')}`,
+        422,
+      );
+    }
+    const text = emailHtmlToText(html);
+    const variables = Array.from(
+      new Set([
+        ...extractVariableNames(input.subject ?? ''),
+        ...extractVariableNames(html),
+        ...extractVariableNames(preheader ?? ''),
+      ]),
+    );
+    return { editor_mode, design: null, html_body: html, text_body: text, preheader, variables };
+  }
+
+  // Simple mode — legacy behavior. Variables come from subject + body.
+  const variables = Array.from(
+    new Set([...extractVariableNames(input.subject ?? ''), ...extractVariableNames(input.body)]),
+  );
+  return {
+    editor_mode: 'simple',
+    design: null,
+    html_body: null,
+    text_body: null,
+    preheader,
+    variables,
+  };
+}
+
+/**
+ * Resolve the send-time email payload for a template.
+ * Re-exported from the design core for module consumers.
+ */
+export { resolveEmailPayload, leadToVariableValues };
 
 export async function listTemplates(filters: TemplateListFilters): Promise<{
   items: TemplateResponse[];
@@ -133,14 +281,35 @@ export async function createTemplate(
 ): Promise<TemplateResponse> {
   const autoApprove = SELF_APPROVING_ROLES.has(actor.role);
 
+  const prepared = prepareTemplateContent({
+    channel: input.channel,
+    editor_mode: input.editor_mode,
+    design: input.design,
+    body: input.body,
+    subject: input.subject,
+    preheader: input.preheader,
+  });
+
+  // Channel-specific guards (non-blocking warnings stay in preview; hard
+  // failures here only for provider-impossible content).
+  if (input.channel === 'whatsapp') {
+    const check = validateWhatsappBody(input.body, 0);
+    if (!check.ok) throw new AppError(check.errors.join('; '), 422);
+  }
+
   const row = await insertTemplate({
     name: input.name,
     channel: input.channel,
     subject: input.subject ?? null,
     body: input.body,
-    variables: input.variables ?? [],
+    variables: input.variables ?? prepared.variables,
     created_by: actor.id,
     approved_by: autoApprove ? actor.id : null,
+    editor_mode: prepared.editor_mode,
+    design: prepared.design,
+    html_body: prepared.html_body,
+    text_body: prepared.text_body,
+    preheader: prepared.preheader,
   });
 
   await writeAuditLog({
@@ -169,19 +338,81 @@ export async function updateTemplate(
 
   assertMayEditApproved(before, actor);
 
+  const nextChannel = input.channel ?? before.channel;
+  const modeSwitching = input.editor_mode !== undefined && input.editor_mode !== before.editor_mode;
+  const contentInputs =
+    input.body !== undefined ||
+    input.design !== undefined ||
+    input.subject !== undefined ||
+    input.preheader !== undefined ||
+    input.channel !== undefined ||
+    modeSwitching;
+
+  let prepared: PreparedTemplateContent | null = null;
+  if (contentInputs) {
+    // Mode switches never silently drop the other representation: when the
+    // caller switches mode without supplying new content, keep the stored
+    // counterpart (body/design) so nothing is lost.
+    const bodyForPrep =
+      input.body !== undefined
+        ? input.body
+        : before.editor_mode !== 'simple' && before.text_body
+          ? before.text_body
+          : before.body;
+    prepared = prepareTemplateContent({
+      channel: nextChannel,
+      editor_mode: input.editor_mode ?? (input.channel ? 'simple' : before.editor_mode),
+      design: input.design !== undefined ? input.design : before.design,
+      body: bodyForPrep,
+      subject: input.subject !== undefined ? input.subject : before.subject,
+      preheader: input.preheader !== undefined ? input.preheader : before.preheader,
+    });
+    if (nextChannel === 'whatsapp') {
+      const check = validateWhatsappBody(bodyForPrep, (before.attachments ?? []).length);
+      if (!check.ok) throw new AppError(check.errors.join('; '), 422);
+    }
+  }
+
+  // Mode switches never silently discard stored representations: moving to
+  // `simple` keeps any existing design/html_body in storage (delivery keys
+  // off `editor_mode`, so stale output is never sent), and switching back
+  // restores the editable structure.
+  const keepStoredDesign = prepared !== null && prepared.editor_mode === 'simple';
+
   const row = await updateTemplateRepo(id, {
     name: input.name,
     channel: input.channel,
     subject: input.subject,
     body: input.body,
-    variables: input.variables,
+    variables: input.variables ?? prepared?.variables,
+    ...(prepared && !keepStoredDesign
+      ? {
+          editor_mode: prepared.editor_mode,
+          design: prepared.design,
+          html_body: prepared.html_body,
+          text_body: prepared.text_body,
+          preheader: prepared.preheader,
+        }
+      : {}),
+    ...(prepared && keepStoredDesign && (modeSwitching || input.channel !== undefined)
+      ? { editor_mode: prepared.editor_mode, preheader: prepared.preheader }
+      : {}),
   });
 
   // Reset to pending when meaningful content changes on an approved template,
   // so modified copy cannot go out without fresh approval.
+  const renderedBefore = before.html_body ?? before.body;
+  const renderedAfter = prepared
+    ? (prepared.html_body ?? input.body ?? before.body)
+    : (input.body ?? before.body);
   const contentChanged =
     (input.body !== undefined && input.body !== before.body) ||
-    (input.subject !== undefined && (input.subject ?? null) !== before.subject);
+    (input.subject !== undefined && (input.subject ?? null) !== before.subject) ||
+    (prepared !== null &&
+      (prepared.html_body !== before.html_body ||
+        JSON.stringify(prepared.design ?? null) !== JSON.stringify(before.design ?? null) ||
+        (prepared.preheader ?? null) !== (before.preheader ?? null) ||
+        renderedAfter !== renderedBefore));
   if (contentChanged && before.approval_status === 'approved') {
     await setApprovalStatus(id, 'pending', null, null);
     row.approval_status = 'pending';
@@ -240,6 +471,313 @@ export async function approveTemplate(
   });
 
   return toResponse(row);
+}
+
+export interface TemplatePreview {
+  subject: string | null;
+  html: string | null;
+  text: string;
+  variables: string[];
+  invalidVariables: string[];
+  unsafeLinks: string[];
+  compliance: { errors: string[]; warnings: string[] };
+  smsEstimate: SmsEstimate | null;
+  whatsapp: { ok: boolean; errors: string[]; warnings: string[] } | null;
+  /** Previews are approximations — not a guarantee of identical client rendering. */
+  notice: string;
+}
+
+/**
+ * Duplicate a template (same channel, mode, design, and attachments metadata).
+ * The copy always starts in `pending` approval so duplicated copy gets fresh
+ * sign-off; authors keep working without touching the original.
+ */
+export async function duplicateTemplate(
+  id: string,
+  name: string | undefined,
+  actor: TemplateActor,
+): Promise<TemplateResponse> {
+  const before = await findTemplateById(id);
+  if (!before) throw new AppError('Template not found', 404);
+
+  const row = await insertTemplate({
+    name: name?.trim() || `${before.name} (copy)`,
+    channel: before.channel,
+    subject: before.subject,
+    body: before.body,
+    variables: before.variables,
+    created_by: actor.id,
+    approved_by: null,
+    editor_mode: before.editor_mode,
+    design: (before.design as TemplateDesign | null) ?? null,
+    html_body: before.html_body,
+    text_body: before.text_body,
+    preheader: before.preheader,
+  });
+
+  // Attachments reference the same stored files (no disk copy); ownership stays
+  // with the original template's lifecycle for direct uploads.
+  if ((before.attachments ?? []).length > 0) {
+    for (const attachment of before.attachments) {
+      await appendTemplateAttachment(row.id, attachment);
+    }
+    const refreshed = await findTemplateById(row.id);
+    if (refreshed) {
+      await writeAuditLog({
+        userId: actor.id,
+        action: 'template.duplicated',
+        entityType: 'template',
+        entityId: row.id,
+        oldValue: { source_template_id: id },
+        newValue: { name: refreshed.name, channel: refreshed.channel },
+        ipAddress: actor.ipAddress ?? null,
+      });
+      return toResponse(refreshed);
+    }
+  }
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'template.duplicated',
+    entityType: 'template',
+    entityId: row.id,
+    oldValue: { source_template_id: id },
+    newValue: { name: row.name, channel: row.channel },
+    ipAddress: actor.ipAddress ?? null,
+  });
+
+  return toResponse(row);
+}
+
+/** Archive (soft-hide) or unarchive a template. Archived templates stay readable but are hidden from pickers. */
+export async function setTemplateArchived(
+  id: string,
+  archived: boolean,
+  actor: TemplateActor,
+): Promise<TemplateResponse> {
+  const before = await findTemplateById(id);
+  if (!before) throw new AppError('Template not found', 404);
+  assertMayEditApproved(before, actor);
+
+  const row = await updateTemplateRepo(id, {
+    archived_at: archived ? new Date().toISOString() : null,
+  });
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: archived ? 'template.archived' : 'template.unarchived',
+    entityType: 'template',
+    entityId: id,
+    oldValue: { archived_at: before.archived_at },
+    newValue: { archived_at: row.archived_at },
+    ipAddress: actor.ipAddress ?? null,
+  });
+
+  return toResponse(row);
+}
+
+/**
+ * Render a personalized preview with fictional sample values (never real lead
+ * PII). Pure read — no side effects, no delivery, no automation triggered.
+ */
+export async function previewTemplate(
+  id: string,
+  sampleValues?: Record<string, string>,
+): Promise<TemplatePreview> {
+  const template = await findTemplateById(id);
+  if (!template) throw new AppError('Template not found', 404);
+
+  const values = previewValues(sampleValues);
+  const subject = template.subject
+    ? substituteVariables(template.subject, values, false)
+    : template.subject;
+
+  let html: string | null = null;
+  let text: string;
+  if (template.editor_mode !== 'simple' && template.html_body) {
+    html = substituteVariables(template.html_body, values, true);
+    text = substituteVariables(
+      template.text_body ?? emailHtmlToText(template.html_body),
+      values,
+      false,
+    );
+  } else {
+    text = substituteVariables(template.body, values, false);
+  }
+
+  // Invalid variables are detected from the raw (pre-substitution) sources so
+  // unknown placeholders are reported instead of silently vanishing.
+  const rawSources = [
+    template.subject ?? '',
+    template.preheader ?? '',
+    template.html_body ?? '',
+    template.text_body ?? '',
+    template.body,
+  ];
+  const invalidVariables = Array.from(new Set(rawSources.flatMap(findInvalidVariables)));
+  const unsafeLinks = html ? findUnsafeLinks(html) : [];
+  const compliance =
+    template.channel === 'email'
+      ? checkEmailCompliance(`${html ?? ''}\n${text}`)
+      : { errors: [], warnings: [] };
+
+  return {
+    subject,
+    html,
+    text,
+    variables: template.variables,
+    invalidVariables,
+    unsafeLinks,
+    compliance,
+    smsEstimate: template.channel === 'sms' ? estimateSmsSegments(text) : null,
+    whatsapp:
+      template.channel === 'whatsapp'
+        ? validateWhatsappBody(text, (template.attachments ?? []).length)
+        : null,
+    notice:
+      'Preview uses fictional sample values and approximates rendering — email clients may display the message differently.',
+  };
+}
+
+export interface TestSendResult {
+  sent: boolean;
+  to: string;
+  channel: string;
+  externalId?: string;
+  latencyMs: number;
+  warnings: string[];
+}
+
+/**
+ * Send a one-off test email to a user-authorized recipient.
+ *
+ * Isolation guarantees: no outreach_logs row, no campaign enrollment, no
+ * pipeline/tag changes, no tracking pixel or click rewriting, and the
+ * template's approval state is untouched. Only email-channel templates are
+ * supported; delivery reuses the authorized SendGrid → SMTP fallback chain.
+ */
+export async function testSendTemplate(
+  id: string,
+  to: string,
+  sampleValues: Record<string, string> | undefined,
+  actor: TemplateActor,
+): Promise<TestSendResult> {
+  const template = await findTemplateById(id);
+  if (!template) throw new AppError('Template not found', 404);
+  if (template.archived_at) throw new AppError('Archived templates cannot be test-sent', 400);
+  if (template.channel !== 'email') {
+    throw new AppError('Test send is only supported for email templates', 400);
+  }
+
+  const values = previewValues(sampleValues);
+  const payload = resolveEmailPayload(template, values);
+  // Unresolved variables are detected from raw sources (pre-substitution) so
+  // unknown placeholders block delivery instead of going out as blank text.
+  const rawSources = [
+    template.subject ?? '',
+    template.preheader ?? '',
+    template.html_body ?? '',
+    template.text_body ?? '',
+    template.body,
+  ];
+  const invalidVariables = Array.from(new Set(rawSources.flatMap(findInvalidVariables)));
+  if (invalidVariables.length > 0) {
+    throw new AppError(
+      `Unresolved variables: ${invalidVariables.map((v) => `{{${v}}}`).join(', ')} — fix or remove them before test send`,
+      422,
+    );
+  }
+  const unsafeLinks = findUnsafeLinks(payload.html);
+  if (unsafeLinks.length > 0) {
+    throw new AppError(`Unsafe link destinations: ${unsafeLinks.slice(0, 3).join(', ')}`, 422);
+  }
+
+  const { compliance } = { compliance: checkEmailCompliance(`${payload.html}\n${payload.text}`) };
+
+  // Reuse the authorized delivery chain (SendGrid → SMTP fallback), mirroring
+  // the newsletter system-email path, but without any subscriber/campaign I/O.
+  const startedAt = Date.now();
+  const emailInput = {
+    leadId: `template-test:${id}`,
+    campaignId: null,
+    to,
+    subject: `[Test] ${payload.subject ?? template.name}`,
+    htmlBody: payload.html,
+    textBody: payload.text,
+    attachments: (template.attachments ?? []).map((a) => ({
+      filename: a.filename,
+      mimeType: a.mimeType,
+      storagePath: a.storagePath,
+    })),
+  };
+
+  let outcome: { ok: boolean; externalId?: string; latencyMs: number; error?: string };
+  try {
+    const sendgrid = await import('../integrations/sendgrid/sendgrid.connector');
+    const res = await sendgrid.sendEmail(emailInput);
+    outcome = res.ok
+      ? { ok: true, externalId: res.externalId, latencyMs: res.latencyMs }
+      : { ok: false, error: res.error, latencyMs: res.latencyMs };
+  } catch (err) {
+    outcome = {
+      ok: false,
+      error: err instanceof Error ? err.message : 'unknown error',
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+  if (!outcome.ok) {
+    const msg = outcome.error ?? '';
+    const notConfigured =
+      msg.toLowerCase().includes('not configured') ||
+      msg.toLowerCase().includes('credentials not set');
+    if (notConfigured) {
+      const smtp = await import('../integrations/smtp/smtp.connector');
+      try {
+        const res = await smtp.sendEmail(emailInput);
+        outcome = res.ok
+          ? { ok: true, externalId: res.externalId, latencyMs: res.latencyMs }
+          : { ok: false, error: res.error, latencyMs: res.latencyMs };
+      } catch (err) {
+        outcome = {
+          ok: false,
+          error: err instanceof Error ? err.message : 'unknown error',
+          latencyMs: Date.now() - startedAt,
+        };
+      }
+    }
+  }
+
+  if (!outcome.ok) {
+    logger.error('template test send failed', {
+      template_id: id,
+      error: outcome.error,
+    });
+    throw new AppError(`Test send failed: ${outcome.error ?? 'unknown error'}`, 502);
+  }
+
+  logger.info('template test send dispatched', {
+    template_id: id,
+    channel: template.channel,
+    latency_ms: outcome.latencyMs,
+  });
+
+  await writeAuditLog({
+    userId: actor.id,
+    action: 'template.test_sent',
+    entityType: 'template',
+    entityId: id,
+    newValue: { channel: template.channel },
+    ipAddress: actor.ipAddress ?? null,
+  });
+
+  return {
+    sent: true,
+    to,
+    channel: template.channel,
+    externalId: outcome.externalId,
+    latencyMs: outcome.latencyMs,
+    warnings: compliance.warnings,
+  };
 }
 
 export async function removeTemplate(id: string, actor: TemplateActor): Promise<void> {

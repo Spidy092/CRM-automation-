@@ -78,6 +78,12 @@ vi.mock('@/api/templates', () => ({
     mutateAsync: mockDeleteMutateAsync,
     isPending: false,
   }),
+  useDuplicateTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useArchiveTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useUnarchiveTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useRenameTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  usePreviewTemplate: vi.fn().mockReturnValue({ mutate: vi.fn(), data: null, isPending: false, isError: false }),
+  useTestSendTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), data: null, isPending: false }),
 }));
 
 vi.mock('@/api/files', () => ({

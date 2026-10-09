@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse } from './client';
-import type { Template, MessageChannel, TemplateApprovalStatus } from '@/types';
+import type { Template, MessageChannel, TemplateApprovalStatus, TemplateEditorMode } from '@/types';
 
 export interface TemplateInput {
   name: string;
@@ -9,6 +9,9 @@ export interface TemplateInput {
   subject?: string | null;
   body: string;
   variables?: string[];
+  editor_mode?: TemplateEditorMode;
+  design?: unknown | null;
+  preheader?: string | null;
 }
 
 interface TemplateFilters {
@@ -17,6 +20,31 @@ interface TemplateFilters {
   search?: string;
   limit?: number;
   cursor?: string;
+  include_archived?: boolean;
+  archived_only?: boolean;
+  mine?: boolean;
+}
+
+export interface TemplatePreview {
+  subject: string | null;
+  html: string | null;
+  text: string;
+  variables: string[];
+  invalidVariables: string[];
+  unsafeLinks: string[];
+  compliance: { errors: string[]; warnings: string[] };
+  smsEstimate: { encoding: string; characters: number; segments: number; remainingInSegment: number } | null;
+  whatsapp: { ok: boolean; errors: string[]; warnings: string[] } | null;
+  notice: string;
+}
+
+export interface TestSendResult {
+  sent: boolean;
+  to: string;
+  channel: string;
+  externalId?: string;
+  latencyMs: number;
+  warnings: string[];
 }
 
 interface TemplateListResponse {
@@ -34,6 +62,9 @@ export function useTemplates(filters: TemplateFilters = {}) {
       if (filters.approval_status) params.set('approval_status', filters.approval_status);
       if (filters.search) params.set('search', filters.search);
       if (filters.cursor) params.set('cursor', filters.cursor);
+      if (filters.include_archived) params.set('include_archived', 'true');
+      if (filters.archived_only) params.set('archived_only', 'true');
+      if (filters.mine) params.set('mine', 'true');
       const response = await apiClient.get<ApiResponse<Template[]>>(`/templates?${params.toString()}`);
       return {
         items: response.data.data ?? [],
@@ -97,6 +128,77 @@ export function useDeleteTemplate() {
       await apiClient.delete(`/templates/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['templates'] }),
+  });
+}
+
+export function useDuplicateTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name?: string }) => {
+      const response = await apiClient.post<ApiResponse<Template>>(`/templates/${id}/duplicate`, { name });
+      return response.data.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['templates'] }),
+  });
+}
+
+export function useArchiveTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiClient.post<ApiResponse<Template>>(`/templates/${id}/archive`);
+      return response.data.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['templates'] }),
+  });
+}
+
+export function useUnarchiveTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiClient.post<ApiResponse<Template>>(`/templates/${id}/unarchive`);
+      return response.data.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['templates'] }),
+  });
+}
+
+export function useRenameTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const response = await apiClient.patch<ApiResponse<Template>>(`/templates/${id}/rename`, { name });
+      return response.data.data;
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', id] });
+    },
+  });
+}
+
+export function usePreviewTemplate() {
+  return useMutation({
+    mutationFn: async ({ id, sample_values }: { id: string; sample_values?: Record<string, string> }) => {
+      const response = await apiClient.post<ApiResponse<TemplatePreview>>(
+        `/templates/${id}/preview`,
+        { sample_values },
+      );
+      return response.data.data;
+    },
+  });
+}
+
+export function useTestSendTemplate() {
+  return useMutation({
+    mutationFn: async ({ id, to, sample_values }: { id: string; to: string; sample_values?: Record<string, string> }) => {
+      const response = await apiClient.post<ApiResponse<TestSendResult>>(
+        `/templates/${id}/test-send`,
+        { to, sample_values },
+      );
+      return response.data.data;
+    },
   });
 }
 

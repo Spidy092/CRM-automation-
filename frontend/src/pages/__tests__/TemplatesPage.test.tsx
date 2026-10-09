@@ -52,6 +52,22 @@ vi.mock('@/api/templates', () => ({
     mutateAsync: mockDeleteMutateAsync,
     isPending: false,
   }),
+  useDuplicateTemplate: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue(null),
+    isPending: false,
+  }),
+  useArchiveTemplate: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
+  useUnarchiveTemplate: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
+  useRenameTemplate: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
 }));
 
 describe('TemplatesPage', () => {

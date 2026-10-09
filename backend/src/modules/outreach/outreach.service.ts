@@ -37,6 +37,11 @@ import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from '../../workers/
 import { findLeadById } from '../leads/leads.repository';
 import { findTemplateById } from '../templates/templates.repository';
 import { personalizeMessage } from './outreach.prompt';
+import {
+  leadToVariableValues,
+  resolveEmailPayload,
+  substituteVariables,
+} from '../templates/templateDesign';
 import { dispatchOutbound } from '../integrations/dispatch';
 
 function toSequenceResponse(row: SequenceRow) {
@@ -447,10 +452,20 @@ export async function sendQuickMessage(
 
     // AI personalization is skipped here (enabled: false) so the send stays
     // synchronous and the rep sees the exact rendered text before it goes out.
-    const personalized = await personalizeMessage(lead, template, { enabled: false });
-    message = personalized.message;
-    dispatchBody = message;
-    subject = template.subject ?? undefined;
+    // Visual/custom-HTML email templates send their saved rendered HTML with
+    // deterministic substitution; simple templates keep the legacy path.
+    const values = leadToVariableValues(lead);
+    if (input.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
+      const payload = resolveEmailPayload(template, values);
+      message = payload.text;
+      dispatchBody = payload.html;
+      subject = payload.subject ?? template.subject ?? undefined;
+    } else {
+      const personalized = await personalizeMessage(lead, template, { enabled: false });
+      message = personalized.message;
+      dispatchBody = message;
+      subject = template.subject ? substituteVariables(template.subject, values, false) : undefined;
+    }
     attachments = template.attachments;
   } else {
     if (!input.body) throw new AppError('Message body is required', 400);

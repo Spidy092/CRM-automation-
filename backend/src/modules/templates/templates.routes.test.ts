@@ -5,6 +5,12 @@ jest.mock('./templates.controller', () => ({
   updateTemplateHandler: jest.fn(),
   approveTemplateHandler: jest.fn(),
   deleteTemplateHandler: jest.fn(),
+  duplicateTemplateHandler: jest.fn(),
+  archiveTemplateHandler: jest.fn(),
+  unarchiveTemplateHandler: jest.fn(),
+  renameTemplateHandler: jest.fn(),
+  previewTemplateHandler: jest.fn(),
+  testSendTemplateHandler: jest.fn(),
 }));
 
 jest.mock('../../shared/middleware/auth', () => ({
@@ -76,5 +82,53 @@ describe('templates routes', () => {
     });
     await request(app).delete('/templates/t1').expect(200);
     expect(controller.deleteTemplateHandler).toHaveBeenCalled();
+  });
+
+  it('POST /templates/:id/duplicate calls duplicateTemplateHandler', async () => {
+    (controller.duplicateTemplateHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.status(201).json({ success: true, data: {} });
+    });
+    await request(app).post('/templates/t1/duplicate').send({}).expect(201);
+    expect(controller.duplicateTemplateHandler).toHaveBeenCalled();
+  });
+
+  it('POST /templates/:id/archive calls archiveTemplateHandler', async () => {
+    (controller.archiveTemplateHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.json({ success: true, data: {} });
+    });
+    await request(app).post('/templates/t1/archive').expect(200);
+    expect(controller.archiveTemplateHandler).toHaveBeenCalled();
+  });
+
+  it('POST /templates/:id/unarchive calls unarchiveTemplateHandler', async () => {
+    (controller.unarchiveTemplateHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.json({ success: true, data: {} });
+    });
+    await request(app).post('/templates/t1/unarchive').expect(200);
+    expect(controller.unarchiveTemplateHandler).toHaveBeenCalled();
+  });
+
+  it('PATCH /templates/:id/rename calls renameTemplateHandler', async () => {
+    (controller.renameTemplateHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.json({ success: true, data: {} });
+    });
+    await request(app).patch('/templates/t1/rename').send({ name: 'New' }).expect(200);
+    expect(controller.renameTemplateHandler).toHaveBeenCalled();
+  });
+
+  it('POST /templates/:id/preview calls previewTemplateHandler', async () => {
+    (controller.previewTemplateHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.json({ success: true, data: {} });
+    });
+    await request(app).post('/templates/t1/preview').send({}).expect(200);
+    expect(controller.previewTemplateHandler).toHaveBeenCalled();
+  });
+
+  it('POST /templates/:id/test-send calls testSendTemplateHandler', async () => {
+    (controller.testSendTemplateHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.json({ success: true, data: {} });
+    });
+    await request(app).post('/templates/t1/test-send').send({ to: 'owner@example.com' }).expect(200);
+    expect(controller.testSendTemplateHandler).toHaveBeenCalled();
   });
 });

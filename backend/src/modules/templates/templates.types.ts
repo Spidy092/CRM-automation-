@@ -26,6 +26,9 @@ export interface TemplateAttachment {
 /** `TemplateAttachment` shape sent to the frontend — no server-only fields. */
 export type TemplateAttachmentResponse = Omit<TemplateAttachment, 'storagePath'>;
 
+/** Authoring mode for email templates. Non-email channels always use 'simple'. */
+export type TemplateEditorMode = 'simple' | 'visual' | 'html';
+
 /** Raw row shape from the `templates` table. */
 export interface TemplateRow {
   id: string;
@@ -39,6 +42,15 @@ export interface TemplateRow {
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
+  editor_mode: TemplateEditorMode;
+  /** Versioned visual-design document (visual mode only) — the editable source of truth. */
+  design: unknown;
+  /** Deterministic rendered email HTML (visual mode) or sanitized HTML (html mode). */
+  html_body: string | null;
+  /** Plain-text alternative generated alongside `html_body`. */
+  text_body: string | null;
+  preheader: string | null;
+  archived_at: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -57,6 +69,12 @@ export interface TemplateResponse {
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
+  editor_mode: TemplateEditorMode;
+  design: unknown;
+  html_body: string | null;
+  text_body: string | null;
+  preheader: string | null;
+  archived_at: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -68,6 +86,10 @@ export interface TemplateInput {
   subject?: string | null;
   body: string;
   variables?: string[];
+  editor_mode?: TemplateEditorMode;
+  design?: unknown;
+  preheader?: string | null;
+  archived?: boolean;
 }
 
 export interface TemplateListFilters {
@@ -77,6 +99,12 @@ export interface TemplateListFilters {
   channel?: MessageChannel;
   approval_status?: TemplateApprovalStatus;
   search?: string;
+  /** When true, include archived templates; otherwise they are hidden. */
+  includeArchived?: boolean;
+  /** When true, only archived templates are returned. */
+  archivedOnly?: boolean;
+  /** Filter to templates created by a specific user ("mine"). */
+  createdBy?: string;
 }
 
 export interface TemplateApprovalInput {
