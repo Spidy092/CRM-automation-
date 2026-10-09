@@ -78,6 +78,12 @@ vi.mock('@/api/templates', () => ({
     mutateAsync: mockDeleteMutateAsync,
     isPending: false,
   }),
+  useDuplicateTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useArchiveTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useUnarchiveTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useRenameTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  usePreviewTemplate: vi.fn().mockReturnValue({ mutate: vi.fn(), data: null, isPending: false, isError: false }),
+  useTestSendTemplate: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), data: null, isPending: false }),
 }));
 
 vi.mock('@/api/files', () => ({
@@ -177,4 +183,14 @@ describe('TemplateFormPage', () => {
       expect(mockDeleteMutateAsync).toHaveBeenCalledWith({ id: 'tmpl-1', attachmentId: 'a1' });
     });
   });
+});
+
+
+it('prompts before switching away from unsaved visual work', () => {
+  mockParams = {};
+  renderWithProviders(<TemplateFormPage />, { initialEntries: ['/templates/new?mode=visual'] });
+  fireEvent.click(screen.getByRole('button', { name: /\+ divider/i }));
+  fireEvent.click(screen.getByRole('tab', { name: /^Simple$/i }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Undo change' })).toBeInTheDocument();
 });

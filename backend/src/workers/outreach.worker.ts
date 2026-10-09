@@ -30,6 +30,12 @@ import { OutreachStatus } from '../shared/types';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { getCampaignMessageSettings } from '../modules/campaigns/campaigns.service';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
+import { createOutreachUnsubscribeUrl } from '../modules/outreach/unsubscribe.service';
+import {
+  leadToVariableValues,
+  resolveEmailPayload,
+  substituteVariables,
+} from '../modules/templates/templateDesign';
 import { isPlaceholderPhone, isPlaceholderEmail } from '../shared/utils/phone';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
@@ -610,13 +616,29 @@ async function sendViaConnector(opts: {
     return { success: false, error: 'Template not approved' };
   }
 
-  // 4. Personalize message
+  // 4. Personalize message. Visual/custom-HTML email templates use the saved
+  // rendered HTML with deterministic substitution (AI rewriting is intentionally
+  // skipped there to preserve the designed layout); simple templates keep the
+  // existing AI-personalization path.
   const settings = await getCampaignMessageSettings(opts.campaignId);
   const enabled = settings?.ai_personalization_enabled ?? opts.aiPersonalizationEnabled === true;
-  const { message } = await personalizeMessage(lead, template, {
-    enabled,
-    ...(enabled && settings ? { tone: settings.tone } : {}),
-  });
+  const values = leadToVariableValues(lead);
+
+  let message: string;
+  let subject: string | undefined;
+  if (opts.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
+    values.unsubscribe_link = await createOutreachUnsubscribeUrl(lead.id, lead.email);
+    const payload = resolveEmailPayload(template, values);
+    message = payload.html;
+    subject = payload.subject ?? undefined;
+  } else {
+    const personalized = await personalizeMessage(lead, template, {
+      enabled,
+      ...(enabled && settings ? { tone: settings.tone } : {}),
+    });
+    message = personalized.message;
+    subject = template.subject ? substituteVariables(template.subject, values, false) : undefined;
+  }
 
   // 5. Determine destination
   let destination: string;
@@ -651,7 +673,7 @@ async function sendViaConnector(opts: {
     templateId: opts.templateId,
     body: message,
     destination,
-    subject: template.subject ?? undefined,
+    subject: subject ?? template.subject ?? undefined,
     mockMode: opts.mockMode,
     logId: opts.logId,
     attachments: template.attachments,

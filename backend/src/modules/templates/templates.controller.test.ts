@@ -10,6 +10,10 @@ jest.mock('./templates.service', () => ({
   addTemplateAttachment: jest.fn(),
   addTemplateAttachmentFromLibrary: jest.fn(),
   removeTemplateAttachment: jest.fn(),
+  duplicateTemplate: jest.fn(),
+  setTemplateArchived: jest.fn(),
+  previewTemplate: jest.fn(),
+  testSendTemplate: jest.fn(),
 }));
 
 import * as templatesService from './templates.service';
@@ -23,6 +27,12 @@ import {
   addTemplateAttachmentHandler,
   addTemplateAttachmentFromLibraryHandler,
   removeTemplateAttachmentHandler,
+  duplicateTemplateHandler,
+  archiveTemplateHandler,
+  unarchiveTemplateHandler,
+  renameTemplateHandler,
+  previewTemplateHandler,
+  testSendTemplateHandler,
 } from './templates.controller';
 
 function mockReq(overrides: Record<string, unknown> = {}) {
@@ -202,6 +212,102 @@ describe('removeTemplateAttachmentHandler', () => {
       res,
       next,
     );
+    expect(next).toHaveBeenCalled();
+  });
+});
+
+describe('duplicateTemplateHandler', () => {
+  const validId = '123e4567-e89b-12d3-a456-426614174000';
+
+  it('duplicates and returns 201 without a name', async () => {
+    (templatesService.duplicateTemplate as jest.Mock<any>).mockResolvedValue({ id: 't2' });
+    const res = mockRes();
+    await duplicateTemplateHandler(mockReq({ params: { id: validId }, body: {} }), res, next);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(templatesService.duplicateTemplate).toHaveBeenCalledWith(validId, undefined, expect.any(Object));
+  });
+
+  it('rejects invalid ids', async () => {
+    await duplicateTemplateHandler(mockReq({ params: { id: 'nope' }, body: {} }), mockRes(), next);
+    expect(next).toHaveBeenCalled();
+  });
+});
+
+describe('archiveTemplateHandler + unarchiveTemplateHandler', () => {
+  const validId = '123e4567-e89b-12d3-a456-426614174000';
+
+  it('archives with 200', async () => {
+    (templatesService.setTemplateArchived as jest.Mock<any>).mockResolvedValue({ id: validId });
+    const res = mockRes();
+    await archiveTemplateHandler(mockReq({ params: { id: validId } }), res, next);
+    expect(templatesService.setTemplateArchived).toHaveBeenCalledWith(validId, true, expect.any(Object));
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('unarchives with 200', async () => {
+    (templatesService.setTemplateArchived as jest.Mock<any>).mockResolvedValue({ id: validId });
+    const res = mockRes();
+    await unarchiveTemplateHandler(mockReq({ params: { id: validId } }), res, next);
+    expect(templatesService.setTemplateArchived).toHaveBeenCalledWith(validId, false, expect.any(Object));
+  });
+});
+
+describe('renameTemplateHandler', () => {
+  const validId = '123e4567-e89b-12d3-a456-426614174000';
+
+  it('renames through updateTemplate with only the name field', async () => {
+    (templatesService.updateTemplate as jest.Mock<any>).mockResolvedValue({ id: validId });
+    const res = mockRes();
+    await renameTemplateHandler(mockReq({ params: { id: validId }, body: { name: 'New name' } }), res, next);
+    expect(templatesService.updateTemplate).toHaveBeenCalledWith(validId, { name: 'New name' }, expect.any(Object));
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('requires a name', async () => {
+    await renameTemplateHandler(mockReq({ params: { id: validId }, body: {} }), mockRes(), next);
+    expect(next).toHaveBeenCalled();
+  });
+});
+
+describe('previewTemplateHandler', () => {
+  const validId = '123e4567-e89b-12d3-a456-426614174000';
+
+  it('previews without requiring authentication side effects', async () => {
+    (templatesService.previewTemplate as jest.Mock<any>).mockResolvedValue({ text: 'hi' });
+    const res = mockRes();
+    await previewTemplateHandler(mockReq({ params: { id: validId }, body: {} }), res, next);
+    expect(templatesService.previewTemplate).toHaveBeenCalledWith(validId, undefined);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe('testSendTemplateHandler', () => {
+  const validId = '123e4567-e89b-12d3-a456-426614174000';
+
+  it('sends to the authorized recipient', async () => {
+    (templatesService.testSendTemplate as jest.Mock<any>).mockResolvedValue({ sent: true });
+    const res = mockRes();
+    await testSendTemplateHandler(
+      mockReq({ params: { id: validId }, body: { to: 'owner@example.com' } }),
+      res,
+      next,
+    );
+    expect(templatesService.testSendTemplate).toHaveBeenCalledWith(
+      validId,
+      'owner@example.com',
+      undefined,
+      expect.any(Object),
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rejects invalid recipient addresses before any service call', async () => {
+    await testSendTemplateHandler(
+      mockReq({ params: { id: validId }, body: { to: 'not-an-email' } }),
+      mockRes(),
+      next,
+    );
+    expect(templatesService.testSendTemplate).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalled();
   });
 });

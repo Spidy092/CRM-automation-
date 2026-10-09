@@ -2,7 +2,7 @@ import { query, queryOne } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { TemplateAttachment, TemplateListFilters, TemplateRow } from './templates.types';
 
-const COLS = `id, name, channel, subject, body, variables, attachments, approval_status, approved_by, approved_at, rejection_reason, created_by, created_at, updated_at`;
+const COLS = `id, name, channel, subject, body, variables, attachments, approval_status, approved_by, approved_at, rejection_reason, editor_mode, design, html_body, text_body, preheader, archived_at, created_by, created_at, updated_at`;
 
 export async function findTemplates(
   filters: TemplateListFilters,
@@ -23,6 +23,15 @@ export async function findTemplates(
     conditions.push(`(name ILIKE $${i} OR body ILIKE $${i})`);
     params.push(`%${filters.search}%`);
     i++;
+  }
+  if (filters.archivedOnly) {
+    conditions.push(`archived_at IS NOT NULL`);
+  } else if (!filters.includeArchived) {
+    conditions.push(`archived_at IS NULL`);
+  }
+  if (filters.createdBy) {
+    conditions.push(`created_by = $${i++}`);
+    params.push(filters.createdBy);
   }
   if (filters.cursorTs && filters.cursorId) {
     conditions.push(`(created_at, id) < ($${i}, $${i + 1})`);
@@ -61,16 +70,41 @@ export async function insertTemplate(data: {
    * to the column default of 'pending'.
    */
   approved_by?: string | null;
+  attachments?: TemplateAttachment[];
+  editor_mode?: string;
+  design?: unknown;
+  html_body?: string | null;
+  text_body?: string | null;
+  preheader?: string | null;
 }): Promise<TemplateRow> {
   const approvedBy = data.approved_by ?? null;
   const row = await queryOne<TemplateRow>(
-    `INSERT INTO templates (name, channel, subject, body, variables, created_by, approval_status, approved_by, approved_at)
+    `INSERT INTO templates (name, channel, subject, body, variables, created_by, approval_status, approved_by, approved_at, editor_mode, design, html_body, text_body, preheader, attachments)
      VALUES ($1, $2, $3, $4, $5, $6,
              (CASE WHEN $7::uuid IS NULL THEN 'pending' ELSE 'approved' END)::template_approval_status,
              $7::uuid,
-             CASE WHEN $7::uuid IS NULL THEN NULL ELSE NOW() END)
+             CASE WHEN $7::uuid IS NULL THEN NULL ELSE NOW() END,
+             COALESCE($8, 'simple'),
+             $9::jsonb,
+             $10,
+             $11,
+             $12, $13::jsonb)
      RETURNING ${COLS}`,
-    [data.name, data.channel, data.subject, data.body, data.variables, data.created_by, approvedBy],
+    [
+      data.name,
+      data.channel,
+      data.subject,
+      data.body,
+      data.variables,
+      data.created_by,
+      approvedBy,
+      data.editor_mode ?? 'simple',
+      data.design === undefined || data.design === null ? null : JSON.stringify(data.design),
+      data.html_body ?? null,
+      data.text_body ?? null,
+      data.preheader ?? null,
+      JSON.stringify(data.attachments ?? []),
+    ],
   );
   if (!row) throw new AppError('Failed to create template', 500);
   return row;
@@ -114,6 +148,12 @@ export async function updateTemplate(
     subject: string | null;
     body: string;
     variables: string[];
+    editor_mode: string;
+    design: unknown;
+    html_body: string | null;
+    text_body: string | null;
+    preheader: string | null;
+    archived_at: string | null;
   }>,
 ): Promise<TemplateRow> {
   const sets: string[] = [];
@@ -139,6 +179,30 @@ export async function updateTemplate(
   if (fields.variables !== undefined) {
     sets.push(`variables = $${i++}`);
     params.push(fields.variables);
+  }
+  if (fields.editor_mode !== undefined) {
+    sets.push(`editor_mode = $${i++}`);
+    params.push(fields.editor_mode);
+  }
+  if (fields.design !== undefined) {
+    sets.push(`design = $${i++}::jsonb`);
+    params.push(fields.design === null ? null : JSON.stringify(fields.design));
+  }
+  if (fields.html_body !== undefined) {
+    sets.push(`html_body = $${i++}`);
+    params.push(fields.html_body);
+  }
+  if (fields.text_body !== undefined) {
+    sets.push(`text_body = $${i++}`);
+    params.push(fields.text_body);
+  }
+  if (fields.preheader !== undefined) {
+    sets.push(`preheader = $${i++}`);
+    params.push(fields.preheader);
+  }
+  if (fields.archived_at !== undefined) {
+    sets.push(`archived_at = $${i++}`);
+    params.push(fields.archived_at);
   }
 
   if (sets.length === 0) {
