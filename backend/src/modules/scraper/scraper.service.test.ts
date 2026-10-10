@@ -21,6 +21,14 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
 
+// Keep URL validation active, but isolate unit tests from real DNS latency.
+// Otherwise DNS can settle after runWithFakeTimers drains its timers, leaving
+// a subsequently scheduled crawl delay pending until the test times out.
+jest.mock('dns/promises', () => ({
+  __esModule: true,
+  default: { resolve: jest.fn().mockResolvedValue(['93.184.216.34']) },
+}));
+
 jest.mock('../../shared/utils/db', () => ({
   pool: {},
   query: jest.fn(),
@@ -948,6 +956,10 @@ describe('Scraper Service', () => {
       global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
       const result = await runWithFakeTimers(() => runScrape('1', mockActor));
       expect(result.status).toBe('completed');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://example.com/list?page=2',
+        expect.anything(),
+      );
       jest.useRealTimers();
     });
 
