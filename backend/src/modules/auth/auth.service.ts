@@ -15,6 +15,7 @@ import {
   updatePasswordHash,
 } from './auth.repository';
 import { JwtPayload, LoginInput, LoginResult } from './auth.types';
+import { revokeUserSseStreams } from '../notifications/notifications.service';
 
 const BCRYPT_COST_FACTOR = 12;
 const MAX_FAILED_ATTEMPTS = 5;
@@ -228,6 +229,10 @@ export async function refresh(
 }
 
 export async function logout(refreshToken: string): Promise<void> {
+  const session = await findValidRefreshToken(refreshToken);
+  if (session?.user_id) {
+    await revokeUserSseStreams(session.user_id, 'User logged out');
+  }
   await revokeRefreshToken(refreshToken);
 }
 
@@ -265,6 +270,7 @@ export async function resetPassword(token: string, newPassword: string): Promise
   // Single-use: delete the token immediately and revoke all existing sessions.
   await redis.del(key);
   await revokeAllRefreshTokensForUser(userId);
+  await revokeUserSseStreams(userId, 'Password reset');
 }
 
 // -----------------------------------------------------------------------------

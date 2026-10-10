@@ -37,6 +37,9 @@ jest.mock('../../workers/queue', () => ({
 jest.mock('../notifications/notifications.emitter', () => ({
   pushToUser: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true }),
+}));
 jest.mock('../ai-settings/ai-settings.service', () => ({
   getAiConfig: jest.fn(),
 }));
@@ -157,6 +160,7 @@ describe('Scraper Service', () => {
     (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-1' });
     (repo.updateScraperLog as jest.Mock).mockResolvedValue({ id: 'log-1' });
     (repo.updateScraperConfigLastRun as jest.Mock).mockResolvedValue(undefined);
+    (repo.findScraperLogById as jest.Mock).mockResolvedValue(null);
     process.env.GOOGLE_PLACES_API_KEY = 'test-key';
     process.env.FB_TOKEN = 'fb-token';
     process.env.YT_KEY = 'yt-key';
@@ -373,6 +377,52 @@ describe('Scraper Service', () => {
       const result = await runScrape('1', mockActor);
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toBe('Unknown error');
+    });
+
+    it('throws error when notification persistence fails so BullMQ retries the run', async () => {
+      const { createNotification } = require('../notifications/notifications.service');
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'dentists' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: [] }),
+      });
+      (createNotification as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        error: new Error('Notification persistence failed'),
+      });
+
+      await expect(runScrape('1', mockActor)).rejects.toThrow('Notification persistence failed');
+    });
+
+    it('skips re-crawling on retry if log row is already completed, retrying notification directly', async () => {
+      const { createNotification } = require('../notifications/notifications.service');
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'dentists' }),
+      );
+      (repo.findScraperLogById as jest.Mock).mockResolvedValueOnce({
+        id: 'log-retry',
+        config_id: '1',
+        status: 'completed',
+        completed_at: '2026-10-10T10:00:00Z',
+        records_found: 10,
+        records_imported: 8,
+        records_duplicate: 2,
+        records_failed: 0,
+      });
+      global.fetch = jest.fn();
+      (createNotification as jest.Mock).mockResolvedValueOnce({ ok: true });
+
+      const result = await runScrapeForJob('1', 'log-retry');
+      expect(result.status).toBe('completed');
+      expect(result.recordsImported).toBe(8);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          occurrenceKey: 'scraper:complete:log-retry',
+        }),
+      );
     });
   });
 

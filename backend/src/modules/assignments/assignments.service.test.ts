@@ -12,7 +12,17 @@ jest.mock('../leads/leads.repository', () => ({
   findLeadById: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
-jest.mock('../notifications/notifications.emitter', () => ({ pushToUser: jest.fn() }));
+jest.mock('../../shared/utils/db', () => ({
+  withTransaction: jest.fn(async (cb: (client: unknown) => Promise<unknown>) => cb({})),
+}));
+import { AppError } from '../../shared/middleware/errorHandler';
+
+jest.mock('../notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({
+    ok: true,
+    value: { publishLiveSignal: jest.fn() },
+  }),
+}));
 
 import {
   findAssignmentConfig,
@@ -25,7 +35,7 @@ import {
 } from './assignments.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById } from '../leads/leads.repository';
-import { pushToUser } from '../notifications/notifications.emitter';
+import { createNotification } from '../notifications/notifications.service';
 import {
   assignManually,
   autoAssignLead,
@@ -98,12 +108,29 @@ describe('assignManually', () => {
 
     const res = await assignManually('lead-1', 'rep-1', actor);
     expect(res.id).toBe('a-1');
-    expect(updateLeadAssignment).toHaveBeenCalledWith('lead-1', 'rep-1');
+    expect(updateLeadAssignment).toHaveBeenCalledWith('lead-1', 'rep-1', expect.anything());
     expect(writeAuditLog).toHaveBeenCalled();
-    expect(pushToUser).toHaveBeenCalledWith(
-      'rep-1',
-      expect.objectContaining({ type: 'lead_assigned', data: { leadId: 'lead-1' } }),
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'rep-1',
+        occurrenceKey: 'assignment:a-1',
+        type: 'lead_assigned',
+        metadata: { leadId: 'lead-1' },
+      }),
+      expect.anything(),
     );
+  });
+
+  it('throws and rolls back when notification persistence fails on manual assign', async () => {
+    (findAssignmentByLead as jest.Mock).mockResolvedValue(null);
+    (updateLeadAssignment as jest.Mock).mockResolvedValue(undefined);
+    (insertAssignment as jest.Mock).mockResolvedValue({ id: 'a-1', lead_id: 'lead-1', assigned_to: 'rep-1' });
+    (createNotification as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      error: new AppError('Notification DB down', 500),
+    });
+
+    await expect(assignManually('lead-1', 'rep-1', actor)).rejects.toThrow('Notification DB down');
   });
 });
 
@@ -115,10 +142,28 @@ describe('overrideAssignment', () => {
     const res = await overrideAssignment('lead-1', 'rep-2', 'reassigning', actor);
     expect(res.assigned_to).toBe('rep-2');
     expect(writeAuditLog).toHaveBeenCalled();
-    expect(pushToUser).toHaveBeenCalledWith(
-      'rep-2',
-      expect.objectContaining({ type: 'lead_assigned', data: { leadId: 'lead-1' } }),
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'rep-2',
+        occurrenceKey: 'assignment:a-2',
+        type: 'lead_assigned',
+        metadata: { leadId: 'lead-1' },
+      }),
+      expect.anything(),
     );
+  });
+
+  it('throws and rolls back when notification persistence fails on override', async () => {
+    (updateLeadAssignment as jest.Mock).mockResolvedValue(undefined);
+    (insertAssignment as jest.Mock).mockResolvedValue({ id: 'a-2', assigned_to: 'rep-2' });
+    (createNotification as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      error: new AppError('Notification DB down', 500),
+    });
+
+    await expect(
+      overrideAssignment('lead-1', 'rep-2', 'reassigning', actor),
+    ).rejects.toThrow('Notification DB down');
   });
 });
 

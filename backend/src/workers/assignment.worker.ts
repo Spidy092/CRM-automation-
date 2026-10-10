@@ -20,7 +20,7 @@ import { findLeadById } from '../modules/leads/leads.repository';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { notifyAssignment } from '../modules/integrations/notifications';
-import { pushToUser } from '../modules/notifications/notifications.emitter';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 export function startAssignmentWorker(): Worker {
   const worker = new Worker(
@@ -130,14 +130,30 @@ async function handleRoundRobin(payload: AssignmentRoundRobinJob): Promise<{
     logger.error('notifyAssignment threw unexpectedly', { leadId, error: message });
   }
 
-  void pushToUser(assignment.assigned_to, {
-    id: `assign:${leadId}`,
+  // Persist durable notification then publish live SSE signal.
+  // occurrence key uses assignment.id so reassignments produce separate rows.
+  const occurrenceKey = assignment.id ? `assignment:${assignment.id}` : `assignment:lead:${leadId}`;
+  const notifyResult = await createNotification({
+    recipientUserId: assignment.assigned_to,
+    occurrenceKey,
     type: 'lead_assigned',
     title: 'New lead assigned',
     message: `${businessName ?? 'A lead'} (score ${payload.score}, ${payload.classification}) was assigned to you.`,
-    data: { leadId, score: payload.score, classification: payload.classification },
-    timestamp: new Date().toISOString(),
+    metadata: {
+      leadId,
+      score: payload.score,
+      classification: payload.classification,
+    },
   });
+
+  if (!notifyResult.ok) {
+    logger.error('Failed to persist assignment notification', {
+      leadId,
+      assignmentId: assignment.id,
+      error: notifyResult.error.message,
+    });
+    throw notifyResult.error;
+  }
 
   return { leadId, assigned: true, assignedTo: assignment.assigned_to, notified };
 }

@@ -18,6 +18,9 @@ jest.mock('../../shared/utils/redis', () => ({
 }));
 jest.mock('bcrypt', () => ({ compare: jest.fn(), hash: jest.fn() }));
 jest.mock('jsonwebtoken', () => ({ sign: jest.fn(), verify: jest.fn() }));
+jest.mock('../notifications/notifications.service', () => ({
+  revokeUserSseStreams: jest.fn().mockResolvedValue(1),
+}));
 
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';

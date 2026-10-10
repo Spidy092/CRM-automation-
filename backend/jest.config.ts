@@ -22,6 +22,7 @@ const config: Config = {
     '^@workers/(.*)$': '<rootDir>/workers/$1',
     '^@webhooks/(.*)$': '<rootDir>/webhooks/$1',
   },
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
   },
