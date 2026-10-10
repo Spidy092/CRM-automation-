@@ -16,7 +16,11 @@ export interface NotificationDto {
     | 'export_ready'
     | 'job_failed'
     | 'scraper_complete'
-    | 'lead_scored';
+    | 'lead_scored'
+    | 'reply_received'
+    | 'approval_required'
+    | 'follow_up_due'
+    | 'automation_failed';
   title: string;
   message: string;
   metadata: Record<string, string | number>;

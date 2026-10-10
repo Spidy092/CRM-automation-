@@ -25,6 +25,7 @@ import { logger } from '../shared/utils/logger';
 import { incJobsFailed, incJobsProcessed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 const MAX_NODES_PER_JOB = 20;
 const MAX_STEP_ATTEMPTS = 3;
@@ -73,13 +74,37 @@ function isRetryableWorkflowError(error: unknown): boolean {
   return true;
 }
 
+async function notifyWorkflowFailure(input: {
+  enrollmentId: string;
+  workflowOwnerId: string;
+  leadId: string | null;
+}): Promise<void> {
+  const notice = await createNotification({
+    recipientUserId: input.workflowOwnerId,
+    occurrenceKey: `workflow-failed:${input.enrollmentId}`,
+    type: 'automation_failed',
+    title: 'Automation failed',
+    message: 'A workflow stopped after an error. Open Workflows to review the run.',
+    metadata: {
+      ...(input.leadId ? { leadId: input.leadId } : {}),
+      deepLink: '/automation/workflows',
+    },
+  });
+  if (!notice.ok) {
+    logger.error('failed to notify workflow owner about terminal failure', {
+      enrollmentId: input.enrollmentId,
+      error: notice.error.message,
+    });
+  }
+}
+
 async function markFailure(
   enrollment: ClaimedEnrollment | null,
   workerId: string,
   message: string,
 ): Promise<void> {
   if (!enrollment) return;
-  await advanceEnrollment({
+  const failed = await advanceEnrollment({
     id: enrollment.id,
     lockVersion: enrollment.lock_version,
     workerId,
@@ -87,6 +112,14 @@ async function markFailure(
     status: 'failed',
     lastError: message,
     finishedAt: new Date().toISOString(),
+  });
+  if (!failed) return;
+  const execution = await findEnrollmentExecutionById(enrollment.id);
+  if (!execution) return;
+  await notifyWorkflowFailure({
+    enrollmentId: enrollment.id,
+    workflowOwnerId: execution.workflow_created_by,
+    leadId: enrollment.lead_id,
   });
 }
 
@@ -264,6 +297,13 @@ export async function executeWorkflowEnrollment(
             finishedAt: new Date().toISOString(),
             releaseLock: true,
           });
+          if (failed) {
+            await notifyWorkflowFailure({
+              enrollmentId: enrollment.id,
+              workflowOwnerId: execution.workflow_created_by,
+              leadId: enrollment.lead_id,
+            });
+          }
           return {
             status: failed ? 'failed' : 'lease_lost',
             processedNodes: processedNodes + 1,
@@ -317,6 +357,11 @@ export async function executeWorkflowEnrollment(
           });
           return { status: 'retry_scheduled', processedNodes: processedNodes + 1 };
         }
+        await notifyWorkflowFailure({
+          enrollmentId: enrollment.id,
+          workflowOwnerId: execution.workflow_created_by,
+          leadId: enrollment.lead_id,
+        });
         return {
           status: code === 'ACTION_EXECUTION_DISABLED' ? 'action_blocked' : 'action_failed',
           processedNodes: processedNodes + 1,

@@ -17,6 +17,7 @@ import {
   autoResolveItemsForLead as repoAutoResolveItemsForLead,
 } from './ai-inbox.repository';
 import type { AiInboxItem, CreateInboxItemInput, ListInboxItemsOptions } from './ai-inbox.types';
+import { createNotification } from '../notifications/notifications.service';
 
 export async function createItem(input: CreateInboxItemInput): Promise<AiInboxItem> {
   const item = await createInboxItem(input);
@@ -28,6 +29,24 @@ export async function createItem(input: CreateInboxItemInput): Promise<AiInboxIt
     urgency: item.urgency_score,
     agentActionId: item.agent_action_id,
   });
+  const notification = await createNotification({
+    recipientUserId: item.assigned_to,
+    occurrenceKey: `approval:${item.id}`,
+    type: 'approval_required',
+    title: 'Approval required',
+    message: item.title,
+    metadata: {
+      ...(item.lead_id ? { leadId: item.lead_id } : {}),
+      deepLink: '/ai-inbox',
+    },
+  });
+  if (!notification.ok) {
+    logger.error('ai inbox: failed to notify assignee about pending item', {
+      itemId: item.id,
+      assignedTo: item.assigned_to,
+      error: notification.error.message,
+    });
+  }
   return item;
 }
 
