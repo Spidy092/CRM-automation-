@@ -29,6 +29,10 @@ const TYPE_STYLES: Record<NotificationDto['type'], { dot: string; label: string 
   job_failed: { dot: 'bg-red-500', label: 'Job failed' },
   scraper_complete: { dot: 'bg-amber-500', label: 'Scraper' },
   lead_scored: { dot: 'bg-violet-500', label: 'Lead scored' },
+  reply_received: { dot: 'bg-emerald-500', label: 'Lead reply' },
+  approval_required: { dot: 'bg-amber-500', label: 'Approval required' },
+  follow_up_due: { dot: 'bg-orange-500', label: 'Follow-up due' },
+  automation_failed: { dot: 'bg-red-500', label: 'Automation failed' },
 };
 
 function timeAgo(isoString: string): string {
@@ -49,7 +53,13 @@ function resolveNotificationHref(n: NotificationDto): string | null {
   }
   const leadId = n.metadata?.leadId;
   if (typeof leadId === 'string' && leadId) {
-    if (n.type === 'lead_assigned' || n.type === 'campaign_enrolled' || n.type === 'lead_scored') {
+    if (
+      n.type === 'lead_assigned' ||
+      n.type === 'campaign_enrolled' ||
+      n.type === 'lead_scored' ||
+      n.type === 'reply_received' ||
+      n.type === 'follow_up_due'
+    ) {
       return `/leads/${leadId}`;
     }
   }

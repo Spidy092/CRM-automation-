@@ -24,6 +24,7 @@ import { startNewsletterWorker } from './newsletter.worker';
 import { startWorkflowScheduler, startWorkflowWorker } from './workflow.worker';
 import { startOutboxScheduler, startOutboxWorker } from './outbox.worker';
 import { workflowAutomationEnabled } from '../modules/workflows/workflow.config';
+import { startFollowUpNotificationScheduler } from './followUpNotifications.scheduler';
 
 /**
  * CRM Worker Process
@@ -89,6 +90,7 @@ async function startWorkers(): Promise<void> {
   // depend on workflow automation being enabled.
   const outbox = startOutboxWorker();
   startOutboxScheduler();
+  startFollowUpNotificationScheduler();
 
   logger.info('Worker process started — listening for jobs', {
     queues: [

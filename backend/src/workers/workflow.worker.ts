@@ -25,6 +25,7 @@ import { logger } from '../shared/utils/logger';
 import { incJobsFailed, incJobsProcessed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 const MAX_NODES_PER_JOB = 20;
 const MAX_STEP_ATTEMPTS = 3;
@@ -79,7 +80,7 @@ async function markFailure(
   message: string,
 ): Promise<void> {
   if (!enrollment) return;
-  await advanceEnrollment({
+  const failed = await advanceEnrollment({
     id: enrollment.id,
     lockVersion: enrollment.lock_version,
     workerId,
@@ -88,6 +89,26 @@ async function markFailure(
     lastError: message,
     finishedAt: new Date().toISOString(),
   });
+  if (!failed) return;
+  const execution = await findEnrollmentExecutionById(enrollment.id);
+  if (!execution) return;
+  const notice = await createNotification({
+    recipientUserId: execution.workflow_created_by,
+    occurrenceKey: `workflow-failed:${enrollment.id}`,
+    type: 'automation_failed',
+    title: 'Automation failed',
+    message: 'A workflow stopped after an error. Open Workflows to review the run.',
+    metadata: {
+      ...(enrollment.lead_id ? { leadId: enrollment.lead_id } : {}),
+      deepLink: '/automation/workflows',
+    },
+  });
+  if (!notice.ok) {
+    logger.error('failed to notify workflow owner about terminal failure', {
+      enrollmentId: enrollment.id,
+      error: notice.error.message,
+    });
+  }
 }
 
 /** Repairs an enrollment where a prior process already finalized its step. */
@@ -316,6 +337,23 @@ export async function executeWorkflowEnrollment(
             errorCode: code,
           });
           return { status: 'retry_scheduled', processedNodes: processedNodes + 1 };
+        }
+        const notice = await createNotification({
+          recipientUserId: execution.workflow_created_by,
+          occurrenceKey: `workflow-failed:${enrollment.id}`,
+          type: 'automation_failed',
+          title: 'Automation failed',
+          message: 'A workflow stopped after an error. Open Workflows to review the run.',
+          metadata: {
+            ...(enrollment.lead_id ? { leadId: enrollment.lead_id } : {}),
+            deepLink: '/automation/workflows',
+          },
+        });
+        if (!notice.ok) {
+          logger.error('failed to notify workflow owner about terminal failure', {
+            enrollmentId: enrollment.id,
+            error: notice.error.message,
+          });
         }
         return {
           status: code === 'ACTION_EXECUTION_DISABLED' ? 'action_blocked' : 'action_failed',

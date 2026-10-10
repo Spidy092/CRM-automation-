@@ -21,6 +21,7 @@ import {
   findLeads,
   findLeadsByScraperLogId,
   findLeadsByIds,
+  findDueFollowUpLeads,
   insertLead,
   softDeleteLead,
   updateLead,
@@ -37,6 +38,7 @@ import {
   insertActivity,
 } from '../activities/activities.repository';
 import { Activity } from '../activities/activities.types';
+import { createNotification } from '../notifications/notifications.service';
 import {
   LeadInput,
   LeadListFilters,
@@ -634,6 +636,31 @@ export async function bulkPauseLeads(
 }
 
 export { clampLimit, decodeCursor };
+
+export async function notifyDueFollowUps(limit = 100): Promise<number> {
+  const leads = await findDueFollowUpLeads(limit);
+  let notified = 0;
+  for (const lead of leads) {
+    if (!lead.assigned_to || !lead.next_follow_up_at) continue;
+    const result = await createNotification({
+      recipientUserId: lead.assigned_to,
+      occurrenceKey: `follow-up:${lead.id}:${lead.next_follow_up_at}`,
+      type: 'follow_up_due',
+      title: 'Follow-up due',
+      message: `Follow up with ${lead.business_name}.`,
+      metadata: { leadId: lead.id, deepLink: `/leads/${lead.id}` },
+    });
+    if (result.ok && result.value.created) notified += 1;
+    if (!result.ok) {
+      logger.error('Failed to create due follow-up notification', {
+        leadId: lead.id,
+        recipientUserId: lead.assigned_to,
+        error: result.error.message,
+      });
+    }
+  }
+  return notified;
+}
 
 export async function getLeadEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
   return findLeadEnrollmentOptions();

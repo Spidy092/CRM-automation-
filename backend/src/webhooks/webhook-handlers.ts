@@ -18,6 +18,8 @@ import {
 import { publishAIDomainEvent } from '../shared/events/eventBus';
 import { upsertReplyTask } from '../modules/outreach/outreach.service';
 import { buildPendingReplyTaskSpec, resolveDueAt } from '../modules/ai-reply/ai-reply.tasks';
+import { findLeadById } from '../modules/leads/leads.repository';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,35 @@ async function publishLeadReplyReceived(
   messageId: string,
   rawBody: string,
 ): Promise<void> {
+  try {
+    const lead = await findLeadById(leadId);
+    if (lead?.assigned_to) {
+      const notification = await createNotification({
+        recipientUserId: lead.assigned_to,
+        occurrenceKey: `reply:${messageId}`,
+        type: 'reply_received',
+        title: 'New lead reply',
+        message: `${lead.business_name} replied via ${channel}.`,
+        metadata: { leadId, deepLink: `/leads/${leadId}` },
+      });
+      if (!notification.ok) {
+        logger.error('Failed to persist incoming-reply notification', {
+          leadId,
+          messageId,
+          error: notification.error.message,
+        });
+      }
+    }
+  } catch (error) {
+    // Notifications are best-effort: do not make an already-persisted provider
+    // reply fail webhook processing and trigger a provider retry.
+    logger.error('Incoming-reply notification lookup failed', {
+      leadId,
+      messageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   await publishAIDomainEvent({
     type: 'lead.reply.received',
     payload: {
