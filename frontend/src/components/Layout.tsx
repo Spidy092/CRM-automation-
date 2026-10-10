@@ -15,7 +15,6 @@ import {
   UsersRound,
   Search,
   ListOrdered,
-  Plug,
   ShieldCheck,
   MessageSquare,
   Zap,
@@ -205,11 +204,6 @@ export function Layout() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-md border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 sm:flex">
-              <Plug className="h-3.5 w-3.5" />
-              Sprint 4 active
-            </div>
-            <span className="hidden text-sm text-slate-500 dark:text-slate-400 md:block">{user?.email}</span>
             <NotificationBell />
           </div>
         </header>
