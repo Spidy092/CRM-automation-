@@ -43,7 +43,7 @@ import {
 import { parseSourceConfig } from './scraper.schema';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
-import { pushToUser } from '../notifications/notifications.emitter';
+import { createNotification } from '../notifications/notifications.service';
 import { verifyEmail } from '../../shared/utils/email';
 
 interface ScrapedLead {
@@ -452,17 +452,25 @@ async function finalizeSuccessfulRun(
     errorMessage: null,
   };
 
-  // Fire SSE notification + external webhook (best-effort, non-blocking)
+  // Fire persistent notification + external webhook
   const config = await findScraperConfigById(configId);
   if (config) {
-    void pushToUser(config.created_by, {
-      id: `scraper-${logId}`,
+    const notifyResult = await createNotification({
+      recipientUserId: config.created_by,
+      occurrenceKey: `scraper:complete:${logId}`,
       type: 'scraper_complete',
       title: `Scraper run ${status}`,
       message: `${config.name}: ${result.recordsImported} new, ${result.recordsDuplicate} dup, ${result.recordsFailed} failed`,
-      data: { configId, logId, status, recordsImported: result.recordsImported },
-      timestamp: new Date().toISOString(),
-    }).catch(() => {});
+      metadata: { configId, logId, status, recordsImported: result.recordsImported },
+    });
+    if (!notifyResult.ok) {
+      logger.error('Failed to persist scraper complete notification', {
+        configId,
+        logId,
+        error: notifyResult.error.message,
+      });
+      throw notifyResult.error;
+    }
 
     if (config.webhook_url) {
       void fireWebhook(config.webhook_url, buildRunWebhookPayload(config, runResult));
@@ -502,9 +510,29 @@ export function isRetryableScrapeError(err: unknown): boolean {
  * can see a "running" entry the instant the run is triggered).
  */
 async function runScrapeCore(config: ScraperConfigRow, logId: string): Promise<ScraperRunResult> {
+  // If this run already completed in a prior attempt (e.g. notification persistence failed
+  // and triggered a BullMQ retry), avoid re-crawling the target site. Re-finalize with the
+  // existing log state so createNotification retries idempotently.
+  const existingLog = await findScraperLogById(logId);
+  if (
+    existingLog &&
+    (existingLog.status === 'completed' || existingLog.status === 'partially_completed') &&
+    existingLog.completed_at
+  ) {
+    return await finalizeSuccessfulRun(logId, config.id, config.source_type, {
+      recordsFound: existingLog.records_found ?? 0,
+      recordsImported: existingLog.records_imported ?? 0,
+      recordsDuplicate: existingLog.records_duplicate ?? 0,
+      recordsFailed: existingLog.records_failed ?? 0,
+      failedItems: existingLog.failed_items ?? [],
+      duplicateLeadIds: existingLog.duplicate_lead_ids ?? [],
+      rawResponse: existingLog.raw_response ?? undefined,
+    });
+  }
+
+  let result;
   try {
-    const result = await executeScraper(config, logId);
-    return await finalizeSuccessfulRun(logId, config.id, config.source_type, result);
+    result = await executeScraper(config, logId);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     await updateScraperLog(logId, {
@@ -522,15 +550,23 @@ async function runScrapeCore(config: ScraperConfigRow, logId: string): Promise<S
       retryable,
     });
 
-    // Fire SSE notification + external webhook on failure (best-effort)
-    void pushToUser(config.created_by, {
-      id: `scraper-${logId}`,
+    // Fire persistent notification + external webhook on failure
+    const notifyResult = await createNotification({
+      recipientUserId: config.created_by,
+      occurrenceKey: `scraper:failed:${logId}`,
       type: 'scraper_complete',
       title: 'Scraper run failed',
       message: `${config.name}: ${message}`,
-      data: { configId: config.id, logId, status: 'failed' },
-      timestamp: new Date().toISOString(),
-    }).catch(() => {});
+      metadata: { configId: config.id, logId, status: 'failed' },
+    });
+    if (!notifyResult.ok) {
+      logger.error('Failed to persist scraper failure notification', {
+        configId: config.id,
+        logId,
+        error: notifyResult.error.message,
+      });
+      throw notifyResult.error;
+    }
 
     if (config.webhook_url) {
       void fireWebhook(
@@ -564,6 +600,8 @@ async function runScrapeCore(config: ScraperConfigRow, logId: string): Promise<S
       retryable,
     };
   }
+
+  return await finalizeSuccessfulRun(logId, config.id, config.source_type, result);
 }
 
 export async function runScrape(configId: string, _actor: ScraperActor): Promise<ScraperRunResult> {

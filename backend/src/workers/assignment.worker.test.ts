@@ -66,8 +66,8 @@ jest.mock('../modules/integrations/notifications', () => ({
   notifyAssignment: jest.fn(),
 }));
 
-jest.mock('../modules/notifications/notifications.emitter', () => ({
-  pushToUser: jest.fn(),
+jest.mock('../modules/notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 import { startAssignmentWorker } from './assignment.worker';
@@ -78,7 +78,7 @@ import { autoAssignLead } from '../modules/assignments/assignments.service';
 import { findEligibleUsers } from '../modules/assignments/assignments.repository';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { notifyAssignment } from '../modules/integrations/notifications';
-import { pushToUser } from '../modules/notifications/notifications.emitter';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 const ASSIGNMENT_ROUND_ROBIN = 'assignment:round-robin';
 
@@ -94,7 +94,7 @@ function makeJob(over: Partial<any> = {}): any {
 }
 
 function assignment(over: Partial<any> = {}): any {
-  return { assigned_to: 'user1', assigned_by: 'system', ...over };
+  return { id: 'assign1', assigned_to: 'user1', assigned_by: 'system', ...over };
 }
 
 beforeEach(() => {
@@ -153,9 +153,12 @@ describe('processor — assignment:round-robin', () => {
         classification: 'hot',
       }),
     );
-    expect(pushToUser).toHaveBeenCalledWith(
-      'user1',
-      expect.objectContaining({ type: 'lead_assigned', id: 'assign:lead1' }),
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'user1',
+        type: 'lead_assigned',
+        occurrenceKey: 'assignment:assign1',
+      }),
     );
     expect(result).toEqual({
       leadId: 'lead1',
@@ -218,7 +221,7 @@ describe('processor — assignment:round-robin', () => {
       assignedTo: 'user1',
       notified: false,
     });
-    expect(pushToUser).toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalled();
   });
 
   it('handles non-Error thrown by notifyAssignment', async () => {
@@ -229,6 +232,19 @@ describe('processor — assignment:round-robin', () => {
 
     const result = await captured.processor!(makeJob());
     expect((result as any).notified).toBe(false);
+  });
+
+  it('rethrows when createNotification fails so BullMQ retries the job', async () => {
+    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', business_name: 'Acme Co' });
+    (notifyAssignment as jest.Mock).mockResolvedValue({ ok: true });
+    (createNotification as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: new Error('Postgres connection lost'),
+    });
+
+    await expect(captured.processor!(makeJob())).rejects.toThrow('Postgres connection lost');
   });
 });
 

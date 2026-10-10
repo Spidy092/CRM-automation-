@@ -85,8 +85,10 @@ async function startWorkers(): Promise<void> {
   const newsletter = startNewsletterWorker();
   const workflow = workflowAutomationEnabled() ? startWorkflowWorker() : null;
   if (workflow) startWorkflowScheduler();
-  const outbox = workflowAutomationEnabled() ? startOutboxWorker() : null;
-  if (outbox) startOutboxScheduler();
+  // Start the outbox worker unconditionally — notification reliability must not
+  // depend on workflow automation being enabled.
+  const outbox = startOutboxWorker();
+  startOutboxScheduler();
 
   logger.info('Worker process started — listening for jobs', {
     queues: [

@@ -9,7 +9,7 @@ import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/u
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { AppError } from '../shared/middleware/errorHandler';
-import { pushToUser } from '../modules/notifications/notifications.emitter';
+import { createNotification } from '../modules/notifications/notifications.service';
 import {
   findDashboardMetrics,
   findLeadGenerationReport,
@@ -190,14 +190,23 @@ export async function handleReportExport(
       throw new AppError(`Unsupported export format: ${String(format)}`, 400);
   }
 
-  void pushToUser(actorId, {
-    id: `export:${jobId}`,
+  // Persist durable notification; the service publishes the live Redis signal after commit.
+  const notifyResult = await createNotification({
+    recipientUserId: actorId,
+    occurrenceKey: `export:${jobId}`,
     type: 'export_ready',
     title: 'Export ready',
     message: `Your ${reportType} report (${format.toUpperCase()}) is ready to download.`,
-    data: { jobId, reportType, format },
-    timestamp: new Date().toISOString(),
+    metadata: { jobId, reportType },
   });
+  if (!notifyResult.ok) {
+    logger.error('Failed to persist export-ready notification', {
+      jobId,
+      actorId,
+      error: notifyResult.error.message,
+    });
+    throw notifyResult.error;
+  }
 
   return { filePath };
 }

@@ -1,7 +1,9 @@
+import { withTransaction } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { logger } from '../../shared/utils/logger';
 import { findLeadById } from '../leads/leads.repository';
-import { pushToUser } from '../notifications/notifications.emitter';
+import { createNotification } from '../notifications/notifications.service';
 import {
   findAssignmentConfig,
   updateAssignmentConfig,
@@ -59,8 +61,36 @@ export async function assignManually(
     throw new AppError('Lead already has an active assignment', 409);
   }
 
-  await updateLeadAssignment(leadId, userId);
-  const assignment = await insertAssignment(leadId, userId, actor.id, 'manual');
+  const { assignment, publishLiveSignal } = await withTransaction(async (client) => {
+    await updateLeadAssignment(leadId, userId, client);
+    const createdAssignment = await insertAssignment(leadId, userId, actor.id, 'manual', client);
+
+    const notifResult = await createNotification(
+      {
+        recipientUserId: userId,
+        occurrenceKey: `assignment:${createdAssignment.id}`,
+        type: 'lead_assigned',
+        title: 'New lead assigned',
+        message: `${lead.business_name ?? 'A lead'} was assigned to you.`,
+        metadata: { leadId },
+      },
+      client,
+    );
+
+    if (!notifResult.ok) {
+      logger.error('Failed to persist manual assignment notification', {
+        leadId,
+        assignmentId: createdAssignment.id,
+        error: notifResult.error.message,
+      });
+      throw notifResult.error;
+    }
+
+    return {
+      assignment: createdAssignment,
+      publishLiveSignal: notifResult.value.publishLiveSignal,
+    };
+  });
 
   await writeAuditLog({
     userId: actor.id,
@@ -71,14 +101,9 @@ export async function assignManually(
     ipAddress: actor.ipAddress ?? null,
   });
 
-  void pushToUser(userId, {
-    id: `assign:${leadId}`,
-    type: 'lead_assigned',
-    title: 'New lead assigned',
-    message: `${lead.business_name ?? 'A lead'} was assigned to you.`,
-    data: { leadId },
-    timestamp: new Date().toISOString(),
-  });
+  if (publishLiveSignal) {
+    void publishLiveSignal();
+  }
 
   return assignment;
 }
@@ -92,8 +117,42 @@ export async function overrideAssignment(
   const lead = await findLeadById(leadId);
   if (!lead) throw new AppError('Lead not found', 404);
 
-  await updateLeadAssignment(leadId, newUserId);
-  const assignment = await insertAssignment(leadId, newUserId, actor.id, 'override');
+  const { assignment, publishLiveSignal } = await withTransaction(async (client) => {
+    await updateLeadAssignment(leadId, newUserId, client);
+    const createdAssignment = await insertAssignment(
+      leadId,
+      newUserId,
+      actor.id,
+      'override',
+      client,
+    );
+
+    const notifResult = await createNotification(
+      {
+        recipientUserId: newUserId,
+        occurrenceKey: `assignment:${createdAssignment.id}`,
+        type: 'lead_assigned',
+        title: 'New lead assigned',
+        message: `${lead.business_name ?? 'A lead'} was reassigned to you.`,
+        metadata: { leadId },
+      },
+      client,
+    );
+
+    if (!notifResult.ok) {
+      logger.error('Failed to persist reassignment notification', {
+        leadId,
+        assignmentId: createdAssignment.id,
+        error: notifResult.error.message,
+      });
+      throw notifResult.error;
+    }
+
+    return {
+      assignment: createdAssignment,
+      publishLiveSignal: notifResult.value.publishLiveSignal,
+    };
+  });
 
   await writeAuditLog({
     userId: actor.id,
@@ -104,14 +163,9 @@ export async function overrideAssignment(
     ipAddress: actor.ipAddress ?? null,
   });
 
-  void pushToUser(newUserId, {
-    id: `assign:${leadId}`,
-    type: 'lead_assigned',
-    title: 'New lead assigned',
-    message: `${lead.business_name ?? 'A lead'} was reassigned to you.`,
-    data: { leadId },
-    timestamp: new Date().toISOString(),
-  });
+  if (publishLiveSignal) {
+    void publishLiveSignal();
+  }
 
   return assignment;
 }

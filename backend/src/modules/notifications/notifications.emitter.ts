@@ -21,7 +21,8 @@ export type NotificationType =
   | 'export_ready'
   | 'job_failed'
   | 'scraper_complete'
-  | 'lead_scored';
+  | 'lead_scored'
+  | 'stream_revoked';
 
 export interface AppNotification {
   id: string;

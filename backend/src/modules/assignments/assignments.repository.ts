@@ -73,8 +73,10 @@ export async function insertAssignment(
   assignedTo: string,
   assignedBy: string,
   assignmentType: 'round_robin' | 'manual' | 'override',
+  executor?: { query: typeof pool.query },
 ): Promise<Assignment> {
-  const result = await pool.query<Assignment>(
+  const db = executor ?? pool;
+  const result = await db.query<Assignment>(
     `INSERT INTO assignments (lead_id, assigned_to, assigned_by, assignment_type)
      VALUES ($1, $2, $3, $4) RETURNING *`,
     [leadId, assignedTo, assignedBy, assignmentType],
@@ -98,8 +100,13 @@ export async function findAssignmentsByUser(userId: string): Promise<Assignment[
   return result.rows;
 }
 
-export async function updateLeadAssignment(leadId: string, userId: string): Promise<void> {
-  await pool.query('UPDATE leads SET assigned_to = $1 WHERE id = $2 AND deleted_at IS NULL', [
+export async function updateLeadAssignment(
+  leadId: string,
+  userId: string,
+  executor?: { query: typeof pool.query },
+): Promise<void> {
+  const db = executor ?? pool;
+  await db.query('UPDATE leads SET assigned_to = $1 WHERE id = $2 AND deleted_at IS NULL', [
     userId,
     leadId,
   ]);
