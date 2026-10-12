@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { renderWithProviders } from '@/lib/test-utils';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useAuthStore } from '@/store/authStore';
+import { renderWithProviders, screen, fireEvent } from '@/lib/test-utils';
 import { ScraperConfigPage } from '../ScraperConfigPage';
 
 vi.mock('@/api/client', () => {
@@ -72,6 +73,19 @@ vi.mock('@/api/client', () => {
 });
 
 describe('ScraperConfigPage', () => {
+  beforeEach(() => useAuthStore.setState({ user: { id: 'admin', name: 'Admin', email: 'admin@example.test', role: 'admin' } }));
+  it('enables the agent for new Google sources and allows switching to standard mode', async () => {
+    renderWithProviders(<ScraperConfigPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Source' }));
+    const agentToggle = screen.getByRole('checkbox', { name: 'AI research agent' });
+    expect(agentToggle).toBeChecked();
+    expect(screen.getByLabelText('Research goal')).toBeInTheDocument();
+    expect(screen.getByLabelText('Max AI rounds')).toHaveValue(12);
+    expect(screen.getByLabelText('Max external requests')).toHaveValue(80);
+    fireEvent.click(agentToggle);
+    expect(screen.queryByLabelText('Research goal')).not.toBeInTheDocument();
+  });
+
   it('renders successfully', async () => {
     const { container } = renderWithProviders(<ScraperConfigPage />);
     await new Promise(resolve => setTimeout(resolve, 50));
