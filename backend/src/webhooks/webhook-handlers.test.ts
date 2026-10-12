@@ -49,7 +49,13 @@ jest.mock('../shared/events/eventBus', () => ({
   publishAIDomainEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../modules/notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true, value: { created: true } }),
+}));
+
 const mockedPublishAIDomainEvent = publishAIDomainEvent as jest.Mock;
+import { createNotification } from '../modules/notifications/notifications.service';
+const mockedCreateNotification = createNotification as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -235,6 +241,32 @@ describe('handleTwilioMessage', () => {
           message_text: 'Yes I am interested',
           received_at: expect.any(String),
         }),
+      }),
+    );
+  });
+
+  it('uses MessageSid for reply notification and event idempotency when supplied', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({ id: 'lead-2' })
+      .mockResolvedValueOnce({ id: 'lead-2', business_name: 'Acme', assigned_to: 'rep-2' });
+
+    await handleTwilioMessage({
+      From: '+12025559999',
+      Body: 'A second SMS reply',
+      MessageSid: 'SM_MESSAGE_SID',
+    });
+
+    expect(mockedCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'rep-2',
+        occurrenceKey: 'reply:tw:SM_MESSAGE_SID',
+        type: 'reply_received',
+      }),
+    );
+    expect(mockedPublishAIDomainEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'lead.reply.received',
+        payload: expect.objectContaining({ message_id: 'tw:SM_MESSAGE_SID' }),
       }),
     );
   });

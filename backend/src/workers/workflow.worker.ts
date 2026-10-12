@@ -439,6 +439,13 @@ export async function executeWorkflowEnrollment(
         finishedAt: new Date().toISOString(),
         releaseLock: true,
       });
+      if (failed) {
+        await notifyWorkflowFailure({
+          enrollmentId: enrollment.id,
+          workflowOwnerId: execution.workflow_created_by,
+          leadId: enrollment.lead_id,
+        });
+      }
       return {
         status: failed ? 'failed' : 'lease_lost',
         processedNodes: processedNodes + 1,

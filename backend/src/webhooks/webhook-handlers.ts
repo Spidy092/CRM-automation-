@@ -334,7 +334,12 @@ export async function handleTwilioMessage(
 ): Promise<WebhookResult> {
   const from = payload.From as string;
   const body = payload.Body as string;
-  const smsSid = payload.SmsSid as string;
+  const smsSid =
+    typeof payload.MessageSid === 'string'
+      ? payload.MessageSid
+      : typeof payload.SmsSid === 'string'
+        ? payload.SmsSid
+        : undefined;
 
   logger.info('Twilio inbound', { from: maskPhone(from), smsSid });
 

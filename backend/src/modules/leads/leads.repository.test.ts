@@ -12,6 +12,7 @@ import {
   findLeads,
   countLeads,
   findLeadById,
+  findDueFollowUpLeads,
   findExistingForDedup,
   findLeadsByScraperLogId,
   findLeadsByIds,
@@ -172,6 +173,20 @@ describe('findLeadById', () => {
   it('returns null when not found', async () => {
     mockQueryOne.mockResolvedValue(null);
     expect(await findLeadById('missing')).toBeNull();
+  });
+});
+
+describe('findDueFollowUpLeads', () => {
+  it('uses a stable timestamp and id cursor for later pages', async () => {
+    mockPoolQuery.mockResolvedValue({ rows: [] });
+    const cursor = { nextFollowUpAt: '2026-10-01T09:00:00.000Z', id: '00000000-0000-4000-8000-000000000001' };
+
+    await findDueFollowUpLeads(25, cursor);
+
+    const [sql, params] = mockPoolQuery.mock.calls[0];
+    expect(sql).toContain('(next_follow_up_at, id) > ($2::timestamptz, $3::uuid)');
+    expect(sql).toContain('ORDER BY next_follow_up_at ASC, id ASC');
+    expect(params).toEqual([25, cursor.nextFollowUpAt, cursor.id]);
   });
 });
 

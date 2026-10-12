@@ -163,7 +163,10 @@ export async function findLeadById(id: string): Promise<LeadRow | null> {
 
 export async function findDueFollowUpLeads(
   limit = 100,
+  after?: { nextFollowUpAt: string; id: string },
 ): Promise<Array<Pick<LeadRow, 'id' | 'business_name' | 'assigned_to' | 'next_follow_up_at'>>> {
+  const cursorClause = after ? 'AND (next_follow_up_at, id) > ($2::timestamptz, $3::uuid)' : '';
+  const params = after ? [limit, after.nextFollowUpAt, after.id] : [limit];
   const result = await pool.query<
     Pick<LeadRow, 'id' | 'business_name' | 'assigned_to' | 'next_follow_up_at'>
   >(
@@ -174,9 +177,10 @@ export async function findDueFollowUpLeads(
         AND assigned_to IS NOT NULL
         AND next_follow_up_at IS NOT NULL
         AND next_follow_up_at <= NOW()
-      ORDER BY next_follow_up_at ASC
+        ${cursorClause}
+      ORDER BY next_follow_up_at ASC, id ASC
       LIMIT $1`,
-    [limit],
+    params,
   );
   return result.rows;
 }
