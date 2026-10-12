@@ -161,6 +161,30 @@ export async function findLeadById(id: string): Promise<LeadRow | null> {
   return queryOne<LeadRow>(`SELECT ${COLS} FROM leads WHERE id = $1 AND deleted_at IS NULL`, [id]);
 }
 
+export async function findDueFollowUpLeads(
+  limit = 100,
+  after?: { nextFollowUpAt: string; id: string },
+): Promise<Array<Pick<LeadRow, 'id' | 'business_name' | 'assigned_to' | 'next_follow_up_at'>>> {
+  const cursorClause = after ? 'AND (next_follow_up_at, id) > ($2::timestamptz, $3::uuid)' : '';
+  const params = after ? [limit, after.nextFollowUpAt, after.id] : [limit];
+  const result = await pool.query<
+    Pick<LeadRow, 'id' | 'business_name' | 'assigned_to' | 'next_follow_up_at'>
+  >(
+    `SELECT id, business_name, assigned_to, next_follow_up_at
+       FROM leads
+      WHERE deleted_at IS NULL
+        AND status = 'active'
+        AND assigned_to IS NOT NULL
+        AND next_follow_up_at IS NOT NULL
+        AND next_follow_up_at <= NOW()
+        ${cursorClause}
+      ORDER BY next_follow_up_at ASC, id ASC
+      LIMIT $1`,
+    params,
+  );
+  return result.rows;
+}
+
 /** Find an existing non-deleted lead in the same source matching email OR phone (dedup). */
 export async function findExistingForDedup(
   email: string,

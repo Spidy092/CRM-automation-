@@ -9,6 +9,10 @@ export const notificationTypeSchema = z.enum([
   'job_failed',
   'scraper_complete',
   'lead_scored',
+  'reply_received',
+  'approval_required',
+  'follow_up_due',
+  'automation_failed',
 ]);
 
 // ── Metadata allowlist ─────────────────────────────────────────────────────

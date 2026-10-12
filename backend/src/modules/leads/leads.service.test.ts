@@ -8,6 +8,7 @@ jest.mock('./leads.repository', () => ({
   findLeads: jest.fn(),
   countLeads: jest.fn(),
   findLeadById: jest.fn(),
+  findDueFollowUpLeads: jest.fn(),
   findExistingForDedup: jest.fn(),
   findLeadsByScraperLogId: jest.fn(),
   findLeadsByIds: jest.fn(),
@@ -36,6 +37,9 @@ jest.mock('../custom-fields/customFields.service', () => ({
   validateCustomFieldValues: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('../notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true, value: { created: true } }),
+}));
 
 import {
   enqueueLeadEvent,
@@ -56,6 +60,7 @@ import {
   softDeleteLeadById,
   updateLeadFields,
   optOutLeadByEmail,
+  notifyDueFollowUps,
 } from './leads.service';
 import {
   createOutboundActivityAndUpdateLead,
@@ -64,6 +69,7 @@ import {
 import {
   optOutLeadByEmail as optOutRepo,
   countLeads,
+  findDueFollowUpLeads,
   findExistingForDedup,
   findLeadById,
   findLeads,
@@ -78,6 +84,7 @@ import {
   bulkUpdateLeads as repoBulkUpdate,
   bulkPauseLeads as repoBulkPause,
 } from './leads.repository';
+import { createNotification } from '../notifications/notifications.service';
 import { findStageById } from '../pipeline/pipeline.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -747,5 +754,43 @@ describe('recipient email opt-out', () => {
     await optOutLeadByEmail('lead-1', hash);
     expect(cancelPendingOutreachJobs).toHaveBeenCalledWith({ leadId: 'lead-1' });
     expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe('notifyDueFollowUps', () => {
+  it('continues across stable cursor pages so later due leads are notified', async () => {
+    const firstPage = [
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        business_name: 'First lead',
+        assigned_to: 'rep-1',
+        next_follow_up_at: '2026-10-01T09:00:00.000Z',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000002',
+        business_name: 'Second lead',
+        assigned_to: 'rep-1',
+        next_follow_up_at: '2026-10-01T09:00:00.000Z',
+      },
+    ];
+    const secondPage = [
+      {
+        id: '00000000-0000-4000-8000-000000000003',
+        business_name: 'Later lead',
+        assigned_to: 'rep-2',
+        next_follow_up_at: '2026-10-02T09:00:00.000Z',
+      },
+    ];
+    (findDueFollowUpLeads as jest.Mock).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+    const notified = await notifyDueFollowUps(2);
+
+    expect(notified).toBe(3);
+    expect(findDueFollowUpLeads).toHaveBeenNthCalledWith(1, 2, undefined);
+    expect(findDueFollowUpLeads).toHaveBeenNthCalledWith(2, 2, {
+      nextFollowUpAt: firstPage[1].next_follow_up_at,
+      id: firstPage[1].id,
+    });
+    expect(createNotification).toHaveBeenCalledTimes(3);
   });
 });

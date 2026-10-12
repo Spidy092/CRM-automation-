@@ -34,6 +34,9 @@ jest.mock('../shared/utils/sentry', () => ({
 }));
 
 jest.mock('../lib/dlq', () => ({ moveToDLQ: jest.fn() }));
+jest.mock('../modules/notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true, value: { created: true } }),
+}));
 
 import {
   advanceEnrollment,
@@ -51,6 +54,7 @@ import {
 } from './workflow.worker';
 import * as workflowActions from '../modules/workflows/workflow.actions';
 import { enqueueWorkflowExecution } from './queue';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 const mockClaim = claimEnrollmentById as jest.Mock;
 const mockFindExecution = findEnrollmentExecutionById as jest.Mock;
@@ -61,6 +65,7 @@ const mockAdvance = advanceEnrollment as jest.Mock;
 const mockFindDue = findDueEnrollmentIds as jest.Mock;
 const mockEnqueueWorkflow = enqueueWorkflowExecution as jest.Mock;
 const mockExecuteAction = jest.spyOn(workflowActions, 'executeWorkflowAction');
+const mockCreateNotification = createNotification as jest.Mock;
 
 const baseEnrollment = {
   id: 'enrollment-1',
@@ -161,6 +166,33 @@ describe('workflow worker', () => {
     );
     expect(mockFinishAndAdvance.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({ currentNodeId: 'end', releaseLock: true }),
+    );
+  });
+
+  it('notifies the workflow owner when a non-action node has no continuation', async () => {
+    mockFindExecution.mockResolvedValueOnce({
+      enrollment: { ...baseEnrollment },
+      workflow_status: 'published',
+      workflow_created_by: 'manager-1',
+      definition: {
+        name: 'Missing continuation',
+        entryNodeId: 'trigger',
+        nodes: [{ id: 'trigger', type: 'trigger', trigger: { event: 'lead.created' }, next: [] }],
+      },
+    });
+
+    const result = await executeWorkflowEnrollment('enrollment-1', 'worker-1', 'job-1');
+
+    expect(result).toEqual({ status: 'failed', processedNodes: 1 });
+    expect(mockFinishAndAdvance).toHaveBeenCalledWith(
+      expect.objectContaining({ enrollmentStatus: 'failed', currentNodeId: 'trigger' }),
+    );
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'manager-1',
+        occurrenceKey: 'workflow-failed:enrollment-1',
+        type: 'automation_failed',
+      }),
     );
   });
 
