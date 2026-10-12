@@ -1,8 +1,11 @@
+import type { GoogleContactProvenance } from './leads.schema';
 import { LeadClassification, LeadStatus } from '../../shared/types';
 
 /** Raw row shape as returned by node-postgres for the `leads` table. */
 export interface LeadRow {
   id: string;
+  google_place_id?: string | null;
+  google_contact_provenance?: GoogleContactProvenance | null;
   business_name: string;
   contact_name: string;
   phone: string;
@@ -41,6 +44,8 @@ export interface LeadRow {
 /** Lead as returned in API responses (google_rating coerced to number). */
 export interface LeadResponse {
   id: string;
+  google_place_id?: string | null;
+  google_contact_provenance?: GoogleContactProvenance | null;
   business_name: string;
   contact_name: string;
   phone: string;
@@ -70,6 +75,8 @@ export interface LeadResponse {
 }
 
 export interface LeadInput {
+  google_place_id?: string | null;
+  google_contact_provenance?: GoogleContactProvenance | null;
   business_name: string;
   contact_name: string;
   phone: string;
@@ -159,6 +166,8 @@ export interface ImportSummary {
 export function toLeadResponse(row: LeadRow): LeadResponse {
   return {
     id: row.id,
+    google_place_id: row.google_place_id ?? null,
+    google_contact_provenance: row.google_contact_provenance ?? null,
     business_name: row.business_name,
     contact_name: row.contact_name,
     phone: row.phone,

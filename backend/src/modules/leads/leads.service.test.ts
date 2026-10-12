@@ -172,6 +172,43 @@ describe('logOutboundActivity', () => {
 });
 
 describe('createLead', () => {
+  it('finds an existing Google business even when its contact details changed', async () => {
+    (findExistingForDedup as jest.Mock).mockResolvedValue(baseRow);
+    await expect(
+      createLead(
+        {
+          ...validInput,
+          source_platform: 'google_business',
+          google_place_id: 'place-one',
+          email: 'changed@business.test',
+          phone: '+15550009999',
+        },
+        { id: 'admin-1', role: 'admin' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(findExistingForDedup).toHaveBeenCalledWith(
+      'changed@business.test',
+      '+15550009999',
+      'google_business',
+      'place-one',
+    );
+    expect(insertLead).not.toHaveBeenCalled();
+  });
+
+  it('maps concurrent place-ID uniqueness violations to duplicates', async () => {
+    (findExistingForDedup as jest.Mock).mockResolvedValue(null);
+    (insertLead as jest.Mock).mockRejectedValue({
+      code: '23505',
+      constraint: 'idx_leads_google_place_id',
+    });
+    await expect(
+      createLead(
+        { ...validInput, source_platform: 'google_business', google_place_id: 'place-one' },
+        { id: 'admin-1', role: 'admin' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
   it('throws 409 on duplicate', async () => {
     (findExistingForDedup as jest.Mock).mockResolvedValue(baseRow);
     await expect(createLead(validInput, { id: 'admin-1', role: 'admin' })).rejects.toMatchObject({
@@ -319,6 +356,18 @@ describe('listLeads', () => {
 });
 
 describe('updateLeadFields', () => {
+  it('returns 422 before persisting a source change on an identified Google business', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      source_platform: 'google_business',
+      google_place_id: 'place-one',
+    });
+    await expect(
+      updateLeadFields('lead-1', { source_platform: 'manual' }, { id: 'admin-1', role: 'admin' }),
+    ).rejects.toMatchObject({ statusCode: 422 });
+    expect(updateLead).not.toHaveBeenCalled();
+  });
+
   it('throws 404 when not found', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(null);
     await expect(
@@ -587,6 +636,16 @@ describe('bulkClassifyLeads', () => {
 });
 
 describe('bulkUpdateLeads', () => {
+  it('rejects source changes for identified Google businesses before a bulk write', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([
+      { ...baseRow, source_platform: 'google_business', google_place_id: 'place-one' },
+    ]);
+    await expect(
+      bulkUpdateLeads(['lead-1'], { source_platform: 'manual' }, { id: 'admin-1', role: 'admin' }),
+    ).rejects.toMatchObject({ statusCode: 422 });
+    expect(repoBulkUpdate).not.toHaveBeenCalled();
+  });
+
   it('appends trimmed tags without replacing old tags and emits events only for new tags', async () => {
     (findLeadsByIds as jest.Mock).mockResolvedValue([
       { ...baseRow, id: 'lead-1', tags: ['vip'] },

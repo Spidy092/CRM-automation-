@@ -166,7 +166,10 @@ describe('findLeadById', () => {
     mockQueryOne.mockResolvedValue(sampleRow);
     const result = await findLeadById('lead-1');
     expect(result).toEqual(sampleRow);
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('WHERE id = $1 AND deleted_at IS NULL'), ['lead-1']);
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE id = $1 AND deleted_at IS NULL'),
+      ['lead-1'],
+    );
   });
 
   it('returns null when not found', async () => {
@@ -176,14 +179,36 @@ describe('findLeadById', () => {
 });
 
 describe('findExistingForDedup', () => {
+  it('uses Google place identity rather than a shared contact', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await findExistingForDedup(
+      'no-reply@chain.test',
+      '+15551234567',
+      'google_business',
+      'branch-a',
+    );
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('google_place_id = $2'), [
+      'google_business',
+      'branch-a',
+    ]);
+    expect(mockQueryOne.mock.calls[0][0]).not.toContain('lower(email) =');
+  });
+
+  it('keeps contact deduplication for leads without provider identity', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await findExistingForDedup('a@chain.test', '+15551234567', 'google_business');
+    expect(mockQueryOne.mock.calls[0][0]).toContain('google_place_id IS NULL');
+  });
+
   it('queries with source, email and phone', async () => {
     mockQueryOne.mockResolvedValue(sampleRow);
     const result = await findExistingForDedup('jane@acme.test', '+15551234567', 'manual');
     expect(result).toEqual(sampleRow);
-    expect(mockQueryOne).toHaveBeenCalledWith(
-      expect.stringContaining('source_platform = $1'),
-      ['manual', 'jane@acme.test', '+15551234567'],
-    );
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('source_platform = $1'), [
+      'manual',
+      'jane@acme.test',
+      '+15551234567',
+    ]);
   });
 
   it('returns null when no duplicate', async () => {
@@ -255,10 +280,9 @@ describe('findLeadsByScraperLogId', () => {
     mockQuery.mockResolvedValue([sampleRow]);
     const result = await findLeadsByScraperLogId('log-1');
     expect(result).toEqual([sampleRow]);
-    expect(mockQuery).toHaveBeenCalledWith(
-      expect.stringContaining('scraper_log_id = $1'),
-      ['log-1'],
-    );
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('scraper_log_id = $1'), [
+      'log-1',
+    ]);
   });
 
   it('returns an empty array when the run created no leads', async () => {
@@ -428,7 +452,9 @@ describe('updateLead', () => {
 
   it('throws when update returns null', async () => {
     mockQueryOne.mockResolvedValue(null);
-    await expect(updateLead('lead-1', { business_name: 'X' })).rejects.toThrow('Lead not found or deleted');
+    await expect(updateLead('lead-1', { business_name: 'X' })).rejects.toThrow(
+      'Lead not found or deleted',
+    );
   });
 });
 
@@ -436,10 +462,9 @@ describe('softDeleteLead', () => {
   it('issues update setting deleted_at', async () => {
     mockPoolQuery.mockResolvedValue({ rowCount: 1 });
     await softDeleteLead('lead-1');
-    expect(mockPoolQuery).toHaveBeenCalledWith(
-      expect.stringContaining('SET deleted_at = NOW()'),
-      ['lead-1'],
-    );
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('SET deleted_at = NOW()'), [
+      'lead-1',
+    ]);
   });
 });
 
@@ -448,7 +473,10 @@ describe('updateLeadStatus', () => {
     mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'paused' });
     const result = await updateLeadStatus('lead-1', 'paused');
     expect(result.status).toBe('paused');
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), ['paused', 'lead-1']);
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
+      'paused',
+      'lead-1',
+    ]);
   });
 
   it('throws when not found', async () => {
@@ -503,11 +531,13 @@ describe('findActivityForLead', () => {
 describe('findLeadEnrollmentOptions', () => {
   it('returns sources and tags without exposing lead records', async () => {
     mockPoolQuery.mockResolvedValue({ rows: [{ sources: ['custom_source'], tags: ['vip'] }] });
-    expect(await findLeadEnrollmentOptions()).toEqual({ sources: ['custom_source'], tags: ['vip'] });
+    expect(await findLeadEnrollmentOptions()).toEqual({
+      sources: ['custom_source'],
+      tags: ['vip'],
+    });
     expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('deleted_at IS NULL');
   });
 });
-
 
 describe('bulk tag append', () => {
   it('merges tags atomically in the database and deduplicates without overwriting existing tags', async () => {

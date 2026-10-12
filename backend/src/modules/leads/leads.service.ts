@@ -1,3 +1,4 @@
+import { googleContactProvenanceSchema } from './leads.schema';
 import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 import { createHash } from 'crypto';
 import type { BulkTagMode } from './leads.schema';
@@ -42,6 +43,7 @@ import {
   LeadListFilters,
   LeadListResult,
   LeadResponse,
+  LeadRow,
   toLeadResponse,
 } from './leads.types';
 import { cancelPendingOutreachJobs } from '../../workers/queue';
@@ -114,6 +116,13 @@ export function assertAccess(assignedTo: string | null, actor: Actor, write: boo
 }
 
 async function prepareInput(input: LeadInput): Promise<LeadInput> {
+  if (input.google_place_id && input.source_platform !== 'google_business') {
+    throw new AppError('Google place identity requires google_business source', 422);
+  }
+  if (input.google_contact_provenance) {
+    const parsed = googleContactProvenanceSchema.safeParse(input.google_contact_provenance);
+    if (!parsed.success) throw new AppError('Invalid Google contact provenance', 422);
+  }
   const normalized: LeadInput = {
     ...input,
     email: input.email.trim().toLowerCase(),
@@ -137,15 +146,35 @@ export async function createLead(input: LeadInput, actor: Actor): Promise<LeadRe
     prepared.email,
     prepared.phone,
     prepared.source_platform,
+    ...(prepared.google_place_id ? [prepared.google_place_id] : []),
   );
   if (existing) {
     throw new AppError(
-      'A lead with this email or phone already exists for this source platform',
+      prepared.google_place_id
+        ? 'A lead with this Google place ID already exists'
+        : 'A lead with this email or phone already exists for this source platform',
       409,
     );
   }
 
-  const created = await insertLead(prepared);
+  let created: LeadRow;
+  try {
+    created = await insertLead(prepared);
+  } catch (error) {
+    // Concurrent imports may pass the lookup together; the unique index is authoritative.
+    if (
+      prepared.google_place_id &&
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === '23505' &&
+      'constraint' in error &&
+      error.constraint === 'idx_leads_google_place_id'
+    ) {
+      throw new AppError('A lead with this Google place ID already exists', 409);
+    }
+    throw error;
+  }
   await writeAuditLog({
     userId: actor.id,
     action: 'lead.created',
@@ -157,6 +186,22 @@ export async function createLead(input: LeadInput, actor: Actor): Promise<LeadRe
   // Fire-and-forget: trigger scoring automation
   enqueueLeadDomainEvent({ event: 'lead.created', leadId: created.id, payload: {} });
   return toLeadResponse(created);
+}
+
+/** Scraper-facing lookup keeps persistence behind the leads service boundary. */
+export async function findScrapedLeadDuplicate(
+  email: string,
+  phone: string,
+  sourcePlatform: string,
+  googlePlaceId?: string,
+): Promise<string | null> {
+  const existing = await findExistingForDedup(email, phone, sourcePlatform, googlePlaceId);
+  if (existing && !existing.tags?.includes(sourcePlatform)) {
+    await updateLead(existing.id, {
+      tags: Array.from(new Set([...(existing.tags ?? []), sourcePlatform])),
+    });
+  }
+  return existing?.id ?? null;
 }
 
 export async function getLeadById(id: string, actor: Actor): Promise<LeadResponse> {
@@ -226,6 +271,14 @@ export async function updateLeadFields(
   if (!before) throw new AppError('Lead not found', 404);
   assertAccess(before.assigned_to, actor, true);
 
+  if (
+    before.google_place_id &&
+    input.source_platform !== undefined &&
+    input.source_platform !== 'google_business'
+  ) {
+    throw new AppError('The source of an identified Google business cannot be changed', 422);
+  }
+
   // Merge so custom-field validation sees the full final shape.
   const merged: LeadInput = {
     business_name: before.business_name,
@@ -262,7 +315,12 @@ export async function updateLeadFields(
 
   // If email/phone changed, ensure no dedup collision with a different lead.
   if (input.email || input.phone) {
-    const clash = await findExistingForDedup(merged.email, merged.phone, merged.source_platform);
+    const clash = await findExistingForDedup(
+      merged.email,
+      merged.phone,
+      merged.source_platform,
+      ...(before.google_place_id ? [before.google_place_id] : []),
+    );
     if (clash && clash.id !== id) {
       throw new AppError('Another lead with this email or phone exists for this source', 409);
     }
@@ -530,6 +588,13 @@ export async function bulkUpdateLeads(
       }
     }
     return updated;
+  }
+
+  if (patch.source_platform !== undefined && patch.source_platform !== 'google_business') {
+    const leads = await findLeadsByIds(ids);
+    if (leads.some((lead) => lead.google_place_id)) {
+      throw new AppError('The source of an identified Google business cannot be changed', 422);
+    }
   }
 
   if (patch.custom_fields !== undefined) {

@@ -8,6 +8,13 @@ const classificationEnum = z.enum(['hot', 'warm', 'cold']) as z.ZodEnum<
   [LeadClassification, ...LeadClassification[]]
 >;
 
+/** Internal scraper metadata; deliberately excluded from public write schemas. */
+export const googleContactProvenanceSchema = z.object({
+  email: z.enum(['placeholder', 'website']),
+  phone: z.enum(['google_places', 'placeholder']),
+});
+export type GoogleContactProvenance = z.infer<typeof googleContactProvenanceSchema>;
+
 const baseLeadSchema = z.object({
   business_name: z.string().min(1, 'business_name is required').max(255),
   contact_name: z.string().min(1, 'contact_name is required').max(255),

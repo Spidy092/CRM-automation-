@@ -1,3 +1,4 @@
+import { runConfiguredGoogleAgent } from './google-agent.service';
 import {
   getConfigById,
   createConfig,
@@ -35,6 +36,7 @@ jest.mock('../../shared/utils/db', () => ({
   queryOne: jest.fn(),
 }));
 jest.mock('./scraper.repository');
+jest.mock('./google-agent.service', () => ({ runConfiguredGoogleAgent: jest.fn() }));
 jest.mock('./scraper.scheduler', () => ({
   syncSchedule: jest.fn(),
   removeSchedule: jest.fn(),
@@ -67,6 +69,7 @@ const getLeadsByScraperLogIdMock = jest.fn();
 const getLeadsByIdsMock = jest.fn();
 jest.mock('../leads/leads.service', () => ({
   createLead: (...args: unknown[]) => createLeadMock(...args),
+  findScrapedLeadDuplicate: jest.fn().mockResolvedValue(null),
   getLeadsByScraperLogId: (...args: unknown[]) => getLeadsByScraperLogIdMock(...args),
   getLeadsByIds: (...args: unknown[]) => getLeadsByIdsMock(...args),
 }));
@@ -487,6 +490,89 @@ describe('Scraper Service', () => {
     });
   });
 
+  describe('Google Places AI agent integration', () => {
+    const config = (): ReturnType<typeof activeConfig> =>
+      activeConfig('google_places', {
+        query: 'dental clinics',
+        location: '13,77',
+        apiKeyRef: 'GOOGLE_PLACES_API_KEY',
+        agentEnabled: true,
+      });
+    it('imports only candidates returned by a successfully finished agent and preserves provenance', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockResolvedValue({
+        candidates: [
+          {
+            placeId: 'observed-one',
+            name: 'Clinic',
+            address: 'Bangalore',
+            phone: '+919999999999',
+            email: 'hello@clinic.test',
+            emailSource: 'https://clinic.test/contact',
+            website: 'https://clinic.test',
+            rating: 4,
+            reviewCount: 20,
+          },
+        ],
+        summary: 'Matched clinic based on observed website.',
+        rounds: 4,
+        toolCalls: 5,
+        decisions: [{ placeId: 'observed-one', reason: 'Observed booking' }],
+      });
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(createLeadMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          google_place_id: 'observed-one',
+          email: 'hello@clinic.test',
+          google_contact_provenance: { email: 'website', phone: 'google_places' },
+        }),
+        expect.anything(),
+      );
+      expect(repo.updateScraperLog).toHaveBeenCalledWith(
+        'log-1',
+        expect.objectContaining({
+          raw_response: expect.objectContaining({ agent: expect.objectContaining({ rounds: 4 }) }),
+        }),
+      );
+    });
+    it('does not import partial results when the agent fails', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockRejectedValueOnce(
+        new AppError('Agent failed before finish', 502),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+    it('requires AI settings and a geographic boundary before execution', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue(null);
+      expect((await runScrape('1', mockActor)).status).toBe('failed');
+      expect(runConfiguredGoogleAgent).not.toHaveBeenCalled();
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        ...config(),
+        config: { ...config().config, location: '' },
+      });
+      expect((await runScrape('1', mockActor)).errorMessage).toContain('requires a location');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+    it('sanitizes credential-bearing geocoding failures', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        ...config(),
+        config: { ...config().config, location: 'Bangalore' },
+      });
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      global.fetch = jest.fn().mockRejectedValue(new Error('Failed request key=test-key'));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).not.toContain('test-key');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+  });
+
   // ── Google Places ───────────────────────────────────────────────────────────
 
   describe('runScrape google_places', () => {
@@ -550,8 +636,44 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(1);
       expect(createLeadMock).toHaveBeenCalledTimes(1);
-      // website domain used for email
-      expect(createLeadMock.mock.calls[0][0].email).toBe('no-reply@cafeone.com');
+      // A website is not evidence of an email address.
+      const lead = createLeadMock.mock.calls[0][0];
+      expect(lead.email).toMatch(/^no-reply-[a-f0-9]{40}@google-scraped\.local$/);
+      expect(lead.google_place_id).toBe('p1');
+      expect(lead.google_contact_provenance).toEqual({
+        email: 'placeholder',
+        phone: 'google_places',
+      });
+    });
+
+    it('keeps branches sharing a website and phone as distinct identified businesses', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(gpConfig());
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            status: 'OK',
+            results: [
+              { place_id: 'branch-a', name: 'Chain A' },
+              { place_id: 'branch-b', name: 'Chain B' },
+            ],
+          }),
+        )
+        .mockResolvedValue(
+          jsonResponse({
+            result: {
+              formatted_phone_number: '+15551234567',
+              website: 'https://chain.test',
+            },
+          }),
+        );
+      const result = await runScrape('1', mockActor);
+      expect(result.recordsImported).toBe(2);
+      const [first, second] = createLeadMock.mock.calls.map(([lead]) => lead);
+      expect(first.phone).toBe(second.phone);
+      expect(first.email).not.toBe(second.email);
+      expect(first.google_place_id).toBe('branch-a');
+      expect(second.google_place_id).toBe('branch-b');
     });
 
     it('uses placeholders when details call fails / returns no contact info', async () => {
@@ -572,6 +694,10 @@ describe('Scraper Service', () => {
       expect(createLeadMock).toHaveBeenCalledTimes(1);
       const lead = createLeadMock.mock.calls[0][0];
       expect(lead.phone).toMatch(/^\+0\d{10}$/);
+      expect(lead.google_contact_provenance).toEqual({
+        email: 'placeholder',
+        phone: 'placeholder',
+      });
       expect(lead.email).toContain('@google-scraped.local');
     });
 
