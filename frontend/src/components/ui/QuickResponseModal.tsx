@@ -134,7 +134,7 @@ export function QuickResponseModal({ lead, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="quick-response-title"
-        className="flex h-[560px] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl"
+        className="flex h-[min(720px,90dvh)] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl"
       >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-slate-100 px-6 py-4">
@@ -432,11 +432,27 @@ function ReviewStep({
             <span className="font-medium text-slate-800">{renderedSubject}</span>
           </p>
         )}
-        <div className="whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-          {renderedBody}
-        </div>
+        {template.channel === 'email' && /<[a-z][\s\S]*>/i.test(renderedBody) ? (
+          <iframe
+            title="Personalized email preview"
+            sandbox=""
+            referrerPolicy="no-referrer"
+            srcDoc={renderedBody}
+            className="h-[440px] w-full rounded-md border border-slate-200 bg-white"
+          />
+        ) : (
+          <div className="whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+            {renderedBody}
+          </div>
+        )}
+        {template.attachments?.length > 0 && (
+          <div className="mt-3 text-sm text-slate-600">
+            <p className="font-medium">Attachments</p>
+            <ul>{template.attachments.map((file) => <li key={file.id}>{file.filename}</li>)}</ul>
+          </div>
+        )}
         <p className="mt-2 text-xs text-slate-400">
-          Previewing personalized text with lead details.
+          Preview with lead details. Email clients may render differently; send-time personalization and unsubscribe links may be added.
         </p>
       </div>
       <div className="flex justify-between gap-3 border-t border-slate-100 px-6 py-4">

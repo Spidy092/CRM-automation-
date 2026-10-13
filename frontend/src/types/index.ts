@@ -142,6 +142,8 @@ export interface TemplateAttachment {
   mimeType: string;
   sizeBytes: number;
   url: string;
+  /** Set when the attachment references a Files-library entry (live reference, not a copy). */
+  libraryFileId?: string;
 }
 
 export type TemplateEditorMode = 'simple' | 'visual' | 'html';

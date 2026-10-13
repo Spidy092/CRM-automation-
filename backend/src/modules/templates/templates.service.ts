@@ -5,12 +5,14 @@ import path from 'path';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
+import { advisoryLockKey, withAdvisoryLock } from '../../shared/utils/db';
 import { clampLimit, encodeCursor } from '../../shared/utils/pagination';
 import {
   appendTemplateAttachment,
   deleteTemplate,
   findTemplateById,
   findTemplates,
+  findTemplatesReferencingFile,
   insertTemplate,
   removeTemplateAttachment as removeTemplateAttachmentRepo,
   setApprovalStatus,
@@ -67,6 +69,20 @@ const ALLOWED_EXTENSIONS_BY_MIME: Record<string, string[]> = {
 
 function publicBaseUrl(): string {
   return process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
+}
+
+/**
+ * Stored attachment URLs bake in the public base URL at upload time. Without
+ * APP_BASE_URL/BASE_URL they become `http://localhost:3000/...` URLs that
+ * break for browser clients on other hosts — warn per upload so the
+ * misconfiguration shows in logs, not just as dead images.
+ */
+function warnIfLocalUploadBase(): void {
+  if (!process.env.APP_BASE_URL && !process.env.BASE_URL) {
+    logger.warn(
+      'APP_BASE_URL is not set — stored attachment URLs will use http://localhost:3000 and may not load for browser clients on other hosts. Set APP_BASE_URL to the public backend origin.',
+    );
+  }
 }
 
 function toResponse(row: {
@@ -252,6 +268,17 @@ export async function getTemplate(id: string): Promise<TemplateResponse> {
   const row = await findTemplateById(id);
   if (!row) throw new AppError('Template not found', 404);
   return toResponse(row);
+}
+
+/**
+ * Templates holding a live library-file reference (`attachments[].libraryFileId`).
+ * Consumed by the files module before deleting a library entry — deleting a
+ * referenced file would break future email/WhatsApp sends for these templates.
+ */
+export async function findTemplatesUsingFile(
+  fileId: string,
+): Promise<Array<{ id: string; name: string }>> {
+  return findTemplatesReferencingFile(fileId);
 }
 
 /**
@@ -863,6 +890,7 @@ export async function addTemplateAttachment(
 
   const attachmentId = randomUUID();
   const diskFilename = `${attachmentId}${ext}`;
+  warnIfLocalUploadBase();
   await mkdir(UPLOAD_DIR, { recursive: true });
   const storagePath = path.join(UPLOAD_DIR, diskFilename);
   await writeFile(storagePath, file.buffer);
@@ -907,26 +935,36 @@ export async function addTemplateAttachmentFromLibrary(
     );
   }
 
-  const libraryFile = await getFileRow(fileId);
+  // File-lifecycle protocol: the live row re-read and the append serialize on
+  // the same advisory lock that guards deletion. A concurrent delete either
+  // completes first (re-read sees the row as gone → 404, never a dangling
+  // storage_path) or lands after this append commits (and its reference
+  // re-check then blocks with 409). Template/approval/limit checks above are
+  // template state, unaffected by the file lifecycle, so they stay outside.
+  const row = await withAdvisoryLock(advisoryLockKey('file-lifecycle', fileId), async () => {
+    const libraryFile = await getFileRow(fileId);
 
-  const attachment: TemplateAttachment = {
-    id: randomUUID(),
-    filename: libraryFile.filename,
-    mimeType: libraryFile.mime_type,
-    sizeBytes: libraryFile.size_bytes,
-    url: libraryFile.url,
-    storagePath: libraryFile.storage_path,
-    libraryFileId: libraryFile.id,
-  };
+    const attachment: TemplateAttachment = {
+      id: randomUUID(),
+      filename: libraryFile.filename,
+      mimeType: libraryFile.mime_type,
+      sizeBytes: libraryFile.size_bytes,
+      url: libraryFile.url,
+      storagePath: libraryFile.storage_path,
+      libraryFileId: libraryFile.id,
+    };
 
-  const row = await appendTemplateAttachment(id, attachment);
+    return appendTemplateAttachment(id, attachment);
+  });
+
+  const added = (row.attachments ?? []).find((a) => a.libraryFileId === fileId);
 
   await writeAuditLog({
     userId: actor.id,
     action: 'template.attachment_added_from_library',
     entityType: 'template',
     entityId: id,
-    newValue: { filename: attachment.filename, libraryFileId: libraryFile.id },
+    newValue: { filename: added?.filename ?? '(unknown)', libraryFileId: fileId },
     ipAddress: actor.ipAddress ?? null,
   });
 

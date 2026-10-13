@@ -3,7 +3,17 @@ import { sendSuccess } from '../../shared/utils/response';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { fileIdParamSchema, updateFileSchema, listFilesQuerySchema } from './files.schema';
 import * as filesService from './files.service';
+import { findTemplatesUsingFile } from '../templates/templates.service';
+import { findPagesUsingFile } from '../pages/pages.service';
 import { FileActor } from './files.types';
+
+// Composition root for the file-lifecycle protocol: reference reads are
+// supplied through the owning modules' service interfaces (module-owned
+// interface on files.service). Wired here — next to the only production
+// caller of removeFile — so no service-to-service import cycle is created
+// (both modules consume files.service). Controllers depending on services is
+// standard layering; services never import controllers.
+filesService.setFileReferenceCheckers({ findTemplatesUsingFile, findPagesUsingFile });
 
 function actorFromReq(req: Request): FileActor {
   const user = req.user;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useCreateTemplate, useUpdateTemplate } from '@/api/templates';
-import { useFiles } from '@/api/files';
+import { useAttachTemplateFromLibrary, useCreateTemplate, useUpdateTemplate } from '@/api/templates';
+import type { LibraryFile } from '@/api/files';
+import { AddContentPicker } from '@/components/content/AddContentPicker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -96,27 +97,18 @@ function LabeledInput({ id, label, value, onChange, type = 'text', placeholder }
 }
 
 function ImageLibraryPicker({ onSelect, onClose }: { onSelect: (url: string, alt: string) => void; onClose: () => void }) {
-  const { data: files = [], isLoading } = useFiles();
-  const images = files.filter((f) => f.mime_type.startsWith('image/'));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label="Choose image from media library">
-      <div className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Choose image from media library</h3>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close image picker"><X className="h-4 w-4" /></Button>
-        </div>
-        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        {!isLoading && images.length === 0 && <p className="text-sm text-slate-500">No images in the library yet. Upload some from Content › Files first.</p>}
-        <div className="grid grid-cols-3 gap-2">
-          {images.map((f) => (
-            <button key={f.id} type="button" onClick={() => onSelect(f.url, f.filename)} className="overflow-hidden rounded-md border border-slate-200 hover:ring-2 hover:ring-indigo-500" title={f.filename}>
-              <img src={f.url} alt="" className="h-20 w-full object-cover" />
-              <span className="block truncate px-1 py-0.5 text-[11px] text-slate-600">{f.filename}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
+    <AddContentPicker
+      open
+      channel="email"
+      editorMode="visual"
+      fileFilter="image"
+      allowPages={false}
+      dialogTitle="Choose image from media library"
+      onClose={onClose}
+      onAddFile={(file) => onSelect(file.url, file.filename)}
+      onAddPage={() => undefined}
+    />
   );
 }
 
@@ -153,17 +145,21 @@ function CanvasBlockView({ block }: { block: EmailBlock }) {
   }
 }
 
-export function VisualEmailEditor({ templateId, initial, starter, approvalStatus, onSaved, onDirtyChange }: {
+export function VisualEmailEditor({ templateId, initial, starter, approvalStatus, onSaved, onDirtyChange, stagedFiles = [], onUnstageFile }: {
   templateId?: string;
   initial?: VisualEditorInitial | null;
   starter?: StarterTemplate | null;
   approvalStatus?: string;
   onSaved?: (id: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Library files staged before the first save (editor-local; attached after create). */
+  stagedFiles?: LibraryFile[];
+  onUnstageFile?: (id: string) => void;
 }) {
   const { showToast } = useToast();
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
+  const attachFromLibrary = useAttachTemplateFromLibrary();
 
   const seed = useMemo<VisualEditorInitial>(() => {
     if (initial) return clone(initial);
@@ -186,6 +182,10 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
   const [showTest, setShowTest] = useState(false);
   const [imageTarget, setImageTarget] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** Reuses the created template across attachment retries — never duplicated. */
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+  const [retrying, setRetrying] = useState(false);
 
   const dirty = saveState !== 'saved';
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -317,15 +317,71 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
         await updateTemplate.mutateAsync({ id: templateId, input });
         setSaveState('saved');
       } else {
-        const created = await createTemplate.mutateAsync(input);
+        const templateIdToUse = createdId ?? (await createTemplate.mutateAsync(input))?.id ?? null;
+        if (!templateIdToUse) throw new Error('Template was not created.');
+        setCreatedId(templateIdToUse);
+        const pending = failedIds.length > 0
+          ? stagedFiles.filter((f) => failedIds.includes(f.id))
+          : stagedFiles;
+        if (pending.length > 0) {
+          const failed: string[] = [];
+          for (const file of pending) {
+            try {
+              await attachFromLibrary.mutateAsync({ id: templateIdToUse, fileId: file.id });
+            } catch {
+              failed.push(file.id);
+            }
+          }
+          if (failed.length > 0) {
+            setFailedIds(failed);
+            setSaveState('error');
+            setSaveError(
+              `Template saved, but ${failed.length} attachment${failed.length === 1 ? '' : 's'} failed. Retry below — this will not create another template or duplicate attachments.`,
+            );
+            showToast('Template saved; some attachments failed. Retry below.', 'error');
+            return;
+          }
+          setFailedIds([]);
+          pending.forEach((f) => onUnstageFile?.(f.id));
+          showToast('Template created with attachments — editable structure preserved.', 'success');
+        } else {
+          showToast('Template saved — editable structure preserved.', 'success');
+        }
         setSaveState('saved');
-        if (created) onSaved?.(created.id);
+        onSaved?.(templateIdToUse);
       }
       setLastSavedAt(new Date().toLocaleTimeString());
-      showToast('Template saved — editable structure preserved.', 'success');
     } catch (err) {
       setSaveState('error');
       setSaveError(getApiErrorMessage(err, 'Failed to save template. Your changes are still here — try again.'));
+    }
+  };
+
+  const handleRetryAttachments = async () => {
+    if (!createdId) return;
+    setRetrying(true);
+    try {
+      const pending = stagedFiles.filter((f) => failedIds.includes(f.id));
+      const failed: string[] = [];
+      for (const file of pending) {
+        try {
+          await attachFromLibrary.mutateAsync({ id: createdId, fileId: file.id });
+        } catch {
+          failed.push(file.id);
+        }
+      }
+      setFailedIds(failed);
+      if (failed.length > 0) {
+        setSaveError('Some attachments still failed. Retry again — no duplicate template is created.');
+      } else {
+        pending.forEach((f) => onUnstageFile?.(f.id));
+        setSaveState('saved');
+        setLastSavedAt(new Date().toLocaleTimeString());
+        showToast('Attachments saved.', 'success');
+        onSaved?.(createdId);
+      }
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -356,7 +412,16 @@ export function VisualEmailEditor({ templateId, initial, starter, approvalStatus
       {approvalStatus && (
         <p className="text-xs text-slate-500">Approval status: <span className="font-medium">{approvalStatus}</span>{approvalStatus === 'approved' && dirty ? ' — saving content changes will reset approval to pending.' : ''}</p>
       )}
-      {saveError && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{saveError}</p>}
+      {saveError && (
+        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p>{saveError}</p>
+          {createdId && failedIds.length > 0 && (
+            <Button type="button" variant="outline" size="sm" className="mt-2 min-h-[44px]" disabled={retrying} onClick={() => void handleRetryAttachments()}>
+              {retrying ? 'Retrying…' : `Retry ${failedIds.length} failed attachment${failedIds.length === 1 ? '' : 's'}`}
+            </Button>
+          )}
+        </div>
+      )}
       {errors.design && <p role="alert" className="text-sm text-red-600">{errors.design}</p>}
 
       {/* Subject + preheader */}

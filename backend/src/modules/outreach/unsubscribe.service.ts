@@ -16,14 +16,36 @@ function tokenKey(token: string): string {
 
 /** Issue an opaque, email-bound opt-out link without exposing a lead ID or address. */
 export async function createOutreachUnsubscribeUrl(leadId: string, email: string): Promise<string> {
-  const base = process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
-  const url = new URL('/outreach/unsubscribe', base);
-  if (
-    !['https:', 'http:'].includes(url.protocol) ||
-    (process.env.NODE_ENV === 'production' && url.protocol !== 'https:')
-  ) {
-    throw new AppError('Outreach unsubscribe requires a valid public application URL', 500);
+  // Only server-configured origins are trusted; never derive opt-out links
+  // from request Host/Origin headers. CORS_ORIGIN is also the browser app
+  // origin and can rescue deployments with an obsolete localhost base URL.
+  const candidates = [process.env.APP_BASE_URL, process.env.BASE_URL, process.env.CORS_ORIGIN];
+  if (process.env.NODE_ENV !== 'production') candidates.push('http://localhost:3000');
+  let url: URL | undefined;
+  for (const base of candidates) {
+    if (!base) continue;
+    try {
+      const candidate = new URL('/outreach/unsubscribe', base);
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(candidate.hostname);
+      if (
+        !['https:', 'http:'].includes(candidate.protocol) ||
+        candidate.username ||
+        candidate.password
+      )
+        continue;
+      if (process.env.NODE_ENV === 'production' && (candidate.protocol !== 'https:' || loopback))
+        continue;
+      url = candidate;
+      break;
+    } catch {
+      // Try the next explicitly configured origin.
+    }
   }
+  if (!url)
+    throw new AppError(
+      'Outreach unsubscribe requires a valid public application URL. Configure APP_BASE_URL with the public HTTPS origin.',
+      500,
+    );
   const payload = payloadSchema.parse({
     leadId,
     emailHash: createHash('sha256').update(email.trim().toLowerCase()).digest('hex'),

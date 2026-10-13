@@ -12,8 +12,14 @@ export function sendSuccess<T>(
   res.status(statusCode).json(body);
 }
 
-export function sendError(res: Response, message: string, statusCode = 500): void {
+export function sendError(
+  res: Response,
+  message: string,
+  statusCode = 500,
+  meta?: ApiResponse['meta'],
+): void {
   const body: ApiResponse = { success: false, error: message };
+  if (meta) body.meta = meta;
   res.status(statusCode).json(body);
 }
 

@@ -107,6 +107,29 @@ export async function softDeletePage(id: string): Promise<void> {
   if (!result) throw new AppError('Page not found', 404);
 }
 
+/**
+ * Live (non-deleted) pages whose `blocks` JSONB references a Files-library
+ * entry — gallery `fileIds` or attachment `fileId`. Deleting that file turns
+ * those blocks into "missing" renders, so callers must block or explicitly
+ * clear these references first. Raw URLs pasted into template bodies are not
+ * tracked here by design (see the conservative delete warnings in the UI).
+ */
+export async function findPagesReferencingFile(
+  fileId: string,
+): Promise<Array<{ id: string; title: string }>> {
+  return query<{ id: string; title: string }>(
+    `SELECT id, title FROM landing_pages
+     WHERE deleted_at IS NULL AND (
+       blocks @> $1::jsonb OR blocks @> $2::jsonb
+     )
+     ORDER BY title ASC`,
+    [
+      JSON.stringify([{ type: 'gallery', fileIds: [fileId] }]),
+      JSON.stringify([{ type: 'attachment', fileId }]),
+    ],
+  );
+}
+
 export async function insertPageView(data: {
   page_id: string;
   lead_id: string | null;

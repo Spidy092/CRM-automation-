@@ -1,6 +1,7 @@
 import { useParams, useSearchParams } from 'react-router-dom';
 import { usePublicPage, type PageBlock, type PublicFileRef } from '@/api/pages';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { resolveAssetUrl } from '@/lib/contentLinks';
 import { Download, FileText } from 'lucide-react';
 
 function youtubeEmbedUrl(url: string): string | null {
@@ -24,7 +25,7 @@ function GalleryBlock({
         if (!file) return null;
         return (
           <div key={id} className="aspect-square overflow-hidden rounded-lg bg-slate-100">
-            <img src={file.url} alt="" className="h-full w-full object-cover" />
+            <img src={resolveAssetUrl(file.url)} alt="" className="h-full w-full object-cover" />
           </div>
         );
       })}
@@ -56,7 +57,7 @@ function AttachmentBlock({
   if (!file) return null;
   return (
     <a
-      href={file.url}
+      href={resolveAssetUrl(file.url)}
       target="_blank"
       rel="noreferrer"
       className="flex items-center gap-2 rounded-md border border-slate-200 p-3 text-sm text-slate-700 hover:bg-slate-50"

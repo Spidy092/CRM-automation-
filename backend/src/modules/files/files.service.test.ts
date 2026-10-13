@@ -6,6 +6,15 @@ jest.mock('./files.repository', () => ({
   softDeleteFile: jest.fn(),
 }));
 
+// The advisory lock is infrastructure: unit tests run it as a passthrough so
+// no database is needed. Real cross-connection serialization is proven by the
+// live tests in shared/utils/advisoryLock.test.ts, and the full delete-vs-
+// attach race is covered by fileLifecycle.concurrency.test.ts.
+jest.mock('../../shared/utils/db', () => ({
+  advisoryLockKey: jest.fn((namespace: string, id: string) => `${namespace}:${id}`),
+  withAdvisoryLock: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+}));
+
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('fs/promises', () => ({
   unlink: jest.fn().mockResolvedValue(undefined),
@@ -13,7 +22,7 @@ jest.mock('fs/promises', () => ({
   mkdir: jest.fn().mockResolvedValue(undefined),
 }));
 
-import { listFiles, getFile, uploadFile, updateFile, removeFile } from './files.service';
+import { listFiles, getFile, uploadFile, updateFile, removeFile, setFileReferenceCheckers } from './files.service';
 import {
   findFiles,
   findFileById,
@@ -23,6 +32,7 @@ import {
 } from './files.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { unlink } from 'fs/promises';
+import { withAdvisoryLock } from '../../shared/utils/db';
 import { FileRow } from './files.types';
 
 const actor = { id: 'u1', role: 'admin', ipAddress: '127.0.0.1' };
@@ -120,6 +130,15 @@ describe('updateFile', () => {
 });
 
 describe('removeFile', () => {
+  const findTemplatesUsingFile = jest.fn();
+  const findPagesUsingFile = jest.fn();
+
+  beforeEach(() => {
+    findTemplatesUsingFile.mockResolvedValue([]);
+    findPagesUsingFile.mockResolvedValue([]);
+    setFileReferenceCheckers({ findTemplatesUsingFile, findPagesUsingFile });
+  });
+
   it('throws 404 when file missing', async () => {
     (findFileById as jest.Mock).mockResolvedValue(null);
     await expect(removeFile('missing', actor)).rejects.toMatchObject({ statusCode: 404 });
@@ -139,5 +158,39 @@ describe('removeFile', () => {
     (softDeleteFile as jest.Mock).mockResolvedValue(baseRow);
     (unlink as jest.Mock).mockRejectedValueOnce(new Error('ENOENT'));
     await expect(removeFile('f1', actor)).resolves.toBeUndefined();
+  });
+
+  it('runs the reference re-check and soft-delete inside the file lifecycle lock', async () => {
+    (findFileById as jest.Mock).mockResolvedValue(baseRow);
+    (softDeleteFile as jest.Mock).mockResolvedValue(baseRow);
+    await removeFile('f1', actor);
+    expect(withAdvisoryLock).toHaveBeenCalledWith(
+      'file-lifecycle:f1',
+      expect.any(Function),
+    );
+    expect(findTemplatesUsingFile).toHaveBeenCalledWith('f1');
+    expect(findPagesUsingFile).toHaveBeenCalledWith('f1');
+  });
+
+  it('blocks deletion with a 409 when templates reference the file', async () => {
+    (findFileById as jest.Mock).mockResolvedValue(baseRow);
+    findTemplatesUsingFile.mockResolvedValueOnce([{ id: 't1', name: 'Welcome' }]);
+    await expect(removeFile('f1', actor)).rejects.toMatchObject({
+      statusCode: 409,
+      meta: {
+        references: { templates: [{ id: 't1', name: 'Welcome' }], pages: [] },
+      },
+    });
+    expect(softDeleteFile).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('blocks deletion with a 409 when landing pages reference the file', async () => {
+    (findFileById as jest.Mock).mockResolvedValue(baseRow);
+    findPagesUsingFile.mockResolvedValueOnce([{ id: 'p1', title: 'Pricing' }]);
+    await expect(removeFile('f1', actor)).rejects.toMatchObject({ statusCode: 409 });
+    expect(softDeleteFile).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
   });
 });

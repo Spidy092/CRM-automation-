@@ -245,3 +245,20 @@ export async function deleteTemplate(id: string): Promise<void> {
   );
   if (!result) throw new AppError('Template not found', 404);
 }
+
+/**
+ * Templates whose `attachments` JSONB holds a live reference to a Files-library
+ * entry (`libraryFileId`). Library-referenced attachments share the library
+ * file's disk copy, so deleting that file would break sends for these
+ * templates — callers must block or explicitly clear these references first.
+ */
+export async function findTemplatesReferencingFile(
+  fileId: string,
+): Promise<Array<{ id: string; name: string }>> {
+  return query<{ id: string; name: string }>(
+    `SELECT id, name FROM templates
+     WHERE COALESCE(attachments, '[]'::jsonb) @> $1::jsonb
+     ORDER BY name ASC`,
+    [JSON.stringify([{ libraryFileId: fileId }])],
+  );
+}
