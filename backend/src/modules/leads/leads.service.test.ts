@@ -13,6 +13,7 @@ jest.mock('./leads.repository', () => ({
   findLeadById: jest.fn(),
   findLeadByIdForUpdate: jest.fn(),
   findDueFollowUpLeads: jest.fn(),
+  findLeadTimeline: jest.fn(),
   findExistingForDedup: jest.fn(),
   findLeadsByScraperLogId: jest.fn(),
   findLeadsByIds: jest.fn(),
@@ -57,6 +58,7 @@ import {
   bulkUpdateLeads,
   createLead,
   getLeadById,
+  getLeadTimeline,
   getLeadsByScraperLogId,
   getLeadsByIds,
   listLeads,
@@ -77,6 +79,7 @@ import {
   countLeads,
   findExistingForDedup,
   findLeadById,
+  findLeadTimeline as repoFindLeadTimeline,
   findLeadByIdForUpdate,
   findDueFollowUpLeads,
   findLeads,
@@ -924,5 +927,44 @@ describe('notifyDueFollowUps', () => {
       id: firstPage[1].id,
     });
     expect(createNotification).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('getLeadTimeline', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('throws 404 when the lead is missing', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(null);
+    await expect(
+      getLeadTimeline('missing', { id: 'admin-1', role: 'admin' }, { limit: 25, kind: 'all' }),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(repoFindLeadTimeline).not.toHaveBeenCalled();
+  });
+
+  it('delegates to the repository with the lead scope and clamped limit', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+    (repoFindLeadTimeline as jest.Mock).mockResolvedValue({
+      items: [],
+      meta: { limit: 25, hasMore: false },
+    });
+    const res = await getLeadTimeline(
+      'lead-1',
+      { id: 'rep-1', role: 'sales' },
+      { limit: 25, kind: 'messages', search: 'pricing', channel: 'email' },
+    );
+    expect(res.meta.hasMore).toBe(false);
+    expect(repoFindLeadTimeline).toHaveBeenCalledWith({
+      leadId: 'lead-1',
+      limit: 25,
+      cursorTs: undefined,
+      cursorId: undefined,
+      kind: 'messages',
+      search: 'pricing',
+      channel: 'email',
+      authorId: undefined,
+      dateFrom: undefined,
+      dateTo: undefined,
+      pinnedOnly: undefined,
+    });
   });
 });

@@ -3,17 +3,22 @@ import { Activity, ActivityWithUser, Actor } from './activities.types';
 import {
   createManualActivity,
   listActivities,
+  listActivityAuthors,
   logAssignmentChangeActivity,
   logOutboundActivity,
   logStatusChangeActivity,
+  setNotePinned,
 } from './activities.service';
 import {
   createOutboundActivityAndUpdateLead,
   findActivitiesByLeadId,
+  findActivityById,
+  findActivityAuthors,
   insertActivity,
+  setActivityPinned as repoSetActivityPinned,
 } from './activities.repository';
 import { findLeadById } from '../leads/leads.repository';
-import { assertAccess } from '../leads/leads.service';
+import { assertAccess, getLeadById } from '../leads/leads.service';
 
 jest.mock('./activities.repository');
 jest.mock('../leads/leads.repository');
@@ -42,6 +47,7 @@ const baseActivityWithUser: ActivityWithUser = {
   ...baseActivity,
   user_name: 'User One',
   user_email: 'user1@example.com',
+  is_pinned: false,
 };
 
 describe('createManualActivity', () => {
@@ -168,6 +174,92 @@ describe('listActivities', () => {
       type: 'note',
       limit: 10,
       offset: 0,
+      cursorTs: undefined,
+      cursorId: undefined,
+      search: undefined,
+      authorId: undefined,
+      dateFrom: undefined,
+      dateTo: undefined,
+      pinnedOnly: undefined,
     });
+  });
+
+  it('passes cursor and search filters through to the repository', async () => {
+    mockedFindActivities.mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 25, offset: 0, hasMore: false },
+    });
+    await listActivities('lead-1', actor, {
+      limit: 25,
+      offset: 0,
+      cursorTs: '2026-06-20T00:00:00.000Z',
+      cursorId: 'act-9',
+      search: 'pricing',
+      authorId: 'user-2',
+      dateFrom: '2026-06-01T00:00:00.000Z',
+      dateTo: '2026-06-30T00:00:00.000Z',
+      pinnedOnly: true,
+    });
+    expect(mockedFindActivities).toHaveBeenCalledWith({
+      leadId: 'lead-1',
+      type: undefined,
+      limit: 25,
+      offset: 0,
+      cursorTs: '2026-06-20T00:00:00.000Z',
+      cursorId: 'act-9',
+      search: 'pricing',
+      authorId: 'user-2',
+      dateFrom: '2026-06-01T00:00:00.000Z',
+      dateTo: '2026-06-30T00:00:00.000Z',
+      pinnedOnly: true,
+    });
+  });
+});
+
+describe('setNotePinned', () => {
+  const mockedFindActivityById = findActivityById as jest.MockedFunction<typeof findActivityById>;
+  const mockedRepoSetPinned = repoSetActivityPinned as jest.MockedFunction<typeof repoSetActivityPinned>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedFindLead.mockResolvedValue({ id: 'lead-1', assigned_to: 'user-1' } as never);
+    mockedAssertAccess.mockReturnValue(undefined);
+  });
+
+  it('pins a note on the lead', async () => {
+    mockedFindActivityById.mockResolvedValue(baseActivity);
+    mockedRepoSetPinned.mockResolvedValue({ ...baseActivityWithUser, is_pinned: true });
+    const res = await setNotePinned('lead-1', 'act-1', true, actor);
+    expect(res.is_pinned).toBe(true);
+    expect(mockedRepoSetPinned).toHaveBeenCalledWith('act-1', true, 'user-1');
+  });
+
+  it('throws 404 when the activity belongs to another lead', async () => {
+    mockedFindActivityById.mockResolvedValue({ ...baseActivity, lead_id: 'lead-2' });
+    await expect(setNotePinned('lead-1', 'act-1', true, actor)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    expect(mockedRepoSetPinned).not.toHaveBeenCalled();
+  });
+
+  it('throws 422 for non-note activities', async () => {
+    mockedFindActivityById.mockResolvedValue({ ...baseActivity, type: 'status_change' });
+    await expect(setNotePinned('lead-1', 'act-1', true, actor)).rejects.toMatchObject({
+      statusCode: 422,
+    });
+    expect(mockedRepoSetPinned).not.toHaveBeenCalled();
+  });
+});
+
+describe('history author permissions', () => {
+  it('checks lead read access before retrieving authors', async () => {
+    (getLeadById as jest.Mock).mockResolvedValue({ id: 'lead-1' });
+    (findActivityAuthors as jest.Mock).mockResolvedValue([{ id: 'user-1', name: 'Rep' }]);
+    expect(await listActivityAuthors('lead-1', actor)).toEqual([{ id: 'user-1', name: 'Rep' }]);
+    expect(getLeadById).toHaveBeenCalledWith('lead-1', actor);
+  });
+  it('does not expose authors when access is denied', async () => {
+    (getLeadById as jest.Mock).mockRejectedValueOnce(new AppError('Forbidden', 403));
+    await expect(listActivityAuthors('lead-1', actor)).rejects.toThrow('Forbidden');
   });
 });

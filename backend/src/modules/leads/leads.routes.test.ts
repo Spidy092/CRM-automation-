@@ -66,6 +66,58 @@ describe('Leads Routes', () => {
     });
   });
 
+  describe('GET /leads/:id/timeline', () => {
+    it('returns 200 with unified history and cursor meta', async () => {
+      (leadsService.getLeadTimeline as jest.Mock).mockResolvedValue({
+        items: [{ id: 'act-1', source: 'activity' }],
+        meta: { limit: 25, hasMore: false },
+      });
+
+      const res = await request(app).get('/leads/lead-1/timeline?kind=all&limit=25');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toHaveLength(1);
+      expect(leadsService.getLeadTimeline).toHaveBeenCalledWith(
+        'lead-1',
+        expect.objectContaining({ id: 'admin-1' }),
+        expect.objectContaining({ limit: 25, kind: 'all' }),
+      );
+    });
+
+    it('forwards kind, search, channel, and cursor filters', async () => {
+      (leadsService.getLeadTimeline as jest.Mock).mockResolvedValue({
+        items: [],
+        meta: { limit: 25, hasMore: false },
+      });
+      const cursor = Buffer.from(
+        JSON.stringify({ ts: '2026-06-20T00:00:00.000Z', id: 'act-9' }),
+      ).toString('base64url');
+
+      await request(app).get(
+        `/leads/lead-1/timeline?kind=messages&search=pricing&channel=email&cursor=${cursor}`,
+      );
+
+      expect(leadsService.getLeadTimeline).toHaveBeenCalledWith(
+        'lead-1',
+        expect.anything(),
+        expect.objectContaining({
+          kind: 'messages',
+          search: 'pricing',
+          channel: 'email',
+          cursorTs: '2026-06-20T00:00:00.000Z',
+          cursorId: 'act-9',
+        }),
+      );
+    });
+
+    it('rejects invalid cursors with 400', async () => {
+      const res = await request(app).get('/leads/lead-1/timeline?cursor=bogus');
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+  });
+
   describe('POST /leads', () => {
     it('returns 201 on successful lead creation', async () => {
       (leadsService.createLead as jest.Mock).mockResolvedValue({ id: 'lead-1' });

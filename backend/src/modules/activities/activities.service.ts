@@ -1,6 +1,6 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { findLeadById } from '../leads/leads.repository';
-import { assertAccess } from '../leads/leads.service';
+import { assertAccess, getLeadById } from '../leads/leads.service';
 import {
   Activity,
   Actor,
@@ -11,7 +11,10 @@ import {
 import {
   createOutboundActivityAndUpdateLead,
   findActivitiesByLeadId,
+  findActivityById,
+  findActivityAuthors,
   insertActivity,
+  setActivityPinned as repoSetActivityPinned,
 } from './activities.repository';
 
 export async function createManualActivity(
@@ -80,6 +83,63 @@ export async function listActivities(
   const lead = await findLeadById(leadId);
   if (!lead) throw new AppError('Lead not found', 404);
   assertAccess(lead.assigned_to, actor, false);
-  const { limit, offset, type } = filters;
-  return findActivitiesByLeadId({ leadId, limit, offset, type });
+  const {
+    limit,
+    offset,
+    type,
+    cursorTs,
+    cursorId,
+    search,
+    authorId,
+    dateFrom,
+    dateTo,
+    pinnedOnly,
+  } = filters;
+  return findActivitiesByLeadId({
+    leadId,
+    limit,
+    offset,
+    type,
+    cursorTs,
+    cursorId,
+    search,
+    authorId,
+    dateFrom,
+    dateTo,
+    pinnedOnly,
+  });
+}
+
+/**
+ * Pins or unpins a note on a lead. Only `note` activities can be pinned —
+ * system events (status/assignment changes) stay unpinnable so the timeline
+ * cannot be reordered around automated history. Write access follows the same
+ * ownership rule as creating notes (sales reps: own leads only); the route
+ * layer additionally restricts this to admin/manager/sales.
+ */
+export async function setNotePinned(
+  leadId: string,
+  activityId: string,
+  pinned: boolean,
+  actor: Actor,
+): Promise<import('./activities.types').ActivityWithUser> {
+  const lead = await findLeadById(leadId);
+  if (!lead) throw new AppError('Lead not found', 404);
+  assertAccess(lead.assigned_to, actor, true);
+  const activity = await findActivityById(activityId);
+  if (!activity || activity.lead_id !== leadId) throw new AppError('Activity not found', 404);
+  if (activity.type !== 'note') {
+    throw new AppError('Only notes can be pinned', 422);
+  }
+  const updated = await repoSetActivityPinned(activityId, pinned, actor.id);
+  if (!updated) throw new AppError('Activity not found', 404);
+  return updated;
+}
+
+export async function listActivityAuthors(
+  leadId: string,
+  actor: Actor,
+): Promise<import('./activities.schema').ActivityAuthor[]> {
+  await getLeadById(leadId, actor);
+  return findActivityAuthors(leadId);
 }

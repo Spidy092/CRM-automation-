@@ -6,6 +6,7 @@ import { clampLimit, decodeCursor } from '../../shared/utils/pagination';
 import {
   createLeadSchema,
   listLeadsQuerySchema,
+  leadTimelineQuerySchema,
   pauseLeadSchema,
   updateLeadSchema,
   bulkClassifySchema,
@@ -163,6 +164,39 @@ export async function getLeadActivityHandler(
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     const activity = await leadsService.getLeadActivity(req.params.id, actorFromReq(req), limit);
     sendSuccess(res, activity);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getLeadTimelineHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const parsed = leadTimelineQuerySchema.parse(req.query);
+    let cursorTs: string | undefined;
+    let cursorId: string | undefined;
+    if (parsed.cursor) {
+      const decoded = decodeCursor(parsed.cursor);
+      if (!decoded) throw new AppError('Invalid cursor', 400);
+      cursorTs = decoded.ts;
+      cursorId = decoded.id;
+    }
+    const result = await leadsService.getLeadTimeline(req.params.id, actorFromReq(req), {
+      limit: clampLimit(parsed.limit),
+      cursorTs,
+      cursorId,
+      kind: parsed.kind,
+      search: parsed.search,
+      channel: parsed.channel,
+      authorId: parsed.author,
+      dateFrom: parsed.date_from,
+      dateTo: parsed.date_to,
+      pinnedOnly: parsed.pinned_only || undefined,
+    });
+    sendSuccess(res, result.items, 200, result.meta);
   } catch (err) {
     next(err);
   }

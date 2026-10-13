@@ -1,7 +1,16 @@
 import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { LeadStatus } from '../../shared/types';
-import { LeadInput, LeadListFilters, LeadRow, LeadSortBy } from './leads.types';
+import { encodeCursor } from '../../shared/utils/pagination';
+import {
+  LeadInput,
+  LeadListFilters,
+  LeadRow,
+  LeadSortBy,
+  LeadTimelineEntry,
+  LeadTimelineFilters,
+  LeadTimelineResult,
+} from './leads.types';
 
 /** Minimal structural type for running queries on a transaction client. */
 type Executor = { query: typeof pool.query };
@@ -584,6 +593,163 @@ export async function bulkPauseLeads(ids: string[], status: LeadStatus): Promise
 }
 
 /** Only labels, excluding deleted leads; no lead identities or contact data. */
+export async function findLeadTimeline(filters: LeadTimelineFilters): Promise<LeadTimelineResult> {
+  const params: unknown[] = [filters.leadId];
+  // $1 is always the lead id, shared by both UNION branches.
+  let i = 1;
+  const push = (value: unknown): string => {
+    i += 1;
+    params.push(value);
+    return `$${i}`;
+  };
+
+  const activityTypesForKind = (kind: LeadTimelineFilters['kind']): string[] | null => {
+    if (kind === 'notes') return ['note'];
+    if (kind === 'system') return ['status_change', 'assignment_change'];
+    if (kind === 'messages') return ['call', 'whatsapp', 'email'];
+    return null;
+  };
+
+  const channelSets = (
+    channel: LeadTimelineFilters['channel'],
+  ): { act: string[]; log: string[] } => {
+    switch (channel) {
+      case 'whatsapp':
+        return { act: ['whatsapp'], log: ['whatsapp'] };
+      case 'email':
+        return { act: ['email'], log: ['email'] };
+      case 'sms':
+        return { act: [], log: ['sms'] };
+      case 'call':
+      case 'phone_call':
+        return { act: ['call'], log: ['phone_call'] };
+      default:
+        return { act: [], log: [] };
+    }
+  };
+
+  const channel = filters.channel ? channelSets(filters.channel) : null;
+
+  // An author filter only matches activity rows (sent messages carry no
+  // author), so the log branch is excluded whenever it is set.
+  const includeLogs =
+    (filters.kind === 'all' || filters.kind === 'messages') &&
+    !filters.authorId &&
+    !filters.pinnedOnly &&
+    (!channel || channel.log.length > 0);
+  const includeActivities =
+    filters.kind === 'all' ||
+    filters.kind === 'notes' ||
+    filters.kind === 'system' ||
+    filters.kind === 'messages';
+
+  const branches: string[] = [];
+
+  // Channels with no activity rows (e.g. sms) exclude this branch entirely.
+  if (includeActivities && (!channel || channel.act.length > 0)) {
+    const conds = ['a.lead_id = $1'];
+    const kindTypes = activityTypesForKind(filters.kind);
+    if (kindTypes) {
+      const placeholders = kindTypes.map((t) => push(t)).join(', ');
+      conds.push(`a.type IN (${placeholders})`);
+    }
+    if (channel) {
+      const placeholders = channel.act.map((t) => push(t)).join(', ');
+      conds.push(`a.type IN (${placeholders})`);
+    }
+    if (filters.pinnedOnly) {
+      conds.push(`a.type = 'note'`);
+      conds.push(`COALESCE((a.metadata->>'pinned')::boolean, false) = true`);
+    }
+    if (filters.authorId) conds.push(`a.user_id = ${push(filters.authorId)}`);
+    if (filters.search) {
+      const p = push(`%${filters.search}%`);
+      conds.push(
+        `(a.metadata->>'note' ILIKE ${p} OR a.metadata->>'outcome_label' ILIKE ${p} OR u.name ILIKE ${p})`,
+      );
+    }
+    if (filters.dateFrom) conds.push(`a.created_at >= ${push(filters.dateFrom)}`);
+    if (filters.dateTo) conds.push(`a.created_at <= ${push(filters.dateTo)}`);
+
+    branches.push(
+      `SELECT a.id, 'activity' AS source, a.type AS activity_type,
+              NULL::text AS channel, NULL::text AS status,
+              a.metadata, NULL::text AS message_body, NULL::int AS step_number,
+              NULL::text AS error_message,
+              a.user_id AS author_id, u.name AS author_name,
+              COALESCE((a.metadata->>'pinned')::boolean, false) AS is_pinned,
+              a.created_at
+         FROM activities a
+         LEFT JOIN users u ON u.id = a.user_id
+        WHERE ${conds.join(' AND ')}`,
+    );
+  }
+
+  if (includeLogs) {
+    const conds = ['l.lead_id = $1'];
+    if (channel && channel.log.length > 0) {
+      const placeholders = channel.log.map((t) => push(t)).join(', ');
+      conds.push(`l.channel IN (${placeholders})`);
+    }
+    if (filters.search) {
+      const p = push(`%${filters.search}%`);
+      conds.push(
+        `(l.message_body ILIKE ${p} OR l.error_message ILIKE ${p} OR l.status::text ILIKE ${p})`,
+      );
+    }
+    if (filters.dateFrom) conds.push(`l.created_at >= ${push(filters.dateFrom)}`);
+    if (filters.dateTo) conds.push(`l.created_at <= ${push(filters.dateTo)}`);
+
+    branches.push(
+      `SELECT l.id, 'message' AS source, NULL AS activity_type,
+              l.channel::text AS channel, l.status::text AS status,
+              NULL::jsonb AS metadata, l.message_body, l.step_number, l.error_message,
+              NULL::uuid AS author_id, NULL::text AS author_name,
+              false AS is_pinned, l.created_at
+         FROM outreach_logs l
+        WHERE ${conds.join(' AND ')}`,
+    );
+  }
+
+  if (branches.length === 0) {
+    return { items: [], meta: { limit: filters.limit, hasMore: false } };
+  }
+
+  let outerWhere = '';
+  if (filters.cursorTs && filters.cursorId) {
+    const ts = push(filters.cursorTs);
+    const id = push(filters.cursorId);
+    outerWhere = `WHERE (t.created_at, t.id) < (${ts}, ${id})`;
+  }
+
+  const fetchLimit = filters.limit + 1;
+  const rows = await query<LeadTimelineEntry>(
+    `SELECT * FROM (${branches.join(' UNION ALL ')}) t
+     ${outerWhere}
+     ORDER BY t.created_at DESC, t.id DESC
+     LIMIT $${params.length + 1}`,
+    [...params, fetchLimit],
+  );
+
+  const hasMore = rows.length > filters.limit;
+  const items = hasMore ? rows.slice(0, filters.limit) : rows;
+
+  let nextCursor: string | undefined;
+  if (hasMore && items.length > 0) {
+    const last = items[items.length - 1];
+    nextCursor = encodeCursor({ ts: last.created_at, id: last.id });
+  }
+
+  return {
+    items,
+    meta: {
+      limit: filters.limit,
+      hasMore,
+      ...(nextCursor ? { nextCursor } : {}),
+    },
+  };
+}
+
 export async function findLeadEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
   const result = await pool.query<LeadEnrollmentOptions>(
     `SELECT

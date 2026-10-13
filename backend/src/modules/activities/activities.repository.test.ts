@@ -2,8 +2,11 @@ import { pool, query, queryOne } from '../../shared/utils/db';
 import {
   createOutboundActivityAndUpdateLead,
   findActivitiesByLeadId,
+  findActivityById,
+  findActivityAuthors,
   findFirstContactedAt,
   insertActivity,
+  setActivityPinned,
 } from './activities.repository';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -120,7 +123,107 @@ describe('activities.repository', () => {
       await findActivitiesByLeadId({ leadId: 'lead-1', limit: 10, offset: 5, type: 'call' });
 
       const [, params] = mockedQuery.mock.calls[0];
-      expect(params).toEqual(['lead-1', 'call', 10, 5]);
+      // One extra row is fetched to determine hasMore.
+      expect(params).toEqual(['lead-1', 'call', 11, 5]);
+    });
+
+    it('pages with a keyset cursor instead of offset and returns nextCursor', async () => {
+      mockedQueryOne.mockResolvedValue({ total: '3' });
+      const rows = [0, 1].map((n) => ({
+        ...baseActivity,
+        id: `act-${n}`,
+        created_at: `2026-06-19T00:00:0${n}.000Z`,
+        user_name: null,
+        user_email: null,
+        is_pinned: false,
+      }));
+      mockedQuery.mockResolvedValue(rows);
+
+      const res = await findActivitiesByLeadId({
+        leadId: 'lead-1',
+        limit: 1,
+        offset: 0,
+        cursorTs: '2026-06-20T00:00:00.000Z',
+        cursorId: 'act-9',
+      });
+
+      expect(res.items).toHaveLength(1);
+      expect(res.meta.hasMore).toBe(true);
+      expect(res.meta.nextCursor).toBeDefined();
+      const [sql, params] = mockedQuery.mock.calls[0];
+      expect(sql).toContain('(a.created_at, a.id) < (');
+      expect(sql).not.toContain('OFFSET');
+      expect((params as unknown[]).slice(0, 3)).toEqual([
+        'lead-1',
+        '2026-06-20T00:00:00.000Z',
+        'act-9',
+      ]);
+    });
+
+    it('applies search, author, date, and pinned filters server-side', async () => {
+      mockedQueryOne.mockResolvedValue({ total: '1' });
+      mockedQuery.mockResolvedValue([
+        { ...baseActivity, user_name: 'User One', user_email: 'u1@example.com', is_pinned: true },
+      ]);
+
+      await findActivitiesByLeadId({
+        leadId: 'lead-1',
+        limit: 25,
+        offset: 0,
+        search: 'follow up',
+        authorId: 'user-1',
+        dateFrom: '2026-06-01T00:00:00.000Z',
+        dateTo: '2026-06-30T00:00:00.000Z',
+        pinnedOnly: true,
+      });
+
+      const [sql, params] = mockedQuery.mock.calls[0];
+      expect(sql).toContain('ILIKE');
+      expect(sql).toContain(`COALESCE((a.metadata->>'pinned')::boolean, false) = true`);
+      expect(params).toEqual([
+        'lead-1',
+        '%follow up%',
+        'user-1',
+        '2026-06-01T00:00:00.000Z',
+        '2026-06-30T00:00:00.000Z',
+        26,
+      ]);
     });
   });
+
+  describe('findActivityById', () => {
+    it('returns the activity row', async () => {
+      mockedQueryOne.mockResolvedValue(baseActivity);
+      const res = await findActivityById('act-1');
+      expect(res).toEqual(baseActivity);
+    });
+  });
+
+  describe('setActivityPinned', () => {
+    it('appends the pin marker to metadata without rewriting history', async () => {
+      mockedQueryOne.mockResolvedValue({ ...baseActivity, is_pinned: true });
+      const res = await setActivityPinned('act-1', true, 'user-1');
+      expect(res?.is_pinned).toBe(true);
+      const [sql, params] = mockedQueryOne.mock.calls[0];
+      expect(sql).toContain('UPDATE activities');
+      expect(sql).toContain(`'pinned'`);
+      expect(params).toEqual(['act-1', 'user-1']);
+    });
+  });
+});
+
+describe('history author options', () => {
+  it('queries distinct authors across the lead history without a page limit', async () => {
+    mockedQuery.mockResolvedValue([{ id: 'user-1', name: 'User One' }]);
+    expect(await findActivityAuthors('lead-1')).toEqual([{ id: 'user-1', name: 'User One' }]);
+    expect(mockedQuery).toHaveBeenCalledWith(expect.stringContaining('SELECT DISTINCT'), ['lead-1']);
+  });
+});
+
+it('unpins with exactly the SQL parameters referenced by the query', async () => {
+  mockedQueryOne.mockResolvedValue({ ...baseActivity, is_pinned: false });
+  await setActivityPinned('act-1', false, 'user-1');
+  const [sql, params] = mockedQueryOne.mock.calls.at(-1)!;
+  expect(sql).not.toContain('$2');
+  expect(params).toEqual(['act-1']);
 });
