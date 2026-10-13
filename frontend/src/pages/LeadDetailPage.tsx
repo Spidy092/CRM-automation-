@@ -1,7 +1,4 @@
 import * as React from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLead, useLeadActivities, useCreateLeadActivity, usePauseLead, useDeleteLead, useEnrichLead } from '@/api/leads';
 import { LeadHistory } from '@/components/LeadHistory';
@@ -54,9 +51,6 @@ const activityTypeLabels: Record<import('@/types').ActivityType, string> = {
   assignment_change: 'Assignment change',
 };
 
-
-const noteSchema = z.object({ note: z.string().trim().min(1, 'Enter a note').max(10000, 'Notes must be 10,000 characters or fewer') });
-type NoteForm = z.infer<typeof noteSchema>;
 
 type LeadActionKind = 'link' | 'activity' | 'complete';
 type LeadOutcome = 'reached' | 'no_answer' | 'interested' | 'not_interested' | 'wrong_contact';
@@ -380,8 +374,8 @@ export function LeadDetailPage() {
   const deleteLead = useDeleteLead();
   const enrichLead = useEnrichLead();
 
-  const noteForm = useForm<NoteForm>({ resolver: zodResolver(noteSchema), defaultValues: { note: '' } });
-  const noteText = noteForm.watch('note');
+  const [noteText, setNoteText] = React.useState('');
+  const [noteError, setNoteError] = React.useState('');
   const [showQuickResponse, setShowQuickResponse] = React.useState(false);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
 
@@ -403,8 +397,19 @@ export function LeadDetailPage() {
     }
   };
 
-  const handleAddNote = async ({ note }: NoteForm): Promise<void> => {
-    if (!id || !note.trim()) return;
+  const handleAddNote = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const note = noteText.trim();
+    if (!note) {
+      setNoteError('Enter a note');
+      return;
+    }
+    if (note.length > 10000) {
+      setNoteError('Notes must be 10,000 characters or fewer');
+      return;
+    }
+    if (!id || createActivity.isPending) return;
+    setNoteError('');
     try {
       await createActivity.mutateAsync({
         leadId: id,
@@ -414,7 +419,7 @@ export function LeadDetailPage() {
         },
       });
       showToast('Note added.', 'success');
-      noteForm.reset();
+      setNoteText('');
     } catch {
       showToast('Failed to add note.', 'error');
     }
@@ -712,15 +717,17 @@ export function LeadDetailPage() {
               <h3 className="text-sm font-semibold text-slate-900">History</h3>
             </CardHeader>
             <CardContent>
-              <form onSubmit={noteForm.handleSubmit(handleAddNote)} className="sticky top-16 z-10 mb-6 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-start">
+              <form onSubmit={(event) => void handleAddNote(event)} className="sticky top-16 z-10 mb-6 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-start">
                 <label className="sr-only" htmlFor="lead-note">Add a note</label>
                 <Textarea
                   id="lead-note"
                   placeholder="Add a note..."
-                  {...noteForm.register('note')}
+                  value={noteText}
+                  onChange={(event) => { setNoteText(event.target.value); setNoteError(''); }}
                   rows={2}
-                  aria-invalid={Boolean(noteForm.formState.errors.note)}
-                  aria-describedby={noteForm.formState.errors.note ? 'lead-note-error' : undefined}
+                  maxLength={10000}
+                  aria-invalid={Boolean(noteError)}
+                  aria-describedby={noteError ? 'lead-note-error' : undefined}
                   disabled={createActivity.isPending}
                 />
                 <div className="flex shrink-0 flex-col items-end gap-1">
@@ -728,7 +735,7 @@ export function LeadDetailPage() {
                     <Send className="mr-2 h-4 w-4" />
                     Add note
                   </Button>
-                  {noteForm.formState.errors.note && <p id="lead-note-error" role="alert" className="text-xs text-red-600">{noteForm.formState.errors.note.message}</p>}
+                  {noteError && <p id="lead-note-error" role="alert" className="text-xs text-red-600">{noteError}</p>}
                 </div>
               </form>
               <LeadHistory leadId={leadId} />
