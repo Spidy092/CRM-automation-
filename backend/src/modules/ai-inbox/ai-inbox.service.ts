@@ -37,7 +37,7 @@ export async function createItem(input: CreateInboxItemInput): Promise<AiInboxIt
     message: item.title,
     metadata: {
       ...(item.lead_id ? { leadId: item.lead_id } : {}),
-      deepLink: '/ai-inbox',
+      deepLink: '/?copilot=approvals',
     },
   });
   if (!notification.ok) {
