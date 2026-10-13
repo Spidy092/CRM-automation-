@@ -7,6 +7,7 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { normalizePhone } from '../../shared/utils/phone';
 import { withAdvisoryLocks } from '../../shared/utils/db';
 import { err, ok, type Result } from '../../shared/utils/result';
+import type { PoolClient } from 'pg';
 
 const websiteLeadSchema = createLeadSchema
   .omit({
@@ -28,7 +29,10 @@ const websiteLeadSchema = createLeadSchema
   });
 
 /** Public capture cannot assign owners, stages, or overwrite an existing lead. */
-export async function captureWebsiteLead(input: LeadInput): Promise<Result<LeadRow, AppError>> {
+export async function captureWebsiteLead(
+  input: LeadInput,
+  transactionClient?: PoolClient,
+): Promise<Result<LeadRow, AppError>> {
   const parsed = websiteLeadSchema.safeParse({ ...input, source_platform: 'website_form' });
   if (!parsed.success) return err(new AppError('Contact details are invalid', 422));
   const prepared = {
@@ -41,19 +45,32 @@ export async function captureWebsiteLead(input: LeadInput): Promise<Result<LeadR
     .filter(Boolean)
     .map((value) => `website-capture:${createHash('sha256').update(value).digest('hex')}`)
     .sort();
-  try {
-    return await withAdvisoryLocks(lockKeys, async (): Promise<Result<LeadRow, AppError>> => {
+  const capture = async (client?: PoolClient): Promise<Result<LeadRow, AppError>> => {
+    try {
+      if (transactionClient) {
+        for (const lockKey of lockKeys) {
+          await transactionClient.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
+        }
+      }
       if (prepared.email || prepared.phone) {
         // The shared lookup uses OR; absent contacts must not match empty columns.
-        const existing = await findExistingForDedup(
-          prepared.email || `missing:${randomUUID()}`,
-          prepared.phone || `missing:${randomUUID()}`,
-          'website_form',
-        );
+        const email = prepared.email || `missing:${randomUUID()}`;
+        const phone = prepared.phone || `missing:${randomUUID()}`;
+        const executor = transactionClient ?? client;
+        const existing = executor
+          ? await findExistingForDedup(email, phone, 'website_form', null, executor)
+          : await findExistingForDedup(email, phone, 'website_form');
         if (existing) return ok(existing);
       }
-      return ok(await insertLead(prepared));
-    });
+      const executor = transactionClient ?? client;
+      return ok(await (executor ? insertLead(prepared, executor) : insertLead(prepared)));
+    } catch {
+      return err(new AppError('Could not create the CRM lead', 500));
+    }
+  };
+  try {
+    if (transactionClient) return await capture(transactionClient);
+    return await withAdvisoryLocks(lockKeys, capture);
   } catch {
     return err(new AppError('Could not create the CRM lead', 500));
   }

@@ -48,11 +48,11 @@ export async function countForms(): Promise<number> {
   return parseInt(row?.total ?? '0', 10);
 }
 
-export async function findFormById(id: string): Promise<FormRow | null> {
-  const row = await queryOne<FormRow & { fields: unknown }>(
-    `SELECT ${FORM_COLS} FROM forms WHERE id = $1 AND deleted_at IS NULL`,
-    [id],
-  );
+export async function findFormById(id: string, client?: PoolClient): Promise<FormRow | null> {
+  const sql = `SELECT ${FORM_COLS} FROM forms WHERE id = $1 AND deleted_at IS NULL`;
+  const row = client
+    ? ((await client.query<FormRow & { fields: unknown }>(sql, [id])).rows[0] ?? null)
+    : await queryOne<FormRow & { fields: unknown }>(sql, [id]);
   return row ? mapFormRow(row) : null;
 }
 
@@ -267,11 +267,13 @@ export async function findFailedSubmissions(
 export async function findSubmissionById(
   formId: string,
   submissionId: string,
+  client?: PoolClient,
 ): Promise<FormSubmissionRow | null> {
-  return queryOne<FormSubmissionRow>(
-    'SELECT id, form_id, lead_id, data, status, created_at FROM form_submissions WHERE form_id = $1 AND id = $2',
-    [formId, submissionId],
-  );
+  const sql =
+    'SELECT id, form_id, lead_id, data, status, created_at FROM form_submissions WHERE form_id = $1 AND id = $2';
+  return client
+    ? ((await client.query<FormSubmissionRow>(sql, [formId, submissionId])).rows[0] ?? null)
+    : queryOne<FormSubmissionRow>(sql, [formId, submissionId]);
 }
 
 export async function linkSubmissionLead(

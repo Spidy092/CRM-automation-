@@ -6,6 +6,7 @@ import {
   updateFormById,
   deleteFormById,
   submitForm,
+  retrySubmissionLead,
   getFormAnalyticsById,
   generateEmbedSnippet,
 } from './forms.service';
@@ -19,6 +20,8 @@ import {
   deleteForm,
   insertSubmission,
   getFormAnalytics,
+  findSubmissionById,
+  linkSubmissionLead,
 } from './forms.repository';
 import { captureWebsiteLead } from '../leads/websiteCapture.service';
 import { appendDomainEvent, enqueueOutboxDelivery } from '../../shared/events/outbox.service';
@@ -26,11 +29,14 @@ import { writeAuditLog } from '../../shared/utils/audit';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
 import type { FormRow } from './forms.types';
-import { withTransaction } from '../../shared/utils/db';
+import { withAdvisoryLocks, withTransaction } from '../../shared/utils/db';
 
 jest.mock('./forms.repository');
 jest.mock('../leads/websiteCapture.service', () => ({ captureWebsiteLead: jest.fn() }));
-jest.mock('../../shared/utils/db', () => ({ withTransaction: jest.fn() }));
+jest.mock('../../shared/utils/db', () => ({
+  withTransaction: jest.fn(),
+  withAdvisoryLocks: jest.fn(),
+}));
 jest.mock('../../shared/events/outbox.service', () => ({
   appendDomainEvent: jest.fn(),
   enqueueOutboxDelivery: jest.fn(),
@@ -52,6 +58,8 @@ const mockUpdateForm = updateForm as jest.Mock;
 const mockDeleteForm = deleteForm as jest.Mock;
 const mockInsertSubmission = insertSubmission as jest.Mock;
 const mockGetFormAnalytics = getFormAnalytics as jest.Mock;
+const mockFindSubmissionById = findSubmissionById as jest.Mock;
+const mockLinkSubmissionLead = linkSubmissionLead as jest.Mock;
 const mockInsertLead = captureWebsiteLead as jest.Mock;
 const mockWriteAuditLog = writeAuditLog as jest.Mock;
 const mockSgSend = sendgrid.sendEmail as jest.Mock;
@@ -84,6 +92,9 @@ const FORM: FormRow = {
 beforeEach(() => {
   jest.resetAllMocks();
   (withTransaction as jest.Mock).mockImplementation(async (fn) => fn({ transaction: true }));
+  (withAdvisoryLocks as jest.Mock).mockImplementation(async (_keys, fn) =>
+    fn({ transaction: true }),
+  );
   mockInsertLead.mockResolvedValue({ ok: true, value: { id: 'lead-1' } });
   mockAppendDomainEvent.mockResolvedValue({ ok: true, value: { event: { id: 'outbox-1' } } });
   mockEnqueueOutboxDelivery.mockResolvedValue({ ok: true });
@@ -390,6 +401,34 @@ describe('submitForm', () => {
     await expect(submitForm('f1', { email: 'not-an-email' }, meta)).rejects.toMatchObject({
       statusCode: 422,
     });
+  });
+});
+
+describe('retrySubmissionLead', () => {
+  it('reuses the recovery transaction client for lead creation and outbox persistence', async () => {
+    const client = { transaction: true };
+    (withAdvisoryLocks as jest.Mock).mockImplementation(async (_keys, fn) => fn(client));
+    mockFindSubmissionById.mockResolvedValue({
+      id: 'submission-1',
+      form_id: 'f1',
+      data: { email: 'jane@example.com', name: 'Jane' },
+      status: 'lead_failed',
+    });
+    mockFindFormById.mockResolvedValue(FORM);
+    mockInsertLead.mockResolvedValue({ ok: true, value: { id: 'lead-1' } });
+    mockLinkSubmissionLead.mockResolvedValue(undefined);
+
+    await expect(retrySubmissionLead('f1', 'submission-1', ACTOR)).resolves.toEqual({
+      ok: true,
+      value: { leadId: 'lead-1' },
+    });
+
+    expect(mockInsertLead).toHaveBeenCalledWith(expect.any(Object), client);
+    expect(mockLinkSubmissionLead).toHaveBeenCalledWith('f1', 'submission-1', 'lead-1', client);
+    expect(mockAppendDomainEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'form-submission:submission-1' }),
+      client,
+    );
   });
 });
 

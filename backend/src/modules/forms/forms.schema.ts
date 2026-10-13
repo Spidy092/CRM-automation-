@@ -19,18 +19,13 @@ const formFieldSchema = z
     options: z.array(z.string()).optional(),
     defaultValue: z.string().optional(),
     leadField: z
-      .enum([
-        '',
-        'contact_name',
-        'name',
-        'email',
-        'phone',
-        'business_name',
-        'company',
-        'industry',
-        'location',
-        'website',
-      ])
+      .string()
+      .max(100)
+      .regex(/^[a-zA-Z0-9_]*$/, 'Lead field must be alphanumeric with underscores')
+      .refine(
+        (value) => !['__proto__', 'constructor', 'prototype'].includes(value),
+        'Reserved lead field',
+      )
       .optional(),
   })
   .refine((field) => field.type !== 'select' || Boolean(field.options?.length), {
@@ -193,8 +188,12 @@ export function submissionDefinitionSchema(
         z
           .string()
           .trim()
-          .min(1)
-          .refine((text) => Number.isFinite(Number(text)), `${field.label} must be a number`),
+          .refine(
+            (text) =>
+              (!field.required && text === '') ||
+              (text.length > 0 && Number.isFinite(Number(text))),
+            `${field.label} must be a number`,
+          ),
       ]);
     } else {
       let text = z.string().trim().max(5000);

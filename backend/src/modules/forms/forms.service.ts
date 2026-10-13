@@ -32,6 +32,7 @@ import { withTransaction, withAdvisoryLocks } from '../../shared/utils/db';
 import { appendDomainEvent, enqueueOutboxDelivery } from '../../shared/events/outbox.service';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
+import type { PoolClient } from 'pg';
 
 function slugify(name: string): string {
   return name
@@ -329,6 +330,7 @@ export async function deleteFormById(id: string, actor: FormActor): Promise<void
 async function captureFormLead(
   form: FormRow,
   data: Record<string, unknown>,
+  transactionClient?: PoolClient,
 ): ReturnType<typeof captureWebsiteLead> {
   // Only contact fields are mapped; public capture cannot assign owners.
   const leadData: Record<string, string> = {};
@@ -338,7 +340,7 @@ async function captureFormLead(
     }
   }
 
-  return captureWebsiteLead({
+  const input = {
     business_name: String(
       leadData.company ||
         leadData.business_name ||
@@ -356,7 +358,10 @@ async function captureFormLead(
     location: String(leadData.location || data.location || 'Unknown'),
     source_platform: 'website_form',
     notes: JSON.stringify(data),
-  });
+  };
+  return transactionClient
+    ? captureWebsiteLead(input, transactionClient)
+    : captureWebsiteLead(input);
 }
 
 // ── Public Submission ─────────────────────────────────────────────────────
@@ -516,12 +521,15 @@ export async function retrySubmissionLead(
   actor: FormActor,
 ): Promise<Result<{ leadId: string }, AppError>> {
   try {
-    return await withAdvisoryLocks([`form-recovery:${submissionId}`], async () => {
-      const submission = await findSubmissionById(formId, submissionId);
+    const recovered = await withAdvisoryLocks([`form-recovery:${submissionId}`], async (client) => {
+      if (!client)
+        return err(new AppError('Could not recover the submission. Please try again.', 500));
+      const submission = await findSubmissionById(formId, submissionId, client);
       if (!submission) return err(new AppError('Submission not found', 404));
       if (submission.status !== 'lead_failed')
         return err(new AppError('This submission has already been processed', 409));
-      const form = await getForm(formId);
+      const form = await findFormById(formId, client);
+      if (!form) return err(new AppError('Form not found', 404));
       const validated = submissionDefinitionSchema(form.fields).safeParse(submission.data);
       if (!validated.success)
         return err(
@@ -530,34 +538,35 @@ export async function retrySubmissionLead(
             422,
           ),
         );
-      const lead = await captureFormLead(form, validated.data);
+      // Reuse the lock transaction's client for the lead dedupe and outbox work.
+      // This avoids checking out additional pool connections while holding the lock.
+      const lead = await captureFormLead(form, validated.data, client);
       if (!lead.ok) return lead;
-      const outboxId = await withTransaction(async (client) => {
-        await linkSubmissionLead(formId, submissionId, lead.value.id, client);
-        const event = await appendDomainEvent(
-          {
-            eventType: 'form.submitted',
-            aggregateType: 'lead',
-            aggregateId: lead.value.id,
-            idempotencyKey: `form-submission:${submissionId}`,
-            payload: { formId, submissionId },
-          },
-          client,
-        );
-        if (!event.ok) throw event.error;
-        return event.value.event.id;
-      });
-      await queueOutboxDelivery(outboxId);
-      await writeAuditLog({
-        userId: actor.id,
-        action: 'form.submission.recovered',
-        entityType: 'form',
-        entityId: formId,
-        newValue: { submissionId, leadId: lead.value.id },
-        ipAddress: actor.ipAddress ?? null,
-      });
-      return ok({ leadId: lead.value.id });
+      await linkSubmissionLead(formId, submissionId, lead.value.id, client);
+      const event = await appendDomainEvent(
+        {
+          eventType: 'form.submitted',
+          aggregateType: 'lead',
+          aggregateId: lead.value.id,
+          idempotencyKey: `form-submission:${submissionId}`,
+          payload: { formId, submissionId },
+        },
+        client,
+      );
+      if (!event.ok) throw event.error;
+      return ok({ leadId: lead.value.id, outboxId: event.value.event.id });
     });
+    if (!recovered.ok) return recovered;
+    await queueOutboxDelivery(recovered.value.outboxId);
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'form.submission.recovered',
+      entityType: 'form',
+      entityId: formId,
+      newValue: { submissionId, leadId: recovered.value.leadId },
+      ipAddress: actor.ipAddress ?? null,
+    });
+    return ok({ leadId: recovered.value.leadId });
   } catch (error) {
     return err(
       error instanceof AppError

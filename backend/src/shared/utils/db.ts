@@ -66,7 +66,10 @@ export function advisoryLockKey(namespace: string, id: string): string {
  * statement observes the latest committed state, which is exactly what a
  * check-then-act protocol needs. The lock releases on COMMIT/ROLLBACK.
  */
-export async function withAdvisoryLock<T>(lockKey: string, fn: () => Promise<T>): Promise<T> {
+export async function withAdvisoryLock<T>(
+  lockKey: string,
+  fn: (client?: PoolClient) => Promise<T>,
+): Promise<T> {
   return withAdvisoryLocks([lockKey], fn);
 }
 
@@ -78,13 +81,16 @@ export async function withAdvisoryLock<T>(lockKey: string, fn: () => Promise<T>)
  * file-lifecycle protocol deadlock-free. An empty key list runs `fn`
  * directly with no transaction.
  */
-export async function withAdvisoryLocks<T>(lockKeys: string[], fn: () => Promise<T>): Promise<T> {
+export async function withAdvisoryLocks<T>(
+  lockKeys: string[],
+  fn: (client?: PoolClient) => Promise<T>,
+): Promise<T> {
   if (lockKeys.length === 0) return fn();
   return withTransaction(async (client) => {
     for (const lockKey of lockKeys) {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
     }
-    return fn();
+    return fn(client);
   });
 }
 
