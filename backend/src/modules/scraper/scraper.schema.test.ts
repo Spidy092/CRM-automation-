@@ -70,6 +70,26 @@ describe('createScraperConfigSchema schedule_cron', () => {
 });
 
 describe('parseSourceConfig', () => {
+  it('supports multiple Google queries and validates AI budgets', () => {
+    const parsed = parseSourceConfig('google_places', {
+      query: ['dentist', 'dental clinic'],
+      apiKeyRef: 'K',
+      agentEnabled: true,
+    });
+    expect(parsed.query).toEqual(['dentist', 'dental clinic']);
+    expect(parsed.maxAgentRounds).toBe(12);
+    expect(parsed.maxApiRequests).toBe(80);
+    for (const invalid of [
+      { maxAgentRounds: 100 },
+      { maxApiRequests: 1000 },
+      { agentEnabled: 'true' },
+    ]) {
+      expect(() =>
+        parseSourceConfig('google_places', { query: 'dentist', apiKeyRef: 'K', ...invalid }),
+      ).toThrow();
+    }
+  });
+
   it('rejects a google_places config missing the required query', () => {
     expect(() => parseSourceConfig('google_places', { apiKeyRef: 'K' })).toThrow();
   });

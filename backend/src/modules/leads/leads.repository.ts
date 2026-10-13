@@ -31,7 +31,7 @@ const SORT_COLUMNS: Record<LeadSortBy, string> = {
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
-  deal_value, won_at, lost_at, next_follow_up_at, created_at, updated_at, deleted_at, scraper_log_id`;
+  deal_value, won_at, lost_at, next_follow_up_at, created_at, updated_at, deleted_at, scraper_log_id, google_place_id, google_contact_provenance`;
 
 function jsonArray(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -190,11 +190,22 @@ export async function findExistingForDedup(
   email: string,
   phone: string,
   sourcePlatform: string,
+  googlePlaceId?: string | null,
 ): Promise<LeadRow | null> {
+  // Place identity takes precedence: branches can share phone numbers.
+  if (googlePlaceId && sourcePlatform === 'google_business') {
+    return queryOne<LeadRow>(
+      `SELECT ${COLS} FROM leads
+       WHERE source_platform = $1 AND google_place_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [sourcePlatform, googlePlaceId],
+    );
+  }
   return queryOne<LeadRow>(
     `SELECT ${COLS} FROM leads
      WHERE source_platform = $1
        AND deleted_at IS NULL
+       AND google_place_id IS NULL
        AND (lower(email) = lower($2) OR phone = $3)
      LIMIT 1`,
     [sourcePlatform, email, phone],
@@ -229,11 +240,11 @@ export async function insertLead(input: LeadInput): Promise<LeadRow> {
     `INSERT INTO leads (
        business_name, contact_name, phone, email, website, industry, location, country,
        google_rating, review_count, social_links, source_platform, lead_score, classification,
-       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id
+       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id, google_place_id, google_contact_provenance
      ) VALUES (
        $1, $2, $3, lower($4), $5, $6, $7, $8,
        $9, $10, $11::jsonb, $12, 0, NULL,
-       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19
+       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19, $20, $21::jsonb
      )
      RETURNING ${COLS}`,
     [
@@ -256,6 +267,8 @@ export async function insertLead(input: LeadInput): Promise<LeadRow> {
       input.notes ?? null,
       input.deal_value ?? null,
       input.scraper_log_id ?? null,
+      input.google_place_id ?? null,
+      jsonArray(input.google_contact_provenance),
     ],
   );
   if (!row) throw new Error('Failed to insert lead');

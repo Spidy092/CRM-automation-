@@ -1,3 +1,4 @@
+import type { GoogleContactProvenance } from '../leads/leads.schema';
 import { createHash } from 'crypto';
 import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
@@ -40,6 +41,9 @@ import {
   getScraperTrends,
   findDistinctGroupNames,
 } from './scraper.repository';
+import { createGoogleAgentAdapters } from './google-agent.tools';
+import { runConfiguredGoogleAgent } from './google-agent.service';
+import { googlePlacesConfigSchema } from './scraper.schema';
 import { parseSourceConfig } from './scraper.schema';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
@@ -47,6 +51,8 @@ import { createNotification } from '../notifications/notifications.service';
 import { verifyEmail } from '../../shared/utils/email';
 
 interface ScrapedLead {
+  google_place_id?: string;
+  google_contact_provenance?: GoogleContactProvenance;
   business_name: string;
   contact_name?: string;
   phone?: string;
@@ -899,6 +905,8 @@ async function scrapeGooglePlaces(
   duplicateLeadIds: string[];
   rawResponse?: Record<string, unknown>;
 }> {
+  if (_config.agentEnabled === true) return scrapeGooglePlacesWithAgent(_config, logId);
+
   logger.info('scraper google_places: starting API call');
 
   // apiKeyRef must be the NAME of an env var (e.g. "GOOGLE_PLACES_API_KEY"), not the raw key.
@@ -1147,30 +1155,18 @@ async function scrapeGooglePlaces(
     // These values are clearly synthetic and should be updated when real contact
     // info is collected (e.g. via enrichment or manual entry).
     const placeholderSeed = placeId || `${businessName}|${String(p.formatted_address ?? '')}`;
-    const idDigits = placeholderSeed
-      .split('')
-      .reduce((acc, c) => acc + c.charCodeAt(0).toString(), '')
-      .slice(-10)
-      .padStart(10, '0');
-
-    // Prefer using the website domain for the email so it looks real when the
-    // website IS available; fall back to a clearly-synthetic local address.
-    let email: string;
-    if (website) {
-      try {
-        const domain = new URL(website).hostname.replace(/^www\./, '');
-        email = `no-reply@${domain}`;
-      } catch {
-        email = `no-reply-${placeId.slice(0, 8).toLowerCase()}@google-scraped.local`;
-      }
-    } else {
-      email = `no-reply-${placeId.slice(0, 8).toLowerCase()}@google-scraped.local`;
-    }
+    const placeholderHash = createHash('sha256').update(placeholderSeed).digest('hex').slice(0, 40);
+    const email = `no-reply-${placeholderHash}@google-scraped.local`;
 
     leads.push({
+      google_place_id: placeId || undefined,
+      google_contact_provenance: {
+        email: 'placeholder',
+        phone: phone ? 'google_places' : 'placeholder',
+      },
       business_name: businessName,
       // contact_name intentionally omitted — Text Search provides no person name
-      phone: phone ?? `+0${idDigits}`,
+      phone: phone ?? generatePlaceholderPhone(placeholderSeed),
       email,
       website,
       location: String(p.formatted_address ?? ''),
@@ -1187,6 +1183,96 @@ async function scrapeGooglePlaces(
   return {
     ...stats,
     rawResponse: { total_results: rawResults.length, places_enrichment: placesEnrichment },
+  };
+}
+
+/** Agent discovery has no write tools; import begins only after successful finish. */
+async function scrapeGooglePlacesWithAgent(
+  rawConfig: Record<string, unknown>,
+  logId: string,
+): Promise<ScrapeStats> {
+  const config = googlePlacesConfigSchema.parse(rawConfig);
+  if (!config.location?.trim())
+    throw new AppError('AI scraper requires a location to constrain its searches.', 400);
+  const aiConfig = await getAiConfig();
+  if (!aiConfig) throw new AppError('Enable AI settings before running the AI scraper.', 400);
+  const apiKey = assertEnvVarConfigured(config.apiKeyRef, 'apiKeyRef');
+  const deadline = Date.now() + 180000;
+  let resolved: string | undefined;
+  try {
+    resolved = await geocodeLocation(config.location, apiKey);
+  } catch (error) {
+    // The legacy fetch helper can include a credential-bearing URL in timeout errors.
+    throw new AppError(
+      'AI scraper location lookup failed; check Google configuration and quota.',
+      error instanceof AppError && error.statusCode === 429 ? 429 : 502,
+    );
+  }
+  if (!resolved)
+    throw new AppError('AI scraper could not resolve the location; use valid coordinates.', 400);
+  const center = resolved.split(',').map(Number);
+  if (
+    center.length !== 2 ||
+    !Number.isFinite(center[0]) ||
+    !Number.isFinite(center[1]) ||
+    Math.abs(center[0]) > 90 ||
+    Math.abs(center[1]) > 180
+  ) {
+    throw new AppError('AI scraper location coordinates are invalid.', 400);
+  }
+  // Reserve one request for geocoding (coordinate inputs do not use that reservation).
+  const geocodeRequests = LAT_LNG_RE.test(config.location.trim()) ? 0 : 1;
+  const network = createGoogleAgentAdapters({
+    apiKey,
+    center: [center[0], center[1]],
+    radius: config.radius ?? 5000,
+    maxRequests: config.maxApiRequests - geocodeRequests,
+    deadline,
+  });
+  const result = await runConfiguredGoogleAgent({
+    goal: config.aiGoal || normalizeQueries(config.query).join('; '),
+    location: config.location,
+    maxResults: config.maxResults,
+    maxRounds: config.maxAgentRounds,
+    adapters: network.adapters,
+    assertBudget: network.assertBudget,
+    deadline,
+    logId,
+  });
+  network.assertBudget();
+  const leads: ScrapedLead[] = result.candidates.map((candidate) => ({
+    google_place_id: candidate.placeId,
+    google_contact_provenance: {
+      email: candidate.email ? 'website' : 'placeholder',
+      phone: candidate.phone ? 'google_places' : 'placeholder',
+    },
+    business_name: candidate.name,
+    phone: candidate.phone || generatePlaceholderPhone(candidate.placeId),
+    email:
+      candidate.email ||
+      `no-reply-${createHash('sha256').update(candidate.placeId).digest('hex').slice(0, 40)}@google-scraped.local`,
+    website: candidate.website || null,
+    location: candidate.address,
+    google_rating: candidate.rating,
+    review_count: candidate.reviewCount,
+    source_platform: 'google_business',
+  }));
+  const stats = await importLeads(leads, logId);
+  return {
+    ...stats,
+    rawResponse: {
+      agent: {
+        summary: result.summary,
+        rounds: result.rounds,
+        toolCalls: result.toolCalls,
+        apiRequests: network.requestsUsed() + geocodeRequests,
+        decisions: result.decisions,
+        contacts: result.candidates.map((candidate) => ({
+          placeId: candidate.placeId,
+          emailSource: candidate.emailSource ?? null,
+        })),
+      },
+    },
   };
 }
 
@@ -2686,6 +2772,8 @@ async function importLeads(
 
       await createLead(
         {
+          google_place_id: lead.google_place_id,
+          google_contact_provenance: lead.google_contact_provenance,
           business_name: lead.business_name,
           // Fall back to business name — it is the most meaningful available value
           // when the scraper source does not provide a contact person name.
@@ -2711,22 +2799,14 @@ async function importLeads(
       if (err instanceof AppError && err.statusCode === 409) {
         if (logId) {
           try {
-            const { findExistingForDedup, updateLead } = await import('../leads/leads.repository');
-            const existing = await findExistingForDedup(
+            const { findScrapedLeadDuplicate } = await import('../leads/leads.service');
+            const existingId = await findScrapedLeadDuplicate(
               normalizedEmail,
               normalizedPhone,
               lead.source_platform,
+              lead.google_place_id,
             );
-            if (existing) {
-              duplicateLeadIds.push(existing.id);
-              // Only ensure the source_platform tag is present — do not add log IDs
-              if (!existing.tags?.includes(lead.source_platform)) {
-                const updatedTags = Array.from(
-                  new Set([...(existing.tags || []), lead.source_platform]),
-                );
-                await updateLead(existing.id, { tags: updatedTags });
-              }
-            }
+            if (existingId) duplicateLeadIds.push(existingId);
           } catch (updateErr) {
             logger.warn('scraper failed to update existing lead tags', {
               business_name: lead.business_name,

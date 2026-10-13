@@ -55,8 +55,18 @@ interface DispatchResult {
  * Dispatching to these burns anti-ban budget and risks the sending
  * account's reputation on numbers/addresses that were never real.
  */
-function isPlaceholderContact(channel: string, destination: string): boolean {
-  if (channel === 'email') return isPlaceholderEmail(destination);
+function isPlaceholderContact(
+  channel: string,
+  destination: string,
+  sourcePlatform?: string,
+): boolean {
+  if (channel === 'email') {
+    // Earlier Google imports invented deliverable-looking no-reply addresses.
+    return (
+      isPlaceholderEmail(destination) ||
+      (sourcePlatform === 'google_business' && /^no-reply@/i.test(destination.trim()))
+    );
+  }
   return isPlaceholderPhone(destination);
 }
 
@@ -468,7 +478,7 @@ export async function handleSendAiReply(data: OutreachSendAiReplyJob): Promise<v
   if (!destination) {
     throw new AppError(`Lead ${leadId} has no ${channel} destination`, 400);
   }
-  if (isPlaceholderContact(channel, destination)) {
+  if (isPlaceholderContact(channel, destination, lead.source_platform)) {
     throw new AppError(
       `Lead ${leadId} has a placeholder ${channel} (scraped without real contact info) — cannot dispatch`,
       400,
@@ -658,7 +668,7 @@ async function sendViaConnector(opts: {
   if (!destination) {
     return { success: false, error: `Lead has no ${opts.channel} destination` };
   }
-  if (isPlaceholderContact(opts.channel, destination)) {
+  if (isPlaceholderContact(opts.channel, destination, lead.source_platform)) {
     return {
       success: false,
       error: `Lead has a placeholder ${opts.channel} (scraped without real contact info) — cannot dispatch`,

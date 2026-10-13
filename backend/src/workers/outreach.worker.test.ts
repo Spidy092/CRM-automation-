@@ -248,6 +248,30 @@ describe('handleDispatch', () => {
     ).rejects.toMatchObject({ statusCode: 502 });
   });
 
+  it('blocks legacy synthetic Google email in sequence dispatch', async () => {
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (findLeadById as jest.Mock).mockResolvedValue({
+      id: 'lead1',
+      email: 'no-reply@chain.test',
+      source_platform: 'google_business',
+    });
+    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved' });
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
+    await expect(
+      handleDispatch({
+        leadId: 'lead1',
+        campaignId: 'camp1',
+        sequenceId: 'seq1',
+        stepNumber: 1,
+        channel: 'email',
+        templateId: 't1',
+        mockMode: false,
+      }),
+    ).rejects.toMatchObject({ statusCode: 502 });
+    expect(dispatchOutbound).not.toHaveBeenCalled();
+  });
+
   it('throws with 502 when mockMode=false and lead has no destination', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
@@ -496,6 +520,23 @@ describe('handleFollowUp', () => {
 });
 
 describe('handleSendAiReply', () => {
+  it.each(['no-reply@chain.test', 'no-reply-id@google-scraped.local'])(
+    'blocks synthetic Google email %s before dispatch',
+    async (email) => {
+      jest.clearAllMocks();
+      (findLeadById as jest.Mock).mockResolvedValue({
+        id: 'lead1',
+        email,
+        source_platform: 'google_business',
+      });
+      await expect(
+        handleSendAiReply({ leadId: 'lead1', campaignId: null, channel: 'email', body: 'Hi' }),
+      ).rejects.toMatchObject({ statusCode: 400 });
+      expect(dispatchOutbound).not.toHaveBeenCalled();
+      expect(createLog).not.toHaveBeenCalled();
+    },
+  );
+
   beforeEach(() => jest.clearAllMocks());
 
   const createdLog = {

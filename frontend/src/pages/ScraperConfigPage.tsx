@@ -116,7 +116,7 @@ const emptyForm: ConfigForm = {
 function getPlaceholderConfig(sourceType: ScraperSourceType): Record<string, unknown> {
   switch (sourceType) {
     case 'google_places':
-      return { query: '', location: '', radius: 5000, maxResults: 20, apiKeyRef: 'GOOGLE_PLACES_API_KEY' };
+      return { query: '', location: '', radius: 5000, maxResults: 20, apiKeyRef: 'GOOGLE_PLACES_API_KEY', agentEnabled: true, aiGoal: '', maxAgentRounds: 12, maxApiRequests: 80 };
     case 'facebook':
       return { pageId: '', accessTokenRef: 'FACEBOOK_ACCESS_TOKEN', fields: 'name,about,phone,website,emails,location', maxPosts: 25 };
     case 'youtube':
@@ -473,6 +473,38 @@ function getConfigFields(
     case 'google_places':
       return (
         <>
+          <div className="col-span-2 rounded-lg border border-slate-200 p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input type="checkbox" checked={config.agentEnabled === true}
+                onChange={(e) => onChange('agentEnabled', e.target.checked)} />
+              AI research agent
+            </label>
+            <p className="mt-1 text-xs text-slate-500">
+              Searches, researches business websites, and qualifies leads before importing. Uses your AI settings.
+            </p>
+            {config.agentEnabled === true && (
+              <div className="mt-3 space-y-3">
+                <label className="block text-xs font-medium text-slate-500">
+                  Research goal
+                  <textarea value={(config.aiGoal as string) ?? ''}
+                    onChange={(e) => onChange('aiGoal', e.target.value)} rows={3} maxLength={2000}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder="Find dental clinics with a public business contact and evidence of online appointment booking." />
+                </label>
+                <p className="text-xs text-slate-500">Leave the goal blank to use your search queries. Location is required in agent mode.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-xs text-slate-500">Max AI rounds
+                    <Input type="number" min={2} max={20} value={(config.maxAgentRounds as number) ?? 12}
+                      onChange={(e) => onChange('maxAgentRounds', Number(e.target.value))} />
+                  </label>
+                  <label className="text-xs text-slate-500">Max external requests
+                    <Input type="number" min={5} max={150} value={(config.maxApiRequests as number) ?? 80}
+                      onChange={(e) => onChange('maxApiRequests', Number(e.target.value))} />
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="col-span-2">
             <label className="block text-xs font-medium text-slate-500 mb-1">
               Search Queries <span className="text-red-500">*</span> <span className="text-slate-300">— one per line</span>
@@ -508,7 +540,9 @@ function getConfigFields(
               placeholder="Yelahanka, Bangalore  (or 13.10,77.59)"
             />
             <p className="mt-1 text-xs text-slate-400">
-              A place name is auto-converted to coordinates. Leave blank to search everywhere.
+              {config.agentEnabled === true
+                ? 'Agent searches stay within this location and radius.'
+                : 'A place name is auto-converted to coordinates. Leave blank to search everywhere.'}
             </p>
           </div>
           <div>
@@ -1128,6 +1162,7 @@ export function ScraperConfigPage() {
     const cfg = isEdit ? editConfig?.form.config ?? {} : form.config;
 
     if (src === 'google_places' && !cfg.query) errors.query = 'Search query is required';
+    if (src === 'google_places' && cfg.agentEnabled === true && !(cfg.location as string)?.trim()) errors.location = 'Location is required for the AI agent';
     if (src === 'facebook' && !cfg.pageId) errors.pageId = 'Page ID is required';
     if (src === 'youtube' && !cfg.query) errors.query = 'Search query is required';
     if (src === 'meta_lead_forms') {
@@ -1739,6 +1774,12 @@ export function ScraperConfigPage() {
                                     {log.records_failed > 0 && <StatusBadge tone="red">{log.records_failed} failed</StatusBadge>}
                                   </div>
                                 </div>
+                                {log.raw_response?.agent && typeof log.raw_response.agent === 'object' &&
+                                  'summary' in log.raw_response.agent && typeof log.raw_response.agent.summary === 'string' && (
+                                    <p className="mt-1.5 pl-5 text-xs text-slate-600">
+                                      <span className="font-medium">AI assessment: </span>{log.raw_response.agent.summary}
+                                    </p>
+                                  )}
                                 {log.status === 'failed' && log.error_message && (
                                   <p className="mt-1.5 pl-5 text-xs text-red-600">{log.error_message}</p>
                                 )}

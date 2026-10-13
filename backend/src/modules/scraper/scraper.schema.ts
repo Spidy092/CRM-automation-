@@ -19,11 +19,18 @@ const urlOrUrls = z.union([
 ]);
 
 export const googlePlacesConfigSchema = z.object({
-  query: z.string().min(1, 'Search query is required'),
+  query: z.union([
+    z.string().trim().min(1, 'Search query is required').max(2000),
+    z.array(z.string().trim().min(1).max(250)).min(1).max(10),
+  ]),
   location: z.string().optional(),
   radius: z.number().int().positive().max(50000).optional(),
   maxResults: z.number().int().positive().max(50).optional().default(20),
   apiKeyRef: z.string().min(1, 'API key reference is required'),
+  agentEnabled: z.boolean().optional().default(false),
+  aiGoal: z.string().trim().max(2000).optional(),
+  maxAgentRounds: z.number().int().min(2).max(20).optional().default(12),
+  maxApiRequests: z.number().int().min(5).max(150).optional().default(80),
 });
 
 export const facebookConfigSchema = z.object({
