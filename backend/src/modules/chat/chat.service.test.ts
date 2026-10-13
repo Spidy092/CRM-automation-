@@ -10,13 +10,19 @@ import { sendChatMessage, getChatHistory } from './chat.service';
 import { redis } from '../../shared/utils/redis';
 import * as planner from '../agent-planner/planner.service';
 import { proposeAgentAction } from '../agent/agent.service';
-import { getAiConfig } from '../ai-settings/ai-settings.service';
+import { getAgentPlannerEnabled, getAiConfig } from '../ai-settings/ai-settings.service';
 import { findPendingItemForAgentAction } from '../ai-inbox/ai-inbox.service';
 
 jest.mock('openai');
 jest.mock('../agent-planner/planner.service');
 jest.mock('../agent/agent.service');
 jest.mock('../ai-settings/ai-settings.service');
+const mockedPlannerEnabled = getAgentPlannerEnabled as jest.MockedFunction<
+  typeof getAgentPlannerEnabled
+>;
+beforeEach(() => {
+  mockedPlannerEnabled.mockResolvedValue(true);
+});
 jest.mock('../ai-inbox/ai-inbox.service');
 jest.mock('../../shared/utils/redis', () => ({
   redis: {
@@ -149,7 +155,9 @@ describe('chat.service.sendChatMessage (agent conversation)', () => {
     mockedFindPendingItem.mockResolvedValue({ id: 'inbox-item-1' } as any);
     openAiCreateMock
       .mockResolvedValueOnce(
-        assistantToolCallResponse('scraper__run', { configId: '11111111-1111-4111-8111-111111111111' }),
+        assistantToolCallResponse('scraper__run', {
+          configId: '11111111-1111-4111-8111-111111111111',
+        }),
       )
       .mockResolvedValueOnce(assistantTextResponse('Approve below to run the scraper.'));
 
@@ -174,7 +182,9 @@ describe('chat.service.sendChatMessage (agent conversation)', () => {
     mockedFindPendingItem.mockResolvedValue(null);
     openAiCreateMock
       .mockResolvedValueOnce(
-        assistantToolCallResponse('scraper__run', { configId: '11111111-1111-4111-8111-111111111111' }),
+        assistantToolCallResponse('scraper__run', {
+          configId: '11111111-1111-4111-8111-111111111111',
+        }),
       )
       .mockResolvedValueOnce(assistantTextResponse('Approve below to run the scraper.'));
 
@@ -204,10 +214,24 @@ describe('chat.service.sendChatMessage (agent conversation)', () => {
     expect(result.action?.name).toBe('plan.create');
   });
 
+  it('blocks new plans when the admin disables the planner', async () => {
+    mockedPlannerEnabled.mockResolvedValueOnce(false);
+    openAiCreateMock.mockResolvedValueOnce(
+      assistantToolCallResponse('plan__create', { goal: 'pause all cold leads' }),
+    );
+    const result = await sendChatMessage({ ...baseInput, message: 'pause all my cold leads' });
+    expect(result.reply).toContain('An admin can enable it in Settings');
+    expect(mockedCreatePlanFromGoal).not.toHaveBeenCalled();
+  });
+
   it('falls back to the planner when OpenAI fails', async () => {
     openAiCreateMock.mockRejectedValue(new Error('openai down'));
     mockedCreatePlanFromGoal.mockResolvedValue({
-      plan: { id: '22222222-2222-4222-8222-222222222222', status: 'proposed', goal: 'find leads' } as any,
+      plan: {
+        id: '22222222-2222-4222-8222-222222222222',
+        status: 'proposed',
+        goal: 'find leads',
+      } as any,
       steps: [{ step_index: 0, action_name: 'lead.update', risk_tier: 'low_risk_write' } as any],
     });
 
@@ -220,9 +244,8 @@ describe('chat.service.sendChatMessage (agent conversation)', () => {
   });
 
   it('surfaces the planner reason when a goal is unsupported', async () => {
-    const { PlannerError } = jest.requireActual<
-      typeof import('../agent-planner/errors')
-    >('../agent-planner/errors');
+    const { PlannerError } =
+      jest.requireActual<typeof import('../agent-planner/errors')>('../agent-planner/errors');
     openAiCreateMock.mockResolvedValueOnce(
       assistantToolCallResponse('plan__create', { goal: 'create a campaign' }),
     );
@@ -288,7 +311,9 @@ describe('chat.service.sendChatMessage (agent conversation)', () => {
     } as any);
     openAiCreateMock
       .mockResolvedValueOnce(
-        assistantToolCallResponse('campaign__launch', { id: '11111111-1111-4111-8111-111111111111' }),
+        assistantToolCallResponse('campaign__launch', {
+          id: '11111111-1111-4111-8111-111111111111',
+        }),
       )
       .mockResolvedValueOnce(
         assistantTextResponse('You are not allowed to launch campaigns with your role.'),

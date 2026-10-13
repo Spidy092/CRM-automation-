@@ -1,3 +1,5 @@
+import { fireEvent, screen } from '@testing-library/react';
+import { useUpdateAiSettings } from '@/api/aiSettings';
 import { describe, it, expect, vi } from 'vitest';
 import { renderWithProviders } from '@/lib/test-utils';
 import AISettingsPage from '../AISettingsPage';
@@ -6,6 +8,7 @@ vi.mock('@/api/aiSettings', () => ({
   useAiSettings: vi.fn().mockReturnValue({
     data: {
       enabled: false,
+      planner_enabled: false,
       base_url: null,
       has_api_key: false,
       model: 'gpt-4o',
@@ -65,4 +68,15 @@ describe('AISettingsPage', () => {
     expect(baseUrl?.value).toBe('https://api.xiaomimimo.com/v1');
     expect(model?.value).toBe('mimo-v2.5-pro');
   });
+});
+
+it('saves the planner preference from its accessible switch', () => {
+  renderWithProviders(<AISettingsPage />);
+  const toggle = screen.getByRole('switch', { name: 'AI Copilot Planner' });
+  expect(toggle).toHaveAttribute('aria-checked', 'false');
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('button', { name: /Save Settings/ }));
+  expect(useUpdateAiSettings().mutate).toHaveBeenCalledWith(
+    expect.objectContaining({ planner_enabled: true }), expect.any(Object),
+  );
 });

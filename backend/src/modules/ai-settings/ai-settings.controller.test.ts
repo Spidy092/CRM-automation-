@@ -26,6 +26,7 @@ function buildNext(): NextFunction {
 const publicSettings = {
   id: 's-1',
   enabled: true,
+  planner_enabled: false,
   base_url: 'https://api.openai.com',
   has_api_key: true,
   model: 'gpt-4o',

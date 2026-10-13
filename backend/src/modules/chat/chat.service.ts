@@ -7,7 +7,7 @@ import type { AgentActionName, AgentActor } from '../agent/agent.types';
 import type { AuthenticatedUser } from '../../shared/types';
 import { createPlanFromGoal, getPlanForPreview } from '../agent-planner/planner.service';
 import { PlannerError } from '../agent-planner/errors';
-import { isAgentPlannerEnabled } from './featureFlag';
+import { getAgentPlannerEnabled } from '../ai-settings/ai-settings.service';
 import { summarizeReadResult } from './chat.summarize';
 import { buildChatSystemPrompt } from './chat.prompt';
 import { buildChatTools, toolNameToActionName } from './chat.actions';
@@ -316,8 +316,9 @@ async function delegateToPlanner(
   history: ChatTurn[],
   goal: string,
 ): Promise<ChatResponse> {
-  if (!isAgentPlannerEnabled()) {
-    const reply = 'AI Copilot planner is currently disabled. Try a single-action request.';
+  if (!(await getAgentPlannerEnabled())) {
+    const reply =
+      'AI Copilot planner is currently disabled. An admin can enable it in Settings → AI. Try a single-action request.';
     await persistTurn(input.conversationId, history, input.message, reply);
     return { conversationId: input.conversationId, reply };
   }

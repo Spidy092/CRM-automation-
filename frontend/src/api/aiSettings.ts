@@ -4,6 +4,7 @@ import { apiClient as api } from './client';
 export interface AiSettings {
   id: string;
   enabled: boolean;
+  planner_enabled: boolean;
   base_url: string | null;
   has_api_key: boolean;
   model: string;
@@ -17,6 +18,7 @@ export interface AiSettings {
 
 export interface UpdateAiSettingsInput {
   enabled?: boolean;
+  planner_enabled?: boolean;
   base_url?: string | null;
   api_key?: string | null;
   model?: string;
