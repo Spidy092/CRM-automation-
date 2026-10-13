@@ -6,6 +6,7 @@ import {
   updateFormById,
   deleteFormById,
   submitForm,
+  retrySubmissionLead,
   getFormAnalyticsById,
   generateEmbedSnippet,
 } from './forms.service';
@@ -19,16 +20,27 @@ import {
   deleteForm,
   insertSubmission,
   getFormAnalytics,
+  findSubmissionById,
+  linkSubmissionLead,
 } from './forms.repository';
-import { insertLead } from '../leads/leads.repository';
+import { captureWebsiteLead } from '../leads/websiteCapture.service';
+import { appendDomainEvent, enqueueOutboxDelivery } from '../../shared/events/outbox.service';
 import { writeAuditLog } from '../../shared/utils/audit';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
 import type { FormRow } from './forms.types';
-import { enqueueLeadEvent } from '../../workers/queue';
+import { withAdvisoryLocks, withTransaction } from '../../shared/utils/db';
 
 jest.mock('./forms.repository');
-jest.mock('../leads/leads.repository', () => ({ insertLead: jest.fn() }));
+jest.mock('../leads/websiteCapture.service', () => ({ captureWebsiteLead: jest.fn() }));
+jest.mock('../../shared/utils/db', () => ({
+  withTransaction: jest.fn(),
+  withAdvisoryLocks: jest.fn(),
+}));
+jest.mock('../../shared/events/outbox.service', () => ({
+  appendDomainEvent: jest.fn(),
+  enqueueOutboxDelivery: jest.fn(),
+}));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('../../shared/utils/logger', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
@@ -46,11 +58,14 @@ const mockUpdateForm = updateForm as jest.Mock;
 const mockDeleteForm = deleteForm as jest.Mock;
 const mockInsertSubmission = insertSubmission as jest.Mock;
 const mockGetFormAnalytics = getFormAnalytics as jest.Mock;
-const mockInsertLead = insertLead as jest.Mock;
+const mockFindSubmissionById = findSubmissionById as jest.Mock;
+const mockLinkSubmissionLead = linkSubmissionLead as jest.Mock;
+const mockInsertLead = captureWebsiteLead as jest.Mock;
 const mockWriteAuditLog = writeAuditLog as jest.Mock;
 const mockSgSend = sendgrid.sendEmail as jest.Mock;
 const mockSmtpSend = smtp.sendEmail as jest.Mock;
-const mockEnqueueLeadEvent = enqueueLeadEvent as jest.Mock;
+const mockAppendDomainEvent = appendDomainEvent as jest.Mock;
+const mockEnqueueOutboxDelivery = enqueueOutboxDelivery as jest.Mock;
 
 const ACTOR = { id: 'u1', role: 'admin', ipAddress: '1.2.3.4' };
 
@@ -75,7 +90,14 @@ const FORM: FormRow = {
 };
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.resetAllMocks();
+  (withTransaction as jest.Mock).mockImplementation(async (fn) => fn({ transaction: true }));
+  (withAdvisoryLocks as jest.Mock).mockImplementation(async (_keys, fn) =>
+    fn({ transaction: true }),
+  );
+  mockInsertLead.mockResolvedValue({ ok: true, value: { id: 'lead-1' } });
+  mockAppendDomainEvent.mockResolvedValue({ ok: true, value: { event: { id: 'outbox-1' } } });
+  mockEnqueueOutboxDelivery.mockResolvedValue({ ok: true });
 });
 
 describe('listForms', () => {
@@ -223,7 +245,7 @@ describe('submitForm', () => {
 
   it('creates a lead using leadField mappings when submit_action is create_lead', async () => {
     mockFindFormById.mockResolvedValue(FORM);
-    mockInsertLead.mockResolvedValue({ id: 'lead-1' });
+    mockInsertLead.mockResolvedValue({ ok: true, value: { id: 'lead-1' } });
     mockInsertSubmission.mockResolvedValue({ id: 's1', form_id: 'f1', lead_id: 'lead-1' });
 
     const result = await submitForm('f1', { email: 'jane@example.com', name: 'Jane Doe' }, meta);
@@ -233,12 +255,17 @@ describe('submitForm', () => {
     );
     expect(result.leadId).toBe('lead-1');
     expect(result.message).toBe('Thanks!');
-    expect(mockEnqueueLeadEvent).toHaveBeenCalledWith({
-      event: 'form.submitted',
-      eventId: 'form-submission:s1',
-      leadId: 'lead-1',
-      payload: { formId: 'f1', submissionId: 's1' },
-    });
+    expect(mockAppendDomainEvent).toHaveBeenCalledWith(
+      {
+        eventType: 'form.submitted',
+        aggregateType: 'lead',
+        aggregateId: 'lead-1',
+        idempotencyKey: 'form-submission:s1',
+        payload: { formId: 'f1', submissionId: 's1' },
+      },
+      { transaction: true },
+    );
+    expect(mockEnqueueOutboxDelivery).toHaveBeenCalledWith('outbox-1');
   });
 
   it('continues without a leadId when lead creation fails', async () => {
@@ -248,7 +275,64 @@ describe('submitForm', () => {
 
     const result = await submitForm('f1', { email: 'jane@example.com' }, meta);
     expect(result.leadId).toBeUndefined();
-    expect(mockInsertSubmission).toHaveBeenCalledWith(expect.objectContaining({ lead_id: null }));
+    expect(mockInsertSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ lead_id: null, status: 'lead_failed' }),
+      { transaction: true },
+    );
+  });
+
+  it('rejects unchecked required consent before writing anything', async () => {
+    mockFindFormById.mockResolvedValue({
+      ...FORM,
+      fields: [{ name: 'consent', label: 'Consent', type: 'checkbox', required: true }],
+    });
+    await expect(submitForm('f1', { consent: false }, meta)).rejects.toMatchObject({
+      statusCode: 422,
+    });
+    expect(mockInsertLead).not.toHaveBeenCalled();
+    expect(mockInsertSubmission).not.toHaveBeenCalled();
+  });
+
+  it.each([{ email: 42 }, { email: 'valid@example.com', unexpected: 'data' }, { email: '  ' }])(
+    'rejects invalid types and undeclared fields: %j',
+    async (data) => {
+      mockFindFormById.mockResolvedValue(FORM);
+      await expect(submitForm('f1', data, meta)).rejects.toMatchObject({ statusCode: 422 });
+      expect(mockInsertLead).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a nonnumeric number field', async () => {
+    mockFindFormById.mockResolvedValue({
+      ...FORM,
+      fields: [{ name: 'count', label: 'Count', type: 'number', required: true }],
+    });
+    await expect(submitForm('f1', { count: 'not a number' }, meta)).rejects.toMatchObject({
+      statusCode: 422,
+    });
+  });
+
+  it('does not return success when outbox persistence fails', async () => {
+    mockFindFormById.mockResolvedValue(FORM);
+    mockInsertSubmission.mockResolvedValue({ id: 's1' });
+    mockAppendDomainEvent.mockResolvedValue({ ok: false, error: new Error('outbox unavailable') });
+    await expect(submitForm('f1', { email: 'a@b.com' }, meta)).rejects.toThrow(
+      'outbox unavailable',
+    );
+    expect(mockEnqueueOutboxDelivery).not.toHaveBeenCalled();
+  });
+
+  it('accepts a committed submission when delivery is pending during a Redis outage', async () => {
+    mockFindFormById.mockResolvedValue(FORM);
+    mockInsertSubmission.mockResolvedValue({ id: 's1' });
+    mockEnqueueOutboxDelivery.mockResolvedValue({
+      ok: false,
+      error: new Error('Redis unavailable'),
+    });
+    await expect(submitForm('f1', { email: 'a@b.com' }, meta)).resolves.toMatchObject({
+      leadId: 'lead-1',
+    });
+    expect(mockAppendDomainEvent).toHaveBeenCalled();
   });
 
   it('skips lead creation when submit_action is not create_lead', async () => {
@@ -317,6 +401,34 @@ describe('submitForm', () => {
     await expect(submitForm('f1', { email: 'not-an-email' }, meta)).rejects.toMatchObject({
       statusCode: 422,
     });
+  });
+});
+
+describe('retrySubmissionLead', () => {
+  it('reuses the recovery transaction client for lead creation and outbox persistence', async () => {
+    const client = { transaction: true };
+    (withAdvisoryLocks as jest.Mock).mockImplementation(async (_keys, fn) => fn(client));
+    mockFindSubmissionById.mockResolvedValue({
+      id: 'submission-1',
+      form_id: 'f1',
+      data: { email: 'jane@example.com', name: 'Jane' },
+      status: 'lead_failed',
+    });
+    mockFindFormById.mockResolvedValue(FORM);
+    mockInsertLead.mockResolvedValue({ ok: true, value: { id: 'lead-1' } });
+    mockLinkSubmissionLead.mockResolvedValue(undefined);
+
+    await expect(retrySubmissionLead('f1', 'submission-1', ACTOR)).resolves.toEqual({
+      ok: true,
+      value: { leadId: 'lead-1' },
+    });
+
+    expect(mockInsertLead).toHaveBeenCalledWith(expect.any(Object), client);
+    expect(mockLinkSubmissionLead).toHaveBeenCalledWith('f1', 'submission-1', 'lead-1', client);
+    expect(mockAppendDomainEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'form-submission:submission-1' }),
+      client,
+    );
   });
 });
 

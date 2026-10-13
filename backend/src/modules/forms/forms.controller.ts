@@ -7,6 +7,7 @@ import {
   createFormSchema,
   updateFormSchema,
   formIdParamSchema,
+  formSubmissionParamSchema,
   submitFormBodySchema,
   listFormsQuerySchema,
 } from './forms.schema';
@@ -169,11 +170,49 @@ export async function submitFormHandler(
         message: result.message,
         leadId: result.leadId,
         redirectUrl: result.redirectUrl,
-        emailStatus: result.emailStatus,
+        emailStatus: result.emailStatus
+          ? {
+              success: result.emailStatus.success,
+              sentCount: result.emailStatus.sentCount,
+              failedCount: result.emailStatus.failedCount,
+            }
+          : undefined,
       },
       201,
     );
   } catch (err) {
     next(err);
+  }
+}
+
+export async function listFailedSubmissionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { formId } = formIdParamSchema.parse(req.params);
+    const { limit, offset } = listFormsQuerySchema.parse(req.query);
+    sendSuccess(res, await formsService.listFailedSubmissions(formId, limit, offset));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function retrySubmissionLeadHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { formId, submissionId } = formSubmissionParamSchema.parse(req.params);
+    const result = await formsService.retrySubmissionLead(formId, submissionId, actorFromReq(req));
+    if (!result.ok) {
+      next(result.error);
+      return;
+    }
+    sendSuccess(res, result.value);
+  } catch (error) {
+    next(error);
   }
 }

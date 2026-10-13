@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { query, queryOne } from '../../shared/utils/db';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { FormRow, FormSubmissionRow, FormFieldDef } from './forms.types';
@@ -47,11 +48,11 @@ export async function countForms(): Promise<number> {
   return parseInt(row?.total ?? '0', 10);
 }
 
-export async function findFormById(id: string): Promise<FormRow | null> {
-  const row = await queryOne<FormRow & { fields: unknown }>(
-    `SELECT ${FORM_COLS} FROM forms WHERE id = $1 AND deleted_at IS NULL`,
-    [id],
-  );
+export async function findFormById(id: string, client?: PoolClient): Promise<FormRow | null> {
+  const sql = `SELECT ${FORM_COLS} FROM forms WHERE id = $1 AND deleted_at IS NULL`;
+  const row = client
+    ? ((await client.query<FormRow & { fields: unknown }>(sql, [id])).rows[0] ?? null)
+    : await queryOne<FormRow & { fields: unknown }>(sql, [id]);
   return row ? mapFormRow(row) : null;
 }
 
@@ -182,17 +183,25 @@ export async function deleteForm(id: string): Promise<void> {
 
 // ── Submissions ───────────────────────────────────────────────────────────
 
-export async function insertSubmission(data: {
-  form_id: string;
-  lead_id: string | null;
-  data: Record<string, unknown>;
-  ip_address: string | null;
-  user_agent: string | null;
-  referrer: string | null;
-}): Promise<FormSubmissionRow> {
-  const row = await queryOne<FormSubmissionRow>(
-    `INSERT INTO form_submissions (form_id, lead_id, data, ip_address, user_agent, referrer)
-     VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+export async function insertSubmission(
+  data: {
+    form_id: string;
+    lead_id: string | null;
+    data: Record<string, unknown>;
+    ip_address: string | null;
+    user_agent: string | null;
+    referrer: string | null;
+    status?: string;
+  },
+  client?: PoolClient,
+): Promise<FormSubmissionRow> {
+  const execute = client
+    ? async (sql: string, values: unknown[]): Promise<FormSubmissionRow | null> =>
+        (await client.query<FormSubmissionRow>(sql, values)).rows[0] ?? null
+    : queryOne<FormSubmissionRow>;
+  const row = await execute(
+    `INSERT INTO form_submissions (form_id, lead_id, data, ip_address, user_agent, referrer, status)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)
      RETURNING id, form_id, lead_id, data, ip_address, user_agent, referrer, status, created_at`,
     [
       data.form_id,
@@ -201,6 +210,7 @@ export async function insertSubmission(data: {
       data.ip_address,
       data.user_agent,
       data.referrer,
+      data.status ?? 'submitted',
     ],
   );
   if (!row) throw new AppError('Failed to record submission', 500);
@@ -208,13 +218,14 @@ export async function insertSubmission(data: {
 }
 
 export async function getFormAnalytics(formId: string): Promise<{
+  failedLeadSubmissions: number;
   totalSubmissions: number;
   uniqueLeads: number;
   submissionsByDay: { date: string; count: number }[];
   topReferrers: { referrer: string; count: number }[];
 }> {
-  const totals = await queryOne<{ total: string; unique_leads: string }>(
-    `SELECT COUNT(*) as total, COUNT(DISTINCT lead_id) FILTER (WHERE lead_id IS NOT NULL) as unique_leads
+  const totals = await queryOne<{ total: string; unique_leads: string; failed_leads: string }>(
+    `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'lead_failed') as failed_leads, COUNT(DISTINCT lead_id) FILTER (WHERE lead_id IS NOT NULL) as unique_leads
      FROM form_submissions WHERE form_id = $1`,
     [formId],
   );
@@ -234,9 +245,46 @@ export async function getFormAnalytics(formId: string): Promise<{
   );
 
   return {
+    failedLeadSubmissions: parseInt(totals?.failed_leads ?? '0', 10),
     totalSubmissions: parseInt(totals?.total ?? '0', 10),
     uniqueLeads: parseInt(totals?.unique_leads ?? '0', 10),
     submissionsByDay: byDay.map((r) => ({ date: r.date, count: parseInt(r.count, 10) })),
     topReferrers: referrers.map((r) => ({ referrer: r.referrer, count: parseInt(r.count, 10) })),
   };
+}
+
+export async function findFailedSubmissions(
+  formId: string,
+  limit: number,
+  offset: number,
+): Promise<FormSubmissionRow[]> {
+  return query<FormSubmissionRow>(
+    `SELECT id, form_id, lead_id, data, status, created_at FROM form_submissions WHERE form_id = $1 AND status = 'lead_failed' ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
+    [formId, limit, offset],
+  );
+}
+
+export async function findSubmissionById(
+  formId: string,
+  submissionId: string,
+  client?: PoolClient,
+): Promise<FormSubmissionRow | null> {
+  const sql =
+    'SELECT id, form_id, lead_id, data, status, created_at FROM form_submissions WHERE form_id = $1 AND id = $2';
+  return client
+    ? ((await client.query<FormSubmissionRow>(sql, [formId, submissionId])).rows[0] ?? null)
+    : queryOne<FormSubmissionRow>(sql, [formId, submissionId]);
+}
+
+export async function linkSubmissionLead(
+  formId: string,
+  submissionId: string,
+  leadId: string,
+  client: PoolClient,
+): Promise<void> {
+  const result = await client.query(
+    "UPDATE form_submissions SET lead_id = $3, status = 'submitted' WHERE form_id = $1 AND id = $2 AND status = 'lead_failed' RETURNING id",
+    [formId, submissionId, leadId],
+  );
+  if (!result.rows[0]) throw new AppError('This submission has already been processed', 409);
 }

@@ -1,12 +1,20 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient, type ApiResponse } from './client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient, type ApiResponse } from "./client";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export interface FormField {
   name: string;
   label: string;
-  type: 'text' | 'email' | 'phone' | 'number' | 'textarea' | 'select' | 'checkbox' | 'hidden';
+  type:
+    | "text"
+    | "email"
+    | "phone"
+    | "number"
+    | "textarea"
+    | "select"
+    | "checkbox"
+    | "hidden";
   required: boolean;
   placeholder?: string;
   options?: string[];
@@ -23,27 +31,9 @@ export interface PublicForm {
   theme: Record<string, unknown>;
 }
 
-export interface EmailSettings {
-  autoReply?: {
-    enabled: boolean;
-    fromName: string;
-    fromEmail: string;
-    subject: string;
-    body: string;
-  };
-  teamNotification?: {
-    enabled: boolean;
-    emails: string;
-    subject: string;
-    body: string;
-  };
-  partnerNotification?: {
-    enabled: boolean;
-    emails: string;
-    subject: string;
-    body: string;
-  };
-}
+export type EmailSettings = import("zod/v4").infer<
+  typeof import("@/lib/formValidation").emailSettingsSchema
+>;
 
 export interface Form {
   id: string;
@@ -75,6 +65,7 @@ export interface FormSubmission {
 }
 
 export interface FormAnalytics {
+  failedLeadSubmissions?: number;
   formId: string;
   formName: string;
   totalSubmissions: number;
@@ -101,43 +92,60 @@ export type UpdateFormInput = Partial<CreateFormInput>;
 
 // ── Hooks ─────────────────────────────────────────────────────────────────
 
-const FORMS_KEY = ['forms'];
+const FORMS_KEY = ["forms"];
 
 export function useListForms(limit = 20, offset = 0) {
   return useQuery({
     queryKey: [...FORMS_KEY, { limit, offset }],
-    queryFn: () => apiClient.get<ApiResponse<Form[]>>('/forms/admin', { params: { limit, offset } }).then((r) => r.data),
+    queryFn: () =>
+      apiClient
+        .get<ApiResponse<Form[]>>("/forms/admin", { params: { limit, offset } })
+        .then((r) => r.data),
   });
 }
 
 export function useForm(id: string) {
   return useQuery({
     queryKey: [...FORMS_KEY, id],
-    queryFn: () => apiClient.get<ApiResponse<Form>>(`/forms/admin/${id}`).then((r) => r.data),
+    queryFn: () =>
+      apiClient
+        .get<ApiResponse<Form>>(`/forms/admin/${id}`)
+        .then((r) => r.data),
     enabled: !!id,
   });
 }
 
 export function useFormBySlug(slug: string) {
   return useQuery({
-    queryKey: [...FORMS_KEY, 'slug', slug],
-    queryFn: () => apiClient.get<ApiResponse<PublicForm>>(`/forms/${slug}`).then((r) => r.data),
+    queryKey: [...FORMS_KEY, "slug", slug],
+    queryFn: () =>
+      apiClient
+        .get<ApiResponse<PublicForm>>(`/forms/${slug}`)
+        .then((r) => r.data),
     enabled: !!slug,
   });
 }
 
 export function useFormAnalytics(formId: string) {
   return useQuery({
-    queryKey: [...FORMS_KEY, formId, 'analytics'],
-    queryFn: () => apiClient.get<ApiResponse<FormAnalytics>>(`/forms/admin/${formId}/analytics`).then((r) => r.data),
+    queryKey: [...FORMS_KEY, formId, "analytics"],
+    queryFn: () =>
+      apiClient
+        .get<ApiResponse<FormAnalytics>>(`/forms/admin/${formId}/analytics`)
+        .then((r) => r.data),
     enabled: !!formId,
   });
 }
 
 export function useFormEmbed(formId: string) {
   return useQuery({
-    queryKey: [...FORMS_KEY, formId, 'embed'],
-    queryFn: () => apiClient.get<ApiResponse<{ snippet: string; formId: string; slug: string }>>(`/forms/admin/${formId}/embed`).then((r) => r.data),
+    queryKey: [...FORMS_KEY, formId, "embed"],
+    queryFn: () =>
+      apiClient
+        .get<
+          ApiResponse<{ snippet: string; formId: string; slug: string }>
+        >(`/forms/admin/${formId}/embed`)
+        .then((r) => r.data),
     enabled: !!formId,
   });
 }
@@ -145,8 +153,13 @@ export function useFormEmbed(formId: string) {
 export function useCreateForm() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: CreateFormInput) => apiClient.post<ApiResponse<Form>>('/forms/admin', data).then((r) => r.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: FORMS_KEY }); },
+    mutationFn: (data: CreateFormInput) =>
+      apiClient
+        .post<ApiResponse<Form>>("/forms/admin", data)
+        .then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: FORMS_KEY });
+    },
   });
 }
 
@@ -154,7 +167,9 @@ export function useUpdateForm() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdateFormInput }) =>
-      apiClient.put<ApiResponse<Form>>(`/forms/admin/${id}`, data).then((r) => r.data),
+      apiClient
+        .put<ApiResponse<Form>>(`/forms/admin/${id}`, data)
+        .then((r) => r.data),
     onSuccess: (_result, variables) => {
       qc.invalidateQueries({ queryKey: FORMS_KEY });
       qc.invalidateQueries({ queryKey: [...FORMS_KEY, variables.id] });
@@ -165,17 +180,61 @@ export function useUpdateForm() {
 export function useDeleteForm() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/forms/admin/${id}`).then((r) => r.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: FORMS_KEY }); },
+    mutationFn: (id: string) =>
+      apiClient.delete(`/forms/admin/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: FORMS_KEY });
+    },
   });
 }
 
 export function useSubmitForm() {
   return useMutation({
-    mutationFn: ({ formId, data }: { formId: string; data: Record<string, unknown> }) =>
-      apiClient.post<ApiResponse<{ message: string; leadId?: string; redirectUrl?: string }>>(
-        `/forms/${formId}/submit`,
-        data,
-      ).then((r) => r.data),
+    mutationFn: ({
+      formId,
+      data,
+    }: {
+      formId: string;
+      data: Record<string, unknown>;
+    }) =>
+      apiClient
+        .post<
+          ApiResponse<{
+            message: string;
+            leadId?: string;
+            redirectUrl?: string;
+          }>
+        >(`/forms/${formId}/submit`, data)
+        .then((r) => r.data),
+  });
+}
+
+export function useFailedFormSubmissions(
+  formId: string,
+  offset = 0,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: [...FORMS_KEY, formId, "failed-submissions", offset],
+    queryFn: () =>
+      apiClient
+        .get<
+          ApiResponse<FormSubmission[]>
+        >(`/forms/admin/${formId}/failed-submissions`, { params: { limit: 10, offset } })
+        .then((response) => response.data),
+    enabled: !!formId && enabled,
+  });
+}
+
+export function useRetryFormSubmission(formId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (submissionId: string) =>
+      apiClient
+        .post(`/forms/admin/${formId}/submissions/${submissionId}/retry`)
+        .then((response) => response.data),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: [...FORMS_KEY, formId] });
+    },
   });
 }
