@@ -41,9 +41,20 @@ vi.mock('@/api/aiInbox', () => ({
   })),
 }));
 
+vi.mock('@/api/aiDecisions', () => ({
+  useDecisionLog: vi.fn(() => ({
+    data: { items: [], total: 0 },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  })),
+}));
+
 import { useChatHistory, useSendChatMessage } from '@/api/chat';
 import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
 import { useActionInboxItem, useInbox } from '@/api/aiInbox';
+import { useDecisionLog } from '@/api/aiDecisions';
+import { useAuthStore } from '@/store/authStore';
 
 const useChatHistoryMock = useChatHistory as unknown as ReturnType<typeof vi.fn>;
 const useSendChatMessageMock = useSendChatMessage as unknown as ReturnType<typeof vi.fn>;
@@ -52,6 +63,7 @@ const useApprovePlanMock = useApprovePlan as unknown as ReturnType<typeof vi.fn>
 const useCancelPlanMock = useCancelPlan as unknown as ReturnType<typeof vi.fn>;
 const useActionInboxItemMock = useActionInboxItem as unknown as ReturnType<typeof vi.fn>;
 const useInboxMock = useInbox as unknown as ReturnType<typeof vi.fn>;
+const useDecisionLogMock = useDecisionLog as unknown as ReturnType<typeof vi.fn>;
 
 describe('ChatWidget', () => {
   beforeEach(() => {
@@ -83,7 +95,16 @@ describe('ChatWidget', () => {
     useInboxMock.mockReturnValue({
       data: { items: [], total: 0 },
       isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
     });
+    useDecisionLogMock.mockReturnValue({
+      data: { items: [], total: 0 },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false });
   });
 
   it('renders the Open copilot toggle button', () => {
@@ -100,6 +121,99 @@ describe('ChatWidget', () => {
     await user.click(screen.getByRole('button', { name: /open copilot/i }));
 
     expect(screen.getByPlaceholderText(/ask copilot/i)).toBeInTheDocument();
+  });
+
+  it('uses the inbox total for the launcher and opens approvals by default when work is waiting', async () => {
+    const user = userEvent.setup();
+    useInboxMock.mockReturnValue({
+      data: { items: [], total: 12 },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<ChatWidget />);
+    expect(screen.getByText('12')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+    expect(screen.getByRole('tab', { name: /approvals \(12\)/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText(/No approvals waiting for you/i)).toBeInTheDocument();
+  });
+
+  it('shows approval loading, error, and empty states', async () => {
+    const user = userEvent.setup();
+    useInboxMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    const { rerender } = renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+    await user.click(screen.getByRole('tab', { name: /approvals/i }));
+    expect(screen.getByText(/Loading approvals/i)).toBeInTheDocument();
+
+    const retry = vi.fn();
+    useInboxMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch: retry,
+    });
+    rerender(<ChatWidget />);
+    expect(screen.getByText(/Approvals could not be refreshed/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('only shows recent activity to admins', async () => {
+    const user = userEvent.setup();
+    useAuthStore.setState({
+      user: { id: 'admin', name: 'Admin', email: 'admin@example.test', role: 'admin' },
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    useDecisionLogMock.mockReturnValue({
+      data: {
+        items: [{
+          id: 'decision-1',
+          lead_id: null,
+          campaign_id: null,
+          decision_type: 'research',
+          input_context: {},
+          chain_of_thought: 'private',
+          decision: 'failed',
+          confidence: null,
+          tokens_used: 0,
+          latency_ms: 1,
+          model_used: null,
+          autonomy_level: null,
+          human_approval_required: false,
+          human_approved_by: null,
+          human_approved_at: null,
+          created_at: '2026-10-13T00:00:00.000Z',
+        }],
+        total: 1,
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<ChatWidget />);
+    await user.click(screen.getByRole('button', { name: /open copilot/i }));
+    await user.click(screen.getByRole('tab', { name: /activity/i }));
+    expect(screen.getByText(/Recent activity/i)).toBeInTheDocument();
+    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.queryByText('private')).not.toBeInTheDocument();
+  });
+
+  it('opens the approvals tab from the Copilot notification deep link', async () => {
+    renderWithProviders(<ChatWidget />, { initialEntries: ['/?copilot=approvals'] });
+
+    expect(await screen.findByRole('tab', { name: /approvals/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText(/No approvals waiting for you/i)).toBeInTheDocument();
   });
 
   it('sends a message with conversationId, message, and pageContext when submitted', async () => {

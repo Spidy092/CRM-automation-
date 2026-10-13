@@ -19,6 +19,11 @@ jest.mock('../agent-planner/runner.service');
 jest.mock('../agent-planner/plan.repository');
 jest.mock('../../shared/utils/metrics');
 jest.mock('../../shared/utils/logger');
+jest.mock('../notifications/notifications.service', () => ({
+  createNotification: jest.fn(),
+}));
+
+import { createNotification } from '../notifications/notifications.service';
 
 const mockedRepo = repository as jest.Mocked<typeof repository>;
 const mockedExecuteAgentAction = executeAgentAction as jest.MockedFunction<
@@ -27,6 +32,7 @@ const mockedExecuteAgentAction = executeAgentAction as jest.MockedFunction<
 const mockedRejectAgentAction = rejectAgentAction as jest.MockedFunction<typeof rejectAgentAction>;
 const mockedContinuePlan = continuePlanIfReady as jest.MockedFunction<typeof continuePlanIfReady>;
 const mockedPlanRepo = planRepository as jest.Mocked<typeof planRepository>;
+const mockedCreateNotification = createNotification as jest.MockedFunction<typeof createNotification>;
 
 const baseItem: AiInboxItem = {
   id: 'inbox-1',
@@ -54,6 +60,9 @@ const baseItem: AiInboxItem = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedCreateNotification.mockResolvedValue({ ok: true, value: undefined } as unknown as Awaited<
+    ReturnType<typeof createNotification>
+  >);
 });
 
 describe('createItem', () => {
@@ -72,6 +81,12 @@ describe('createItem', () => {
     expect(mockedRepo.createInboxItem).toHaveBeenCalledTimes(1);
     expect(result).toEqual(baseItem);
     expect(incAiInboxItem).toHaveBeenCalledWith('approve_response', 'created');
+    expect(mockedCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'user-1',
+        metadata: expect.objectContaining({ deepLink: '/?copilot=approvals' }),
+      }),
+    );
     expect(logger.info).toHaveBeenCalledWith(
       'ai inbox: item created',
       expect.objectContaining({ id: 'inbox-1' }),

@@ -47,7 +47,6 @@ const PagesLibraryPage = lazy(() => import('@/pages/PagesLibraryPage').then(m =>
 const PageEditorPage = lazy(() => import('@/pages/PageEditorPage').then(m => ({ default: m.PageEditorPage })));
 const PublicLandingPage = lazy(() => import('@/pages/PublicLandingPage').then(m => ({ default: m.PublicLandingPage })));
 const CustomFieldsPage = lazy(() => import('@/pages/CustomFieldsPage').then(m => ({ default: m.CustomFieldsPage })));
-const AIInboxPage = lazy(() => import('@/pages/AIInboxPage').then(m => ({ default: m.AIInboxPage })));
 const LeadAIProfilePage = lazy(() => import('@/pages/LeadAIProfilePage').then(m => ({ default: m.LeadAIProfilePage })));
 const CampaignBriefPage = lazy(() => import('@/pages/CampaignBriefPage').then(m => ({ default: m.CampaignBriefPage })));
 const AIDecisionLogPage = lazy(() => import('@/pages/AIDecisionLogPage').then(m => ({ default: m.AIDecisionLogPage })));
@@ -198,7 +197,7 @@ function App() {
                 }
               >
                 <Route index element={<LazyPage><DashboardPage /></LazyPage>} />
-                <Route path="ai-inbox" element={<LazyPage><AIInboxPage /></LazyPage>} />
+                <Route path="ai-inbox" element={<Navigate to="/?copilot=approvals" replace />} />
                 <Route path="leads" element={<LazyPage><LeadsPage /></LazyPage>} />
                 <Route path="leads/new" element={<LazyPage><LeadFormPage /></LazyPage>} />
                 <Route path="leads/import" element={<LazyPage><ImportLeadsPage /></LazyPage>} />

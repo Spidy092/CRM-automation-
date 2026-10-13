@@ -47,7 +47,13 @@ export interface InboxResponse {
   total: number;
 }
 
-export const useInbox = (filters: InboxFilters = {}) => {
+export interface InboxQueryOptions {
+  enabled?: boolean;
+  refetchInterval?: number;
+  refetchOnWindowFocus?: boolean;
+}
+
+export const useInbox = (filters: InboxFilters = {}, options: InboxQueryOptions = {}) => {
   return useQuery({
     queryKey: ['ai-inbox', filters],
     queryFn: async (): Promise<InboxResponse> => {
@@ -56,6 +62,9 @@ export const useInbox = (filters: InboxFilters = {}) => {
       });
       return { items: data.data, total: data.meta?.total ?? data.data.length };
     },
+    enabled: options.enabled ?? true,
+    refetchInterval: options.refetchInterval,
+    refetchOnWindowFocus: options.refetchOnWindowFocus,
   });
 };
 
