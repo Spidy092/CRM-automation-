@@ -215,9 +215,10 @@ function addAssignmentUser(records: ChatVisibleRecord[], user: EligibleUser): vo
   addVisibleRecord(records, {
     type: 'assignment_user',
     id: user.id,
-    name: `${user.first_name} ${user.last_name}`.trim() || user.email,
-    status: user.role,
+    name: user.name?.trim() ? user.name : user.email,
+    status: user.is_available ? 'available' : 'unavailable',
     subtitle: user.email,
+    meta: { role: user.role },
   });
 }
 

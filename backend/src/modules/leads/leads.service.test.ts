@@ -3,17 +3,22 @@ import { LeadRow } from './leads.types';
 import { bulkUpdateSchema } from './leads.schema';
 
 jest.mock('../../workers/queue');
+jest.mock('../../shared/utils/db', () => ({
+  withTransaction: jest.fn(async (cb: (client: unknown) => Promise<unknown>) => cb({})),
+}));
 jest.mock('./leads.repository', () => ({
   optOutLeadByEmail: jest.fn(),
   findLeads: jest.fn(),
   countLeads: jest.fn(),
   findLeadById: jest.fn(),
+  findLeadByIdForUpdate: jest.fn(),
   findDueFollowUpLeads: jest.fn(),
   findExistingForDedup: jest.fn(),
   findLeadsByScraperLogId: jest.fn(),
   findLeadsByIds: jest.fn(),
   insertLead: jest.fn(),
   updateLead: jest.fn(),
+  updateLeadAssignment: jest.fn(),
   updateLeadOutcome: jest.fn(),
   softDeleteLead: jest.fn(),
   updateLeadStatus: jest.fn(),
@@ -60,6 +65,7 @@ import {
   softDeleteLeadById,
   updateLeadFields,
   optOutLeadByEmail,
+  registerOwnershipApplier,
   notifyDueFollowUps,
 } from './leads.service';
 import {
@@ -69,9 +75,10 @@ import {
 import {
   optOutLeadByEmail as optOutRepo,
   countLeads,
-  findDueFollowUpLeads,
   findExistingForDedup,
   findLeadById,
+  findLeadByIdForUpdate,
+  findDueFollowUpLeads,
   findLeads,
   findLeadsByScraperLogId,
   findLeadsByIds,
@@ -84,10 +91,11 @@ import {
   bulkUpdateLeads as repoBulkUpdate,
   bulkPauseLeads as repoBulkPause,
 } from './leads.repository';
-import { createNotification } from '../notifications/notifications.service';
 import { findStageById } from '../pipeline/pipeline.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { createNotification } from '../notifications/notifications.service';
+import type { OwnershipChangeInput } from './leads.service';
 
 const baseRow: LeadRow = {
   id: 'lead-1',
@@ -140,8 +148,23 @@ const mockActivity = {
   created_at: '2026-06-19T00:00:00.000Z',
 };
 
+const mockOwnershipApplier = jest.fn(async (input: OwnershipChangeInput) => {
+  const lastUpdate = (updateLead as jest.Mock).mock.results.at(-1)?.value;
+  const fieldUpdated = lastUpdate ? await Promise.resolve(lastUpdate) : baseRow;
+  return {
+    assignmentId: 'assignment-1',
+    previousOwnerId: baseRow.assigned_to,
+    lead: { ...fieldUpdated, assigned_to: input.newOwnerId },
+    postCommit: [],
+  };
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
+  (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+  (findLeadByIdForUpdate as jest.Mock).mockImplementation((id: string) => findLeadById(id));
+  mockOwnershipApplier.mockClear();
+  registerOwnershipApplier(mockOwnershipApplier);
   (validateCustomFieldValues as jest.Mock).mockReturnValue({
     valid: true,
     sanitized: {},
@@ -375,6 +398,7 @@ describe('updateLeadFields', () => {
     expect(updateLead).not.toHaveBeenCalled();
   });
 
+
   it('throws 404 when not found', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(null);
     await expect(
@@ -416,23 +440,54 @@ describe('updateLeadFields', () => {
           to: 'stage-2',
         }),
       }),
+      expect.anything(),
     );
   });
 
-  it('logs assignment_change activity when assigned_to changes', async () => {
+  it('allows sales to resend the current owner while updating other fields', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (findLeadByIdForUpdate as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, notes: 'updated' });
+
+    const result = await updateLeadFields(
+      'lead-1',
+      { assigned_to: 'rep-1', notes: 'updated' },
+      { id: 'rep-1', role: 'sales' },
+    );
+
+    expect(result.notes).toBe('updated');
+    expect(mockOwnershipApplier).not.toHaveBeenCalled();
+    expect(updateLead).toHaveBeenCalledWith(
+      'lead-1',
+      expect.not.objectContaining({ assigned_to: 'rep-1' }),
+      expect.anything(),
+    );
+  });
+
+  it('still forbids sales from changing lead ownership', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (findLeadByIdForUpdate as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+
+    await expect(
+      updateLeadFields(
+        'lead-1',
+        { assigned_to: 'rep-2' },
+        { id: 'rep-1', role: 'sales' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+
+    expect(updateLead).not.toHaveBeenCalled();
+    expect(mockOwnershipApplier).not.toHaveBeenCalled();
+  });
+
+  it('routes assigned_to changes through the ownership applier', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-2' });
     await updateLeadFields('lead-1', { assigned_to: 'rep-2' }, { id: 'admin-1', role: 'admin' });
-    expect(insertActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lead_id: 'lead-1',
-        user_id: 'admin-1',
-        type: 'assignment_change',
-        metadata: expect.objectContaining({
-          from: 'rep-1',
-          to: 'rep-2',
-        }),
-      }),
+    expect(mockOwnershipApplier).toHaveBeenCalledWith(
+      expect.objectContaining({ leadId: 'lead-1', newOwnerId: 'rep-2', type: 'override' }),
+      expect.objectContaining({ id: 'admin-1' }),
+      expect.anything(),
     );
   });
 
@@ -444,6 +499,7 @@ describe('updateLeadFields', () => {
       { pipeline_stage_id: 'stage-1' },
       { id: 'admin-1', role: 'admin' },
     );
+
     expect(insertActivity).not.toHaveBeenCalled();
   });
 
@@ -461,6 +517,7 @@ describe('updateLeadFields', () => {
       { notes: 'hi', assigned_to: 'rep-2', tags: ['priority'] },
       { id: 'admin-1', role: 'admin' },
     );
+    expect(mockOwnershipApplier).toHaveBeenCalled();
 
     expect(enqueueLeadEvent).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'lead.updated', leadId: 'lead-1' }),
@@ -505,7 +562,7 @@ describe('updateLeadFields', () => {
       { id: 'admin-1', role: 'admin' },
     );
 
-    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'won');
+    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'won', expect.anything());
     expect(res.status).toBe('won');
     expect(res.won_at).toBe('2026-07-20T00:00:00.000Z');
     expect(insertActivity).toHaveBeenCalledWith(
@@ -513,6 +570,7 @@ describe('updateLeadFields', () => {
         type: 'status_change',
         metadata: expect.objectContaining({ field: 'status', from: 'active', to: 'won' }),
       }),
+      expect.anything(),
     );
   });
 
@@ -539,7 +597,7 @@ describe('updateLeadFields', () => {
       { id: 'admin-1', role: 'admin' },
     );
 
-    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'active');
+    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'active', expect.anything());
     expect(res.status).toBe('active');
   });
 
@@ -653,6 +711,7 @@ describe('bulkUpdateLeads', () => {
     expect(repoBulkUpdate).not.toHaveBeenCalled();
   });
 
+
   it('appends trimmed tags without replacing old tags and emits events only for new tags', async () => {
     (findLeadsByIds as jest.Mock).mockResolvedValue([
       { ...baseRow, id: 'lead-1', tags: ['vip'] },
@@ -724,6 +783,18 @@ describe('bulkUpdateLeads', () => {
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'lead.bulk_updated', entityId: 'bulk' }),
     );
+  });
+
+  it('rejects bulk ownership changes with a machine-readable assignment pointer', async () => {
+    const ids = ['lead-1', 'lead-2'];
+    await expect(
+      bulkUpdateLeads(ids, { assigned_to: 'rep-2' }, { id: 'admin-1', role: 'admin' }),
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'ownership_via_assignment_endpoints',
+      leadIds: ids,
+    });
+    expect(repoBulkUpdate).not.toHaveBeenCalled();
   });
 
   it('resolves stage outcome during bulk pipeline stage update (H2)', async () => {
@@ -840,7 +911,9 @@ describe('notifyDueFollowUps', () => {
         next_follow_up_at: '2026-10-02T09:00:00.000Z',
       },
     ];
-    (findDueFollowUpLeads as jest.Mock).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+    (findDueFollowUpLeads as jest.Mock)
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(secondPage);
 
     const notified = await notifyDueFollowUps(2);
 

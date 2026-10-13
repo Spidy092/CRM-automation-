@@ -243,6 +243,19 @@ export async function bulkUpdateHandler(
         : await leadsService.bulkUpdateLeads(ids, patch, actor);
     sendSuccess(res, { updated });
   } catch (err) {
+    if (
+      err instanceof AppError &&
+      'code' in err &&
+      err.code === 'ownership_via_assignment_endpoints'
+    ) {
+      const ownershipError = err as AppError & { code: string; leadIds: string[] };
+      res.status(422).json({
+        success: false,
+        error: err.message,
+        meta: { code: ownershipError.code, lead_ids: ownershipError.leadIds },
+      });
+      return;
+    }
     next(err);
   }
 }

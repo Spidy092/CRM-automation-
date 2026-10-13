@@ -3,6 +3,18 @@ import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { LeadStatus } from '../../shared/types';
 import { LeadInput, LeadListFilters, LeadRow, LeadSortBy } from './leads.types';
 
+/** Minimal structural type for running queries on a transaction client. */
+type Executor = { query: typeof pool.query };
+
+async function queryOneOn<T extends object>(
+  db: Executor,
+  text: string,
+  params?: unknown[],
+): Promise<T | null> {
+  const res = await db.query<T>(text, params);
+  return res.rows[0] ?? null;
+}
+
 /** Update only the recipient whose email still matches the verified token. */
 export async function optOutLeadByEmail(id: string, email: string): Promise<LeadRow | null> {
   return queryOne<LeadRow>(
@@ -185,6 +197,41 @@ export async function findDueFollowUpLeads(
   return result.rows;
 }
 
+/**
+ * Locks a non-deleted lead row for an ownership transaction (`SELECT ...
+ * FOR UPDATE`). Ownership orchestration must read through this (never the
+ * unlocked `findLeadById`) before guarding or writing, so concurrent
+ * assignments to the same lead serialize instead of double-assigning.
+ */
+export async function findLeadByIdForUpdate(id: string, client: Executor): Promise<LeadRow | null> {
+  return queryOneOn<LeadRow>(
+    client,
+    `SELECT ${COLS} FROM leads WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+    [id],
+  );
+}
+
+/**
+ * Writes `leads.assigned_to` — the authoritative current owner. This is the
+ * only sanctioned writer of the column for ownership changes; all callers
+ * (assignments orchestration, lead updates, bulk updates) go through the
+ * leads service, which pairs this write with history + notification.
+ */
+export async function updateLeadAssignment(
+  leadId: string,
+  userId: string | null,
+  executor?: Executor,
+): Promise<LeadRow> {
+  const db = executor ?? pool;
+  const row = await queryOneOn<LeadRow>(
+    db,
+    `UPDATE leads SET assigned_to = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING ${COLS}`,
+    [userId, leadId],
+  );
+  if (!row) throw new Error('Lead not found or deleted');
+  return row;
+}
+
 /** Find an existing non-deleted lead in the same source matching email OR phone (dedup). */
 export async function findExistingForDedup(
   email: string,
@@ -235,6 +282,15 @@ export async function findLeadsByIds(ids: string[]): Promise<LeadRow[]> {
   );
 }
 
+/** Return the lead ids owned by one sales representative for task scoping. */
+export async function findLeadIdsByOwner(userId: string): Promise<string[]> {
+  const rows = await query<{ id: string }>(
+    `SELECT id FROM leads WHERE assigned_to = $1 AND deleted_at IS NULL`,
+    [userId],
+  );
+  return rows.map((row) => row.id);
+}
+
 export async function insertLead(input: LeadInput): Promise<LeadRow> {
   const row = await queryOne<LeadRow>(
     `INSERT INTO leads (
@@ -275,7 +331,11 @@ export async function insertLead(input: LeadInput): Promise<LeadRow> {
   return row;
 }
 
-export async function updateLead(id: string, input: Partial<LeadInput>): Promise<LeadRow> {
+export async function updateLead(
+  id: string,
+  input: Partial<LeadInput>,
+  executor?: Executor,
+): Promise<LeadRow> {
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
@@ -323,13 +383,20 @@ export async function updateLead(id: string, input: Partial<LeadInput>): Promise
 
   if (sets.length === 0) {
     // Nothing to update; return current row.
-    const current = await findLeadById(id);
+    const current = executor
+      ? await queryOneOn<LeadRow>(
+          executor,
+          `SELECT ${COLS} FROM leads WHERE id = $1 AND deleted_at IS NULL`,
+          [id],
+        )
+      : await findLeadById(id);
     if (!current) throw new Error('Lead not found or deleted');
     return current;
   }
 
   params.push(id);
-  const row = await queryOne<LeadRow>(
+  const row = await queryOneOn<LeadRow>(
+    executor ?? pool,
     `UPDATE leads SET ${sets.join(', ')} WHERE id = $${i} AND deleted_at IS NULL RETURNING ${COLS}`,
     params,
   );
@@ -384,8 +451,10 @@ export async function updateLeadStatus(id: string, status: 'active' | 'paused'):
 export async function updateLeadOutcome(
   id: string,
   outcome: 'won' | 'lost' | 'active',
+  executor?: Executor,
 ): Promise<LeadRow> {
-  const row = await queryOne<LeadRow>(
+  const row = await queryOneOn<LeadRow>(
+    executor ?? pool,
     `UPDATE leads
      SET status = $1,
          won_at = CASE WHEN $1 = 'won' THEN NOW() ELSE NULL END,

@@ -12,6 +12,7 @@ import {
   createLog,
   updateLogStatus,
   getLeadLogs,
+  listTasks,
   createTask,
   getTask,
   updateTask,
@@ -33,6 +34,8 @@ jest.mock('./outreach.repository', () => ({
   findLogsByLead: jest.fn(),
   insertTask: jest.fn(),
   findTaskById: jest.fn(),
+  findTasks: jest.fn(),
+  findTasksVisibleToUser: jest.fn(),
   updateTask: jest.fn(),
   findTimelineByLead: jest.fn(),
   findOpenSystemTaskByLead: jest.fn(),
@@ -41,6 +44,11 @@ jest.mock('./outreach.repository', () => ({
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('../leads/leads.repository', () => ({ findLeadById: jest.fn() }));
+jest.mock('../leads/leads.service', () => ({
+  assertAccess: jest.fn(),
+  getLeadById: jest.fn().mockResolvedValue({ assigned_to: 'u1' }),
+  getLeadIdsOwnedBy: jest.fn().mockResolvedValue([]),
+}));
 jest.mock('../templates/templates.repository', () => ({ findTemplateById: jest.fn() }));
 jest.mock('./outreach.prompt', () => ({ personalizeMessage: jest.fn() }));
 jest.mock('../integrations/dispatch', () => ({ dispatchOutbound: jest.fn() }));
@@ -56,6 +64,8 @@ import {
   findLogsByLead,
   insertTask,
   findTaskById,
+  findTasks,
+  findTasksVisibleToUser,
   updateTask as updateTaskRepo,
   findTimelineByLead,
   findOpenSystemTaskByLead,
@@ -63,7 +73,13 @@ import {
 } from './outreach.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById } from '../leads/leads.repository';
+import {
+  assertAccess,
+  getLeadById as getLeadByIdService,
+  getLeadIdsOwnedBy,
+} from '../leads/leads.service';
 import { findTemplateById } from '../templates/templates.repository';
+import { AppError } from '../../shared/middleware/errorHandler';
 import { personalizeMessage } from './outreach.prompt';
 import { dispatchOutbound } from '../integrations/dispatch';
 
@@ -233,13 +249,39 @@ describe('getTask', () => {
 
   it('throws 404 when missing', async () => {
     (findTaskById as jest.Mock).mockResolvedValue(null);
-    await expect(getTask('x')).rejects.toMatchObject({ statusCode: 404 });
+    await expect(getTask('x', actor)).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('returns task when found', async () => {
     (findTaskById as jest.Mock).mockResolvedValue(baseTask);
-    const result = await getTask('task1');
+    const result = await getTask('task1', actor);
     expect(result.id).toBe('task1');
+  });
+
+  it('hides a task from an unrelated sales rep', async () => {
+    (findTaskById as jest.Mock).mockResolvedValue({
+      ...baseTask,
+      assigned_to: 'other-rep',
+      created_by: 'another-user',
+    });
+    (getLeadByIdService as jest.Mock).mockRejectedValueOnce(new AppError('Forbidden', 403));
+    await expect(getTask('task1', { id: 'rep-1', role: 'sales' })).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+});
+
+describe('listTasks', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('uses the restricted query for sales representatives', async () => {
+    (findTasksVisibleToUser as jest.Mock).mockResolvedValue([baseTask]);
+    (getLeadIdsOwnedBy as jest.Mock).mockResolvedValue(['lead-owned']);
+    await expect(listTasks({}, { id: 'rep-1', role: 'sales' })).resolves.toEqual([baseTask]);
+    expect(findTasksVisibleToUser).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'rep-1', ownedLeadIds: ['lead-owned'] }),
+    );
+    expect(findTasks).not.toHaveBeenCalled();
   });
 });
 
@@ -248,12 +290,23 @@ describe('createTask', () => {
 
   it('creates and audits', async () => {
     (insertTask as jest.Mock).mockResolvedValue(baseTask);
+    (getLeadByIdService as jest.Mock).mockResolvedValue({ assigned_to: 'u1' });
     const result = await createTask(
       { leadId: 'lead1', type: 'phone_call', title: 'Call lead' },
       actor,
     );
     expect(result.id).toBe('task1');
+    expect(assertAccess).toHaveBeenCalledWith('u1', expect.objectContaining({ id: 'u1' }), true);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'task.created' }));
+  });
+
+  it('stores worker-created tasks without a non-user system FK', async () => {
+    (insertTask as jest.Mock).mockResolvedValue({ ...baseTask, created_by: null });
+    await createTask(
+      { leadId: 'lead1', type: 'phone_call', title: 'Call lead' },
+      { id: 'system', role: 'system' },
+    );
+    expect(insertTask).toHaveBeenCalledWith(expect.objectContaining({ created_by: null }));
   });
 });
 
@@ -266,6 +319,40 @@ describe('updateTask', () => {
     const result = await updateTask('task1', { status: 'completed' }, actor);
     expect(result.status).toBe('completed');
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'task.updated' }));
+  });
+
+  it('lets a delegated assignee complete a task but not reassign it', async () => {
+    (findTaskById as jest.Mock).mockResolvedValue({
+      ...baseTask,
+      assigned_to: 'rep-1',
+      created_by: 'owner-1',
+    });
+    (getLeadByIdService as jest.Mock).mockRejectedValue(new AppError('Forbidden', 403));
+    (updateTaskRepo as jest.Mock).mockResolvedValue({ ...baseTask, status: 'completed' });
+
+    await expect(
+      updateTask('task1', { status: 'completed' }, { id: 'rep-1', role: 'sales' }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    await expect(
+      updateTask('task1', { assignedTo: 'rep-2' }, { id: 'rep-1', role: 'sales' }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects mixed updates before any write when one field is forbidden', async () => {
+    (findTaskById as jest.Mock).mockResolvedValue({
+      ...baseTask,
+      assigned_to: 'rep-1',
+      created_by: 'owner-1',
+    });
+    (getLeadByIdService as jest.Mock).mockRejectedValue(new AppError('Forbidden', 403));
+    await expect(
+      updateTask(
+        'task1',
+        { status: 'completed', assignedTo: 'rep-2' },
+        { id: 'rep-1', role: 'sales' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(updateTaskRepo).not.toHaveBeenCalled();
   });
 });
 

@@ -52,10 +52,7 @@ jest.mock('../shared/utils/sentry', () => ({
 
 jest.mock('../modules/assignments/assignments.service', () => ({
   autoAssignLead: jest.fn(),
-}));
-
-jest.mock('../modules/assignments/assignments.repository', () => ({
-  findEligibleUsers: jest.fn(),
+  getEligibleUsers: jest.fn(),
 }));
 
 jest.mock('../modules/leads/leads.repository', () => ({
@@ -69,13 +66,12 @@ jest.mock('../modules/integrations/notifications', () => ({
 jest.mock('../modules/notifications/notifications.service', () => ({
   createNotification: jest.fn().mockResolvedValue({ ok: true }),
 }));
-
 import { startAssignmentWorker } from './assignment.worker';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { autoAssignLead } from '../modules/assignments/assignments.service';
-import { findEligibleUsers } from '../modules/assignments/assignments.repository';
+import { getEligibleUsers } from '../modules/assignments/assignments.service';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { notifyAssignment } from '../modules/integrations/notifications';
 import { createNotification } from '../modules/notifications/notifications.service';
@@ -94,7 +90,15 @@ function makeJob(over: Partial<any> = {}): any {
 }
 
 function assignment(over: Partial<any> = {}): any {
-  return { id: 'assign1', assigned_to: 'user1', assigned_by: 'system', ...over };
+  return { id: 'assign1', assigned_to: 'user1', assigned_by: null, ...over };
+}
+
+function autoResult(over: Partial<any> = {}): any {
+  return {
+    assignment: assignment(),
+    previousOwnerId: null,
+    ...over,
+  };
 }
 
 beforeEach(() => {
@@ -115,19 +119,23 @@ describe('startAssignmentWorker', () => {
 
 describe('processor — assignment:round-robin', () => {
   it('skips when no eligible users', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([]);
+    (getEligibleUsers as jest.Mock).mockResolvedValue([]);
 
     const result = await captured.processor!(makeJob());
 
     expect(result).toEqual({ leadId: 'lead1', assigned: false, notified: false });
     expect(autoAssignLead).not.toHaveBeenCalled();
-    expect(incJobsProcessed).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'success' }),
-    );
+    expect(incJobsProcessed).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+  });
+
+  it('uses the service-configured eligibility set for the pre-check', async () => {
+    (getEligibleUsers as jest.Mock).mockResolvedValue([]);
+    await captured.processor!(makeJob());
+    expect(getEligibleUsers).toHaveBeenCalledTimes(1);
   });
 
   it('returns assigned=false when autoAssignLead returns null', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
     (autoAssignLead as jest.Mock).mockResolvedValue(null);
 
     const result = await captured.processor!(makeJob());
@@ -137,13 +145,18 @@ describe('processor — assignment:round-robin', () => {
   });
 
   it('assigns, fetches lead name, notifies, and pushes to user', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    const result0 = autoResult();
+    (autoAssignLead as jest.Mock).mockResolvedValue(result0);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', business_name: 'Acme Co' });
     (notifyAssignment as jest.Mock).mockResolvedValue({ ok: true });
 
     const result = await captured.processor!(makeJob());
 
+    expect(autoAssignLead).toHaveBeenCalledWith(
+      'lead1',
+      expect.objectContaining({ score: 85, classification: 'hot' }),
+    );
     expect(notifyAssignment).toHaveBeenCalledWith(
       expect.objectContaining({
         leadId: 'lead1',
@@ -153,13 +166,9 @@ describe('processor — assignment:round-robin', () => {
         classification: 'hot',
       }),
     );
-    expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipientUserId: 'user1',
-        type: 'lead_assigned',
-        occurrenceKey: 'assignment:assign1',
-      }),
-    );
+    // The durable notification is created inside the service transaction;
+    // The service publishes post-commit effects once and the worker creates no second row.
+    expect(createNotification).not.toHaveBeenCalled();
     expect(result).toEqual({
       leadId: 'lead1',
       assigned: true,
@@ -170,36 +179,32 @@ describe('processor — assignment:round-robin', () => {
   });
 
   it('uses null business name when lead lookup returns null', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockResolvedValue(autoResult());
     (findLeadById as jest.Mock).mockResolvedValue(null);
     (notifyAssignment as jest.Mock).mockResolvedValue({ ok: true });
 
     const result = await captured.processor!(makeJob());
 
-    expect(notifyAssignment).toHaveBeenCalledWith(
-      expect.objectContaining({ leadName: null }),
-    );
+    expect(notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ leadName: null }));
     expect((result as any).assigned).toBe(true);
   });
 
   it('still succeeds when findLeadById throws (notification context failure)', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockResolvedValue(autoResult());
     (findLeadById as jest.Mock).mockRejectedValue(new Error('db down'));
     (notifyAssignment as jest.Mock).mockResolvedValue({ ok: true });
 
     const result = await captured.processor!(makeJob());
 
     expect((result as any).assigned).toBe(true);
-    expect(notifyAssignment).toHaveBeenCalledWith(
-      expect.objectContaining({ leadName: null }),
-    );
+    expect(notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ leadName: null }));
   });
 
   it('handles non-Error thrown by findLeadById', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockResolvedValue(autoResult());
     (findLeadById as jest.Mock).mockRejectedValue('string-error');
     (notifyAssignment as jest.Mock).mockResolvedValue({ ok: true });
 
@@ -208,8 +213,8 @@ describe('processor — assignment:round-robin', () => {
   });
 
   it('marks notified=false when notifyAssignment throws but assignment still succeeds', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockResolvedValue(autoResult());
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', business_name: 'Acme Co' });
     (notifyAssignment as jest.Mock).mockRejectedValue(new Error('slack down'));
 
@@ -221,12 +226,12 @@ describe('processor — assignment:round-robin', () => {
       assignedTo: 'user1',
       notified: false,
     });
-    expect(createNotification).toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it('handles non-Error thrown by notifyAssignment', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockResolvedValue(autoResult());
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', business_name: null });
     (notifyAssignment as jest.Mock).mockRejectedValue('boom');
 
@@ -234,15 +239,9 @@ describe('processor — assignment:round-robin', () => {
     expect((result as any).notified).toBe(false);
   });
 
-  it('rethrows when createNotification fails so BullMQ retries the job', async () => {
-    (findEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
-    (autoAssignLead as jest.Mock).mockResolvedValue(assignment());
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', business_name: 'Acme Co' });
-    (notifyAssignment as jest.Mock).mockResolvedValue({ ok: true });
-    (createNotification as jest.Mock).mockResolvedValue({
-      ok: false,
-      error: new Error('Postgres connection lost'),
-    });
+  it('rethrows when autoAssignLead fails so BullMQ retries the job', async () => {
+    (getEligibleUsers as jest.Mock).mockResolvedValue([{ id: 'user1' }]);
+    (autoAssignLead as jest.Mock).mockRejectedValue(new Error('Postgres connection lost'));
 
     await expect(captured.processor!(makeJob())).rejects.toThrow('Postgres connection lost');
   });
@@ -250,21 +249,21 @@ describe('processor — assignment:round-robin', () => {
 
 describe('processor — error handling', () => {
   it('throws and increments failed counter for unknown job name', async () => {
-    await expect(
-      captured.processor!(makeJob({ name: 'assignment:bogus' })),
-    ).rejects.toThrow('Unknown assignment job: assignment:bogus');
+    await expect(captured.processor!(makeJob({ name: 'assignment:bogus' }))).rejects.toThrow(
+      'Unknown assignment job: assignment:bogus',
+    );
     expect(incJobsFailed).toHaveBeenCalled();
   });
 
   it('rethrows service errors and increments failed counter', async () => {
-    (findEligibleUsers as jest.Mock).mockRejectedValue(new Error('repo down'));
+    (getEligibleUsers as jest.Mock).mockRejectedValue(new Error('repo down'));
 
     await expect(captured.processor!(makeJob())).rejects.toThrow('repo down');
     expect(incJobsFailed).toHaveBeenCalled();
   });
 
   it('handles a non-Error thrown value in the processor catch block', async () => {
-    (findEligibleUsers as jest.Mock).mockRejectedValue('plain string');
+    (getEligibleUsers as jest.Mock).mockRejectedValue('plain string');
 
     await expect(captured.processor!(makeJob())).rejects.toBe('plain string');
     expect(incJobsFailed).toHaveBeenCalled();

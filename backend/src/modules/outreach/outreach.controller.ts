@@ -227,7 +227,7 @@ export async function getTaskHandler(
 ): Promise<void> {
   try {
     const { id } = taskIdParamSchema.parse(req.params);
-    const item = await outreachService.getTask(id);
+    const item = await outreachService.getTask(id, actorFromReq(req));
     sendSuccess(res, item);
   } catch (err) {
     next(err);

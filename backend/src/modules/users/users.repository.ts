@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { query, queryOne } from '../../shared/utils/db';
 import { User, UpdateProfileInput, CreateUserInput, UpdatePermissionsInput } from './users.types';
 
@@ -36,6 +37,25 @@ export async function findUserByEmail(email: string): Promise<User | null> {
        AND deleted_at IS NULL`,
     [email.toLowerCase()],
   );
+}
+
+/**
+ * Locks a non-deleted user row for an ownership transaction (`SELECT ...
+ * FOR UPDATE`). Lets assignment orchestration revalidate the recipient
+ * inside the same transaction that will write the assignment, so a rep who
+ * is deactivated between selection and write cannot receive the lead.
+ * Returns null if not found or soft-deleted. Never returns password_hash.
+ */
+export async function lockUserRowForUpdate(id: string, client: PoolClient): Promise<User | null> {
+  const result = await client.query<User>(
+    `SELECT id, name, email, role, is_active, is_available, created_at, updated_at
+     FROM users
+     WHERE id = $1
+       AND deleted_at IS NULL
+     FOR UPDATE`,
+    [id],
+  );
+  return result.rows[0] ?? null;
 }
 
 export async function insertUser(

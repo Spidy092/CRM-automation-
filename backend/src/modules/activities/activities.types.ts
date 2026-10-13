@@ -22,7 +22,7 @@ export interface ActivityWithUser extends Activity {
 
 export interface CreateActivityInput {
   lead_id: string;
-  user_id: string;
+  user_id: string | null;
   type: ActivityType;
   metadata?: Record<string, unknown>;
 }

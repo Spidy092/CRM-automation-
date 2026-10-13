@@ -182,7 +182,10 @@ describe('findLeadById', () => {
 describe('findDueFollowUpLeads', () => {
   it('uses a stable timestamp and id cursor for later pages', async () => {
     mockPoolQuery.mockResolvedValue({ rows: [] });
-    const cursor = { nextFollowUpAt: '2026-10-01T09:00:00.000Z', id: '00000000-0000-4000-8000-000000000001' };
+    const cursor = {
+      nextFollowUpAt: '2026-10-01T09:00:00.000Z',
+      id: '00000000-0000-4000-8000-000000000001',
+    };
 
     await findDueFollowUpLeads(25, cursor);
 
@@ -392,7 +395,7 @@ describe('insertLead', () => {
 
 describe('updateLead', () => {
   it('updates scalar + json + tags fields with correct SQL', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     const result = await updateLead('lead-1', {
       business_name: 'New Name',
       email: 'NEW@ACME.TEST',
@@ -402,7 +405,7 @@ describe('updateLead', () => {
     });
     expect(result).toEqual(sampleRow);
 
-    const [sql, params] = mockQueryOne.mock.calls[0];
+    const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('business_name = $1');
     expect(sql).toContain('email = lower($2)'); // lower-cased branch
     expect(sql).toContain('social_links = $3::jsonb');
@@ -414,38 +417,38 @@ describe('updateLead', () => {
   });
 
   it('handles null scalar value and empty tags / null json', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', {
       website: null, // val ?? null branch
       social_links: null, // jsonArray(null) -> null
       custom_fields: null, // jsonArray(null) ?? '{}' -> '{}'
       tags: undefined as unknown as string[], // not present; skip — use explicit below
     });
-    const [, params] = mockQueryOne.mock.calls[0];
+    const [, params] = mockPoolQuery.mock.calls[0];
     // website null, social_links null, custom_fields '{}'
     expect(params).toContain(null);
     expect(params).toContain('{}');
   });
 
   it('passes empty array when tags set to null-ish', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', { tags: null as unknown as string[] });
-    const [sql, params] = mockQueryOne.mock.calls[0];
+    const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('tags = $1');
     expect(params[0]).toEqual([]); // input.tags ?? []
   });
 
   it('updates next_follow_up_at, including clearing it with null', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', { next_follow_up_at: '2026-08-01T09:00:00Z' });
-    const [sql, params] = mockQueryOne.mock.calls[0];
+    const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('next_follow_up_at = $1');
     expect(params[0]).toBe('2026-08-01T09:00:00Z');
 
-    mockQueryOne.mockClear();
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockClear();
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', { next_follow_up_at: null });
-    const [, clearParams] = mockQueryOne.mock.calls[0];
+    const [, clearParams] = mockPoolQuery.mock.calls[0];
     expect(clearParams[0]).toBeNull();
   });
 
@@ -466,7 +469,7 @@ describe('updateLead', () => {
   });
 
   it('throws when update returns null', async () => {
-    mockQueryOne.mockResolvedValue(null);
+    mockPoolQuery.mockResolvedValue({ rows: [] });
     await expect(updateLead('lead-1', { business_name: 'X' })).rejects.toThrow(
       'Lead not found or deleted',
     );
@@ -502,23 +505,27 @@ describe('updateLeadStatus', () => {
 
 describe('updateLeadOutcome', () => {
   it('stamps won_at and clears lost_at when outcome is won', async () => {
-    mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'won', won_at: '2026-07-20T00:00:00Z' });
+    mockPoolQuery.mockResolvedValue({
+      rows: [{ ...sampleRow, status: 'won', won_at: '2026-07-20T00:00:00Z' }],
+    });
     const result = await updateLeadOutcome('lead-1', 'won');
     expect(result.status).toBe('won');
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
       'won',
       'lead-1',
     ]);
   });
 
   it('reopens the deal (clears both timestamps) when outcome is active', async () => {
-    mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'active', won_at: null, lost_at: null });
+    mockPoolQuery.mockResolvedValue({
+      rows: [{ ...sampleRow, status: 'active', won_at: null, lost_at: null }],
+    });
     const result = await updateLeadOutcome('lead-1', 'active');
     expect(result.status).toBe('active');
   });
 
   it('throws when not found', async () => {
-    mockQueryOne.mockResolvedValue(null);
+    mockPoolQuery.mockResolvedValue({ rows: [] });
     await expect(updateLeadOutcome('x', 'lost')).rejects.toThrow('Lead not found or deleted');
   });
 });

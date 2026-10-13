@@ -2,29 +2,33 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse } from './client';
 
+export type AssignmentRole = 'admin' | 'manager' | 'sales' | 'marketing' | 'viewer';
+
 export interface AssignmentConfig {
   id: string;
   is_enabled: boolean;
   threshold_score: number;
-  eligible_roles: string[];
+  eligible_roles: AssignmentRole[];
   updated_at: string;
 }
 
 export interface EligibleUser {
   id: string;
-  first_name: string;
-  last_name: string;
+  name: string;
   email: string;
-  role: string;
+  role: AssignmentRole;
+  is_available: boolean;
+  last_assigned_at: string | null;
+  assignment_count: number;
 }
 
 export interface LeadAssignment {
   id: string;
   lead_id: string;
-  user_id: string;
+  assigned_to: string;
   assigned_by: string | null;
-  assigned_at: string;
-  override_reason: string | null;
+  assignment_type: 'round_robin' | 'manual' | 'override';
+  created_at: string;
 }
 
 export interface ManualAssignmentInput {

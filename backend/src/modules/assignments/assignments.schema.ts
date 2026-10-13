@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import type { UserRole } from '../../shared/types';
+
+const roleEnum = z.enum(['admin', 'manager', 'sales', 'marketing', 'viewer']) as z.ZodEnum<
+  [UserRole, ...UserRole[]]
+>;
 
 export const manualAssignmentSchema = z.object({
   lead_id: z.string().uuid(),
@@ -14,7 +19,7 @@ export const overrideAssignmentSchema = z.object({
 export const updateAssignmentConfigSchema = z.object({
   is_enabled: z.boolean().optional(),
   threshold_score: z.number().int().min(0).max(100).optional(),
-  eligible_roles: z.array(z.string()).optional(),
+  eligible_roles: z.array(roleEnum).min(1).optional(),
 });
 
 export type ManualAssignmentInput = z.infer<typeof manualAssignmentSchema>;
