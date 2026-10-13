@@ -13,6 +13,19 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        // Backend endpoints must reach the server, including email redirects.
+        // The SPA fallback otherwise turns tracked links into app 404 pages.
+        navigateFallbackDenylist: [
+          /^\/track(?:\/|$)/,
+          /^\/api(?:\/|$)/,
+          /^\/uploads(?:\/|$)/,
+          /^\/oauth(?:\/|$)/,
+          /^\/\.well-known(?:\/|$)/,
+          /^\/webhooks(?:\/|$)/,
+          /^\/health(?:\/|$)/,
+        ],
+      },
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'CRM Automation Platform',
@@ -55,6 +68,10 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/uploads': {
+        target: apiProxyTarget,
+        changeOrigin: true,
+      },
+      '/track': {
         target: apiProxyTarget,
         changeOrigin: true,
       },
