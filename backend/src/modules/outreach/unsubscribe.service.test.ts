@@ -62,4 +62,15 @@ describe('recipient outreach unsubscribe tokens', () => {
     await unsubscribeOutreachRecipient('a'.repeat(64));
     expect(optOutLeadByEmail).toHaveBeenCalledWith(leadId, emailHash);
   });
+
+  it('saves optional feedback after opt-out without extending token expiry', async () => {
+    (redis.get as jest.Mock).mockResolvedValue(JSON.stringify({ leadId, emailHash: 'b'.repeat(64) }));
+    await unsubscribeOutreachRecipient('a'.repeat(64), 'too_frequent');
+    expect(optOutLeadByEmail).toHaveBeenCalledWith(leadId, 'b'.repeat(64));
+    expect(redis.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^outreach:unsubscribe:/),
+      expect.stringContaining('"reason":"too_frequent"'),
+      'KEEPTTL',
+    );
+  });
 });

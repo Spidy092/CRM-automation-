@@ -26,9 +26,10 @@ export async function unsubscribeOutreachHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { token } = unsubscribeOutreachSchema.parse(req.body);
+    const { token, reason } = unsubscribeOutreachSchema.parse(req.body);
     const { unsubscribeOutreachRecipient } = await import('./unsubscribe.service');
-    await unsubscribeOutreachRecipient(token);
+    if (reason) await unsubscribeOutreachRecipient(token, reason);
+    else await unsubscribeOutreachRecipient(token);
     res.setHeader('Cache-Control', 'no-store');
     sendSuccess(res, { message: 'You have been unsubscribed from outreach messages.' });
   } catch (error) {

@@ -9,6 +9,13 @@ export function useUnsubscribeOutreach() {
   } });
 }
 
+/** Save optional feedback after the recipient has already unsubscribed. */
+export function useUnsubscribeFeedback() {
+  return useMutation({ mutationFn: async (input: { token: string; reason: string }): Promise<void> => {
+    await apiClient.post('/outreach/unsubscribe', input);
+  } });
+}
+
 // ── Sequence types ─────────────────────────────────────────────────────────
 
 export interface SequenceStep {

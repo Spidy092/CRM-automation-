@@ -271,6 +271,7 @@ function App() {
               <Route path="/subscribe" element={<LazyPage><PublicSubscribePage /></LazyPage>} />
               <Route path="/newsletter/:action" element={<LazyPage><PublicNewsletterActionPage /></LazyPage>} />
               <Route path="/outreach/unsubscribe" element={<LazyPage><PublicOutreachUnsubscribePage /></LazyPage>} />
+              <Route path="/unsubscribe" element={<LazyPage><PublicOutreachUnsubscribePage /></LazyPage>} />
               <Route path="*" element={<LazyPage><NotFoundPage /></LazyPage>} />
             </Routes>
           </AppInitializer>

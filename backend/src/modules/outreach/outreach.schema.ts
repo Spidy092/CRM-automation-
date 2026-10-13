@@ -14,7 +14,10 @@ import { MessageChannel } from '../../shared/types';
 
 /** Opaque capability token; never accepts a client-supplied lead identifier. */
 export const unsubscribeOutreachSchema = z
-  .object({ token: z.string().regex(/^[a-f0-9]{64}$/) })
+  .object({
+    token: z.string().regex(/^[a-f0-9]{64}$/),
+    reason: z.enum(['not_relevant', 'too_frequent', 'not_requested', 'other']).optional(),
+  })
   .strict();
 
 // ── Shared enums ────────────────────────────────────────────────────────────
