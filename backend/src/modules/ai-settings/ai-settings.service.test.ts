@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { findAiSettings, upsertAiSettings } from './ai-settings.repository';
 import {
   getAiConfig,
+  getAgentPlannerEnabled,
   getAiSettingsPublic,
   updateAiSettings,
 } from './ai-settings.service';
@@ -26,6 +27,7 @@ const mockedUpsert = upsertAiSettings as jest.Mock;
 const baseRow = {
   id: 's-1',
   enabled: true,
+  planner_enabled: false,
   base_url: 'https://api.openai.com',
   encrypted_api_key: 'plain:my-key',
   model: 'gpt-4o',
@@ -64,6 +66,7 @@ describe('ai-settings service', () => {
       expect(result).toEqual({
         id: baseRow.id,
         enabled: baseRow.enabled,
+        planner_enabled: false,
         base_url: baseRow.base_url,
         has_api_key: true,
         model: baseRow.model,
@@ -255,5 +258,34 @@ describe('ai-settings service', () => {
 
       expect(result?.maxTokens).toBe(500);
     });
+  });
+});
+
+describe('admin planner preference', () => {
+  it('uses saved true even when the environment disables planning', async () => {
+    const original = process.env.AGENT_PLANNER_ENABLED;
+    process.env.AGENT_PLANNER_ENABLED = 'false';
+    try {
+      mockedFind.mockResolvedValueOnce({ ...baseRow, planner_enabled: true });
+      expect(await getAgentPlannerEnabled()).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.AGENT_PLANNER_ENABLED;
+      else process.env.AGENT_PLANNER_ENABLED = original;
+    }
+  });
+
+  it('uses saved false even when the environment enables planning', async () => {
+    mockedFind.mockResolvedValueOnce({ ...baseRow, planner_enabled: false });
+    expect(await getAgentPlannerEnabled()).toBe(false);
+  });
+
+  it('persists an explicit disable independently of personalization', async () => {
+    mockedUpsert.mockResolvedValueOnce({ ...baseRow, planner_enabled: false });
+    const result = await updateAiSettings({ planner_enabled: false }, 'admin-1');
+    expect(mockedUpsert).toHaveBeenLastCalledWith({
+      planner_enabled: false,
+      updated_by: 'admin-1',
+    });
+    expect(result.planner_enabled).toBe(false);
   });
 });

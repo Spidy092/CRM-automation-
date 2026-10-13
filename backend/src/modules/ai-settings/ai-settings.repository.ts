@@ -3,6 +3,7 @@ import { pool } from '../../shared/utils/db';
 interface AiSettingsRow {
   id: string;
   enabled: boolean;
+  planner_enabled: boolean | null;
   base_url: string | null;
   encrypted_api_key: string | null;
   model: string;
@@ -17,7 +18,7 @@ interface AiSettingsRow {
 
 export async function findAiSettings(): Promise<AiSettingsRow | null> {
   const result = await pool.query<AiSettingsRow>(`
-    SELECT id, enabled, base_url, encrypted_api_key, model,
+    SELECT id, enabled, planner_enabled, base_url, encrypted_api_key, model,
            max_tokens, temperature, system_prompt_override,
            cache_ttl_seconds, updated_by, created_at, updated_at
     FROM ai_settings
@@ -28,6 +29,7 @@ export async function findAiSettings(): Promise<AiSettingsRow | null> {
 
 export interface UpdateAiSettingsRepoInput {
   enabled?: boolean;
+  planner_enabled?: boolean;
   base_url?: string | null;
   encrypted_api_key?: string | null;
   model?: string;
@@ -42,6 +44,10 @@ export async function upsertAiSettings(input: UpdateAiSettingsRepoInput): Promis
   const setClauses: string[] = ['updated_at = NOW()'];
   const values: unknown[] = [];
 
+  if (input.planner_enabled !== undefined) {
+    values.push(input.planner_enabled);
+    setClauses.push(`planner_enabled = $${values.length}`);
+  }
   if (input.enabled !== undefined) {
     values.push(input.enabled);
     setClauses.push(`enabled = $${values.length}`);
@@ -88,7 +94,7 @@ export async function upsertAiSettings(input: UpdateAiSettingsRepoInput): Promis
 
   const result = await pool.query<AiSettingsRow>(
     `UPDATE ai_settings SET ${setClauses.join(', ')} RETURNING
-       id, enabled, base_url, encrypted_api_key, model,
+       id, enabled, planner_enabled, base_url, encrypted_api_key, model,
        max_tokens, temperature, system_prompt_override,
        cache_ttl_seconds, updated_by, created_at, updated_at`,
     values,
