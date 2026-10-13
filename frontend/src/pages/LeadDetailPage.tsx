@@ -1,7 +1,10 @@
 import * as React from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLead, useLeadActivities, useCreateLeadActivity, usePauseLead, useDeleteLead, useEnrichLead } from '@/api/leads';
-import { useLeadOutreachLogs } from '@/api/outreach';
+import { LeadHistory } from '@/components/LeadHistory';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -28,8 +31,6 @@ import {
   Mail,
   FileText,
   MessageSquare,
-  ArrowRightLeft,
-  UserCheck,
   Send,
   ArrowRight,
   GitBranch,
@@ -42,19 +43,7 @@ import {
   CalendarCheck,
   ChevronDown,
   ChevronRight,
-  MailCheck,
-  Clock,
-  ChevronUp,
 } from 'lucide-react';
-
-const activityTypeIcons: Record<import('@/types').ActivityType, React.ReactNode> = {
-  call: <Phone className="h-3.5 w-3.5" role="img" aria-label="Call" />,
-  whatsapp: <MessageSquare className="h-3.5 w-3.5" role="img" aria-label="WhatsApp" />,
-  email: <Mail className="h-3.5 w-3.5" role="img" aria-label="Email" />,
-  note: <FileText className="h-3.5 w-3.5" role="img" aria-label="Note" />,
-  status_change: <ArrowRightLeft className="h-3.5 w-3.5" role="img" aria-label="Status change" />,
-  assignment_change: <UserCheck className="h-3.5 w-3.5" role="img" aria-label="Assignment change" />,
-};
 
 const activityTypeLabels: Record<import('@/types').ActivityType, string> = {
   call: 'Call',
@@ -65,6 +54,9 @@ const activityTypeLabels: Record<import('@/types').ActivityType, string> = {
   assignment_change: 'Assignment change',
 };
 
+
+const noteSchema = z.object({ note: z.string().trim().min(1, 'Enter a note').max(10000, 'Notes must be 10,000 characters or fewer') });
+type NoteForm = z.infer<typeof noteSchema>;
 
 type LeadActionKind = 'link' | 'activity' | 'complete';
 type LeadOutcome = 'reached' | 'no_answer' | 'interested' | 'not_interested' | 'wrong_contact';
@@ -244,54 +236,6 @@ function getLeadActionPlan(lead: Lead, activityCount: number): LeadActionItem[] 
   return actions.slice(0, 3);
 }
 
-function classifyActivity(type: import('@/types').ActivityType, metadata: Record<string, unknown>): string {
-  if (type === 'status_change') {
-    const from = String(metadata?.from ?? '—');
-    const to = String(metadata?.to ?? '—');
-    return `Status changed from ${from} to ${to}`;
-  }
-  if (type === 'assignment_change') {
-    const from = String(metadata?.from ?? '—');
-    const to = String(metadata?.to ?? '—');
-    return `Assignment changed from ${from} to ${to}`;
-  }
-  if (type === 'note') {
-    if (metadata?.outcome_label) {
-      return `Outcome · ${String(metadata.outcome_label)}`;
-    }
-    if (metadata?.note) {
-      return String(metadata.note);
-    }
-    return 'Note';
-  }
-  if (type === 'call') {
-    const direction = String(metadata?.direction ?? '');
-    return direction ? `Call · ${direction}` : 'Call';
-  }
-  if (type === 'whatsapp') {
-    const direction = String(metadata?.direction ?? '');
-    return direction ? `WhatsApp · ${direction}` : 'WhatsApp';
-  }
-  if (type === 'email') {
-    const direction = String(metadata?.direction ?? '');
-    return direction ? `Email · ${direction}` : 'Email';
-  }
-  return activityTypeLabels[type];
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return 'just now';
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-
 function LeadOutcomeBar({
   onSelectOutcome,
   isSaving,
@@ -429,20 +373,18 @@ export function LeadDetailPage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
 
-  const [activityLimit, setActivityLimit] = React.useState(25);
   const { data: lead, isLoading: leadLoading, error: leadError } = useLead(leadId);
-  const { data: activitiesPage, isLoading: activityLoading } = useLeadActivities(leadId, { limit: activityLimit });
-  const { data: outreachLogs = [], isLoading: logsLoading } = useLeadOutreachLogs(leadId);
+  const { data: activitySummary } = useLeadActivities(leadId, { limit: 1 });
   const createActivity = useCreateLeadActivity();
   const pauseLead = usePauseLead();
   const deleteLead = useDeleteLead();
   const enrichLead = useEnrichLead();
 
-  const [noteText, setNoteText] = React.useState('');
+  const noteForm = useForm<NoteForm>({ resolver: zodResolver(noteSchema), defaultValues: { note: '' } });
+  const noteText = noteForm.watch('note');
   const [showQuickResponse, setShowQuickResponse] = React.useState(false);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
 
-  const activities = activitiesPage?.items ?? [];
 
   const handleQuickActivity = async (type: Exclude<ActivityType, 'status_change' | 'assignment_change'>) => {
     if (!id || createActivity.isPending) return;
@@ -461,18 +403,18 @@ export function LeadDetailPage() {
     }
   };
 
-  const handleAddNote = async () => {
-    if (!id || !noteText.trim()) return;
+  const handleAddNote = async ({ note }: NoteForm): Promise<void> => {
+    if (!id || !note.trim()) return;
     try {
       await createActivity.mutateAsync({
         leadId: id,
         input: {
           type: 'note',
-          metadata: { note: noteText.trim(), source: 'detail_view' },
+          metadata: { note: note.trim(), source: 'detail_view' },
         },
       });
       showToast('Note added.', 'success');
-      setNoteText('');
+      noteForm.reset();
     } catch {
       showToast('Failed to add note.', 'error');
     }
@@ -541,7 +483,7 @@ export function LeadDetailPage() {
 
   const scoreColor =
     lead.lead_score >= 70 ? 'text-emerald-700' : lead.lead_score >= 40 ? 'text-amber-700' : 'text-slate-700';
-  const actionPlan = getLeadActionPlan(lead, activities.length);
+  const actionPlan = getLeadActionPlan(lead, activitySummary?.meta.total ?? 0);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -764,117 +706,32 @@ export function LeadDetailPage() {
           )}
         </div>
 
-        {/* Activity timeline and Message History */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 min-w-0">
           <Card>
             <CardHeader>
-              <h3 className="text-sm font-semibold text-slate-900">Activity Timeline</h3>
+              <h3 className="text-sm font-semibold text-slate-900">History</h3>
             </CardHeader>
             <CardContent>
-              <form onSubmit={(e) => { e.preventDefault(); void handleAddNote(); }} className="mb-6 flex flex-col gap-3">
+              <form onSubmit={noteForm.handleSubmit(handleAddNote)} className="sticky top-16 z-10 mb-6 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-start">
+                <label className="sr-only" htmlFor="lead-note">Add a note</label>
                 <Textarea
+                  id="lead-note"
                   placeholder="Add a note..."
-                  value={noteText}
-                  onChange={(e) => setNoteText(e.target.value)}
-                  rows={3}
+                  {...noteForm.register('note')}
+                  rows={2}
+                  aria-invalid={Boolean(noteForm.formState.errors.note)}
+                  aria-describedby={noteForm.formState.errors.note ? 'lead-note-error' : undefined}
                   disabled={createActivity.isPending}
                 />
-                <div className="flex justify-end">
+                <div className="flex shrink-0 flex-col items-end gap-1">
                   <Button type="submit" size="sm" disabled={!noteText.trim() || createActivity.isPending}>
                     <Send className="mr-2 h-4 w-4" />
                     Add note
                   </Button>
+                  {noteForm.formState.errors.note && <p id="lead-note-error" role="alert" className="text-xs text-red-600">{noteForm.formState.errors.note.message}</p>}
                 </div>
               </form>
-
-              {activityLoading && (
-                <div className="flex h-32 items-center justify-center">
-                  <div className="h-6 w-6 animate-spin rounded-full border-4 border-slate-300 border-t-slate-700" />
-                </div>
-              )}
-
-              {!activityLoading && activities.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-10 text-center text-slate-500">
-                  <Activity className="h-8 w-8 text-slate-300" />
-                  <p className="text-sm">No activity yet</p>
-                </div>
-              )}
-
-              {!activityLoading && activities.length > 0 && (
-                <div className="relative">
-                  <div className="absolute left-4 top-0 bottom-0 w-px bg-slate-200" />
-                  <ul className="space-y-4 pl-10">
-                    {activities.map((entry) => (
-                      <li key={entry.id} className="relative">
-                        <div className="absolute -left-6 flex h-6 w-6 items-center justify-center rounded-full bg-white ring-2 ring-slate-200">
-                          {activityTypeIcons[entry.type]}
-                        </div>
-                        <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-900">
-                              {activityTypeLabels[entry.type]}
-                            </p>
-                            <p className="text-sm text-slate-700">
-                              {classifyActivity(entry.type, entry.metadata)}
-                            </p>
-                            {entry.user_name && (
-                              <p className="mt-1 text-xs text-slate-500">by {entry.user_name}</p>
-                            )}
-                          </div>
-                          <time className="shrink-0 text-xs text-slate-400">{timeAgo(entry.created_at)}</time>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                  {activitiesPage?.meta?.total && activitiesPage.meta.total > activities.length && (
-                    <div className="mt-6 flex justify-center border-t border-slate-100 pt-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setActivityLimit((prev) => prev + 25)}
-                      >
-                        Load older activities ({activitiesPage.meta.total - activities.length} remaining)
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Message History */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <MailCheck className="h-4 w-4 text-indigo-500" />
-                <h3 className="text-sm font-semibold text-slate-900">Message History</h3>
-                {outreachLogs.length > 0 && (
-                  <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                    {outreachLogs.length} sent
-                  </span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {logsLoading && (
-                <div className="flex h-24 items-center justify-center">
-                  <div className="h-5 w-5 animate-spin rounded-full border-4 border-slate-300 border-t-indigo-600" />
-                </div>
-              )}
-              {!logsLoading && outreachLogs.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-8 text-center text-slate-500">
-                  <MailCheck className="h-8 w-8 text-slate-300" />
-                  <p className="text-sm">No messages sent yet</p>
-                  <p className="text-xs text-slate-400">Emails sent via campaigns will appear here.</p>
-                </div>
-              )}
-              {!logsLoading && outreachLogs.length > 0 && (
-                <ul className="space-y-3">
-                  {outreachLogs.map((log) => (
-                    <MessageLogItem key={log.id} log={log} />
-                  ))}
-                </ul>
-              )}
+              <LeadHistory leadId={leadId} />
             </CardContent>
           </Card>
         </div>
@@ -923,82 +780,5 @@ function Row({
         <div className="text-sm font-medium text-slate-900 mt-0.5">{children ?? value ?? '—'}</div>
       </div>
     </div>
-  );
-}
-
-// ── Message History sub-component ────────────────────────────────────────────
-
-const STATUS_STYLES: Record<string, string> = {
-  sent:      'bg-blue-100 text-blue-700',
-  delivered: 'bg-green-100 text-green-700',
-  opened:    'bg-purple-100 text-purple-700',
-  replied:   'bg-indigo-100 text-indigo-700',
-  failed:    'bg-red-100 text-red-700',
-  pending:   'bg-slate-100 text-slate-600',
-};
-
-const CHANNEL_LABELS: Record<string, string> = {
-  email:       '📧 Email',
-  whatsapp:    '💬 WhatsApp',
-  sms:         '📱 SMS',
-  phone_call:  '📞 Call',
-};
-
-function MessageLogItem({ log }: { log: import('@/api/outreach').OutreachLog }) {
-  const [expanded, setExpanded] = React.useState(false);
-  const preview = log.message_body ? log.message_body.slice(0, 150) : null;
-  const hasMore  = log.message_body ? log.message_body.length > 150 : false;
-
-  const statusStyle = STATUS_STYLES[log.status] ?? 'bg-slate-100 text-slate-600';
-  const sentAt = log.sent_at ? new Date(log.sent_at).toLocaleString() : '—';
-
-  return (
-    <li className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      {/* Header row */}
-      <div className="flex flex-wrap items-center gap-2">
-        {log.step_number != null && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-            Step {log.step_number}
-          </span>
-        )}
-        <span className="text-xs text-slate-500">
-          {CHANNEL_LABELS[log.channel] ?? log.channel}
-        </span>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusStyle}`}>
-          {log.status}
-        </span>
-        <span className="ml-auto flex items-center gap-1 text-xs text-slate-400">
-          <Clock className="h-3 w-3" />
-          {sentAt}
-        </span>
-      </div>
-
-      {/* Body preview */}
-      {preview && (
-        <div className="mt-3">
-          <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
-            {expanded ? log.message_body : preview}
-            {!expanded && hasMore && '…'}
-          </p>
-          {hasMore && (
-            <button
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-1 flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline"
-            >
-              {expanded
-                ? <><ChevronUp className="h-3 w-3" /> Show less</>
-                : <><ChevronDown className="h-3 w-3" /> Show more</>}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Error message if failed */}
-      {log.error_message && (
-        <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
-          ⚠ {log.error_message}
-        </p>
-      )}
-    </li>
   );
 }

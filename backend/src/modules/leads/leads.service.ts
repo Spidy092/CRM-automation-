@@ -21,6 +21,7 @@ import {
   countLeads,
   findExistingForDedup,
   findLeadById,
+  findLeadTimeline as repoFindLeadTimeline,
   findDueFollowUpLeads,
   findLeadByIdForUpdate,
   findLeadIdsByOwner,
@@ -51,6 +52,8 @@ import {
   LeadListResult,
   LeadResponse,
   LeadRow,
+  LeadTimelineFilters,
+  LeadTimelineResult,
   toLeadResponse,
 } from './leads.types';
 import { cancelPendingOutreachJobs } from '../../workers/queue';
@@ -705,6 +708,29 @@ export async function setLeadPaused(
     payload: { status: targetStatus },
   });
   return toLeadResponse(updated);
+}
+
+export async function getLeadTimeline(
+  id: string,
+  actor: Actor,
+  filters: Omit<LeadTimelineFilters, 'leadId'>,
+): Promise<LeadTimelineResult> {
+  const lead = await findLeadById(id);
+  if (!lead) throw new AppError('Lead not found', 404);
+  assertAccess(lead.assigned_to, actor, false);
+  return repoFindLeadTimeline({
+    leadId: id,
+    limit: Math.min(Math.max(filters.limit, 1), 100),
+    cursorTs: filters.cursorTs,
+    cursorId: filters.cursorId,
+    kind: filters.kind,
+    search: filters.search,
+    channel: filters.channel,
+    authorId: filters.authorId,
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+    pinnedOnly: filters.pinnedOnly,
+  });
 }
 
 export async function getLeadActivity(

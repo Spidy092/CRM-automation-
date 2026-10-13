@@ -23,6 +23,7 @@ import {
   updateLeadOutcome,
   runInTransaction,
   findActivityForLead,
+  findLeadTimeline,
 } from './leads.repository';
 import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
 
@@ -547,6 +548,74 @@ describe('findActivityForLead', () => {
     const result = await findActivityForLead('lead-1', 50);
     expect(result).toEqual(entries);
     expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('UNION ALL'), ['lead-1', 50]);
+  });
+});
+
+describe('findLeadTimeline', () => {
+  it('merges activities and logs newest-first with a single cursor', async () => {
+    mockQuery.mockResolvedValue([
+      { id: 'act-1', source: 'activity', created_at: '2026-06-19T02:00:00.000Z' },
+      { id: 'log-1', source: 'message', created_at: '2026-06-19T01:00:00.000Z' },
+    ]);
+    const result = await findLeadTimeline({ leadId: 'lead-1', limit: 25, kind: 'all' });
+    expect(result.items).toHaveLength(2);
+    expect(result.meta.hasMore).toBe(false);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('UNION ALL');
+    expect(sql).toContain('ORDER BY t.created_at DESC, t.id DESC');
+    expect((params as unknown[])[0]).toBe('lead-1');
+    expect((params as unknown[]).at(-1)).toBe(26);
+  });
+
+  it('restricts branches for the notes kind and supports pinned_only', async () => {
+    mockQuery.mockResolvedValue([]);
+    const result = await findLeadTimeline({
+      leadId: 'lead-1',
+      limit: 10,
+      kind: 'notes',
+      pinnedOnly: true,
+    });
+    expect(result.items).toEqual([]);
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain(`a.type IN ($2)`);
+    expect(sql).toContain(`COALESCE((a.metadata->>'pinned')::boolean, false) = true`);
+    expect(sql).not.toContain('outreach_logs');
+  });
+
+  it('maps call and phone_call to the same channel across sources', async () => {
+    mockQuery.mockResolvedValue([]);
+    await findLeadTimeline({ leadId: 'lead-1', limit: 25, kind: 'messages', channel: 'call' });
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('outreach_logs');
+    expect(params).toContain('call');
+    expect(params).toContain('phone_call');
+  });
+
+  it('excludes message rows when filtering by author', async () => {
+    mockQuery.mockResolvedValue([]);
+    await findLeadTimeline({ leadId: 'lead-1', limit: 25, kind: 'all', authorId: 'user-1' });
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).not.toContain('outreach_logs');
+    expect(params).toContain('user-1');
+  });
+
+  it('returns nextCursor when more pages exist', async () => {
+    mockQuery.mockResolvedValue([
+      { id: 'act-1', source: 'activity', created_at: '2026-06-19T02:00:00.000Z' },
+      { id: 'act-2', source: 'activity', created_at: '2026-06-19T01:00:00.000Z' },
+    ]);
+    const result = await findLeadTimeline({
+      leadId: 'lead-1',
+      limit: 1,
+      kind: 'all',
+      cursorTs: '2026-06-20T00:00:00.000Z',
+      cursorId: 'act-9',
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.meta.hasMore).toBe(true);
+    expect(result.meta.nextCursor).toBeDefined();
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain('(t.created_at, t.id) < (');
   });
 });
 

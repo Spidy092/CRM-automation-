@@ -91,6 +91,37 @@ export const pauseLeadSchema = z.object({
   paused: z.boolean().optional(), // default true; set false to resume
 });
 
+/**
+ * GET /leads/:id/timeline — unified lead history (notes, manual touchpoints,
+ * sent messages, system events) with a single keyset cursor so the "All
+ * activity" tab pages across both sources without loading full history.
+ */
+export const leadTimelineKindEnum = z.enum(['all', 'notes', 'messages', 'system']);
+
+export const leadTimelineChannelEnum = z.enum(['call', 'whatsapp', 'email', 'sms', 'phone_call']);
+
+export const leadTimelineQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional().default(25),
+  cursor: z.string().optional(),
+  kind: leadTimelineKindEnum.optional().default('all'),
+  /** Matches note bodies, outcome labels, author names, message bodies, errors. */
+  search: z.string().max(255).optional(),
+  /** Message channel; `call` and `phone_call` are treated as the same channel. */
+  channel: leadTimelineChannelEnum.optional(),
+  /** Only activity rows created by this user (sent messages have no author). */
+  author: z.string().uuid().optional(),
+  /** ISO-8601 bounds applied to `created_at`. */
+  date_from: z.string().datetime({ offset: true }).optional(),
+  date_to: z.string().datetime({ offset: true }).optional(),
+  /** When "true", only pinned notes are returned (the pinned strip). */
+  pinned_only: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+});
+
+export type LeadTimelineQuery = z.infer<typeof leadTimelineQuerySchema>;
+
 /** POST /leads/bulk-classify — set classification on a batch of lead IDs */
 export const bulkClassifySchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(500),

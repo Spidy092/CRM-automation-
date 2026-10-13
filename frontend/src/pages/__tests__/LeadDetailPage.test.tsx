@@ -33,6 +33,13 @@ vi.mock('@/api/client', () => ({
   },
 }));
 
+vi.mock('@/store/authStore', () => ({
+  useAuthStore: (selector: (state: { user: unknown }) => unknown) =>
+    selector({
+      user: { id: 'rep-1', name: 'Rep', email: 'rep@example.com', role: 'sales' },
+    }),
+}));
+
 vi.mock('@/api/leads', () => ({
   useLead: vi.fn().mockReturnValue({
     data: {
@@ -55,8 +62,26 @@ vi.mock('@/api/leads', () => ({
     isLoading: false,
   }),
   useLeadActivities: vi.fn().mockReturnValue({
-    data: { items: [], meta: { total: 0, limit: 50, offset: 0 } },
+    data: { items: [], meta: { total: 0, limit: 1, offset: 0 } },
     isLoading: false,
+  }),
+  useLeadHistoryAuthors: vi.fn().mockReturnValue({ data: [], isLoading: false }),
+  useLeadHistory: vi.fn().mockReturnValue({
+    data: { pages: [{ items: [], meta: { limit: 25, hasMore: false } }], pageParams: [undefined] },
+    isLoading: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+    isFetchingNextPage: false,
+    refetch: vi.fn(),
+  }),
+  usePinnedNotes: vi.fn().mockReturnValue({
+    data: { pages: [] },
+    isLoading: false,
+  }),
+  useSetActivityPinned: vi.fn().mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
   }),
   useCreateLeadActivity: vi.fn().mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue({}),
@@ -96,9 +121,13 @@ describe('LeadDetailPage', () => {
     expect(screen.getAllByText('hot').length).toBeGreaterThan(0);
   });
 
-  it('renders the activity timeline section', () => {
+  it('renders the history section with tabs', () => {
     renderWithProviders(<LeadDetailPage />);
-    expect(screen.getByText('Activity Timeline')).toBeDefined();
+    expect(screen.getByText('History')).toBeDefined();
+    expect(screen.getByRole('tab', { name: 'All activity' })).toBeDefined();
+    expect(screen.getByRole('tab', { name: 'Notes' })).toBeDefined();
+    expect(screen.getByRole('tab', { name: 'Messages' })).toBeDefined();
+    expect(screen.getByRole('tab', { name: 'System activity' })).toBeDefined();
   });
 
   it('renders a quick-add note textarea', () => {

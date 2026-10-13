@@ -163,6 +163,58 @@ export interface ImportSummary {
   errors: { row: number; message: string }[];
 }
 
+/** One row of the unified lead timeline (`GET /leads/:id/timeline`). */
+export interface LeadTimelineEntry {
+  id: string;
+  /** `activity` = notes/manual touchpoints/system events; `message` = sent outreach. */
+  source: 'activity' | 'message';
+  /** Activity type for `activity` rows; null for sent messages. */
+  activity_type: import('../activities/activities.types').ActivityType | null;
+  /** Outreach channel for `message` rows; null for activity rows. */
+  channel: string | null;
+  /** Delivery status for `message` rows; null for activity rows. */
+  status: string | null;
+  /** Raw activity metadata (note body, outcome, direction, …); null for messages. */
+  metadata: Record<string, unknown> | null;
+  /** Full message body for `message` rows; null for activity rows. */
+  message_body: string | null;
+  /** Sequence step for `message` rows; null for activity rows. */
+  step_number: number | null;
+  /** Delivery error for failed `message` rows; null otherwise. */
+  error_message: string | null;
+  author_id: string | null;
+  author_name: string | null;
+  is_pinned: boolean;
+  created_at: string;
+}
+
+export type LeadTimelineKind = 'all' | 'notes' | 'messages' | 'system';
+
+export type LeadTimelineChannel = 'call' | 'whatsapp' | 'email' | 'sms' | 'phone_call';
+
+export interface LeadTimelineFilters {
+  leadId: string;
+  limit: number;
+  cursorTs?: string;
+  cursorId?: string;
+  kind: LeadTimelineKind;
+  search?: string;
+  channel?: LeadTimelineChannel;
+  authorId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  pinnedOnly?: boolean;
+}
+
+export interface LeadTimelineResult {
+  items: LeadTimelineEntry[];
+  meta: {
+    limit: number;
+    hasMore: boolean;
+    nextCursor?: string;
+  };
+}
+
 export function toLeadResponse(row: LeadRow): LeadResponse {
   return {
     id: row.id,

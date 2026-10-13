@@ -287,6 +287,148 @@ export function useCreateLeadActivity() {
     },
     onSuccess: (_, { leadId }) => {
       queryClient.invalidateQueries({ queryKey: ['leads', leadId, 'activities'] });
+      queryClient.invalidateQueries({ queryKey: ['leads', leadId, 'history'] });
+    },
+  });
+}
+
+// ── Unified lead history (notes + messages + system events) ────────────────
+
+export type LeadHistoryKind = 'all' | 'notes' | 'messages' | 'system';
+
+export type LeadHistoryChannel = 'call' | 'whatsapp' | 'email' | 'sms' | 'phone_call';
+
+export interface LeadHistoryEntry {
+  id: string;
+  source: 'activity' | 'message';
+  activity_type: ActivityType | null;
+  channel: string | null;
+  status: string | null;
+  metadata: Record<string, unknown> | null;
+  message_body: string | null;
+  step_number: number | null;
+  error_message: string | null;
+  author_id: string | null;
+  author_name: string | null;
+  is_pinned: boolean;
+  created_at: string;
+}
+
+export interface LeadHistoryFilters {
+  kind?: LeadHistoryKind;
+  search?: string;
+  channel?: LeadHistoryChannel;
+  author?: string;
+  /** `yyyy-mm-dd` from a date input; converted to an ISO bound client-side. */
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+interface LeadHistoryPage {
+  items: LeadHistoryEntry[];
+  meta: { limit: number; hasMore: boolean; nextCursor?: string };
+}
+
+/** Calendar filters use the same local timezone as the displayed timestamps. */
+function toDateBound(date: string, endOfDay: boolean): string {
+  const bound = new Date(`${date}T00:00:00`);
+  if (endOfDay) bound.setHours(23, 59, 59, 999);
+  return bound.toISOString();
+}
+
+function buildHistoryParams(filters: LeadHistoryFilters, cursor?: string): URLSearchParams {
+  const params = new URLSearchParams();
+  params.append('limit', '25');
+  if (filters.kind) params.append('kind', filters.kind);
+  if (filters.search) params.append('search', filters.search);
+  if (filters.channel) params.append('channel', filters.channel);
+  if (filters.author) params.append('author', filters.author);
+  if (filters.dateFrom) params.append('date_from', toDateBound(filters.dateFrom, false));
+  if (filters.dateTo) params.append('date_to', toDateBound(filters.dateTo, true));
+  if (cursor) params.append('cursor', cursor);
+  return params;
+}
+
+/**
+ * Cursor-paginated unified history for the lead detail timeline. Pages are
+ * fetched 25 at a time newest-first; flatten `data.pages` and dedupe by id
+ * for the combined list. Search/channel/author/date filters run server-side
+ * across the full history, not just the loaded pages.
+ */
+export function useLeadHistory(leadId: string, filters: LeadHistoryFilters = {}) {
+  return useInfiniteQuery({
+    queryKey: ['leads', leadId, 'history', filters],
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }): Promise<LeadHistoryPage> => {
+      const params = buildHistoryParams(filters, pageParam);
+      const response = await apiClient.get<ApiResponse<LeadHistoryEntry[]>>(
+        `/leads/${leadId}/timeline`,
+        { params },
+      );
+      const meta = response.data.meta as LeadHistoryPage['meta'] | undefined;
+      return {
+        items: response.data.data ?? [],
+        meta: meta ?? { limit: 25, hasMore: false },
+      };
+    },
+    getNextPageParam: (lastPage) =>
+      lastPage.meta.hasMore ? lastPage.meta.nextCursor : undefined,
+    enabled: !!leadId,
+  });
+}
+
+/** Pinned notes rendered in the strip above the history. */
+export function usePinnedNotes(leadId: string) {
+  return useInfiniteQuery({
+    queryKey: ['leads', leadId, 'history', 'pinned'],
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }): Promise<LeadHistoryPage> => {
+      const params = buildHistoryParams({ kind: 'notes' }, pageParam);
+      params.append('pinned_only', 'true');
+      const response = await apiClient.get<ApiResponse<LeadHistoryEntry[]>>(
+        `/leads/${leadId}/timeline`, { params },
+      );
+      return { items: response.data.data ?? [], meta: response.data.meta as LeadHistoryPage['meta'] };
+    },
+    getNextPageParam: (page) => page.meta.hasMore ? page.meta.nextCursor : undefined,
+    enabled: !!leadId,
+  });
+}
+
+export function useLeadHistoryAuthors(leadId: string) {
+  return useQuery({
+    queryKey: ['leads', leadId, 'history', 'authors'],
+    queryFn: async (): Promise<Array<{ id: string; name: string | null }>> => {
+      const response = await apiClient.get<ApiResponse<Array<{ id: string; name: string | null }>>>(
+        `/leads/${leadId}/activities/authors`,
+      );
+      return response.data.data ?? [];
+    },
+    enabled: !!leadId,
+  });
+}
+
+export function useSetActivityPinned() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      leadId,
+      activityId,
+      pinned,
+    }: {
+      leadId: string;
+      activityId: string;
+      pinned: boolean;
+    }) => {
+      const response = await apiClient.patch<ApiResponse<LeadHistoryEntry>>(
+        `/leads/${leadId}/activities/${activityId}/pin`,
+        { pinned },
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { leadId }) => {
+      queryClient.invalidateQueries({ queryKey: ['leads', leadId, 'history'] });
     },
   });
 }

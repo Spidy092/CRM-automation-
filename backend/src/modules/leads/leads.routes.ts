@@ -9,6 +9,7 @@ import {
   deleteLeadHandler,
   getLeadActivityHandler,
   getLeadHandler,
+  getLeadTimelineHandler,
   importLeadsHandler,
   listLeadsHandler,
   pauseLeadHandler,
@@ -56,6 +57,13 @@ router.get(
   '/:id/activity',
   authorize('admin', 'manager', 'sales', 'viewer'),
   wrap(getLeadActivityHandler),
+);
+
+// Unified history timeline (notes + messages + system events) — same readers.
+router.get(
+  '/:id/timeline',
+  authorize('admin', 'manager', 'sales', 'viewer'),
+  wrap(getLeadTimelineHandler),
 );
 
 // Pause/resume outreach — Sales, Manager, Admin (sales: own only, enforced in service).
