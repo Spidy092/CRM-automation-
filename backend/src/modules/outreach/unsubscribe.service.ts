@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto';
 import { z } from 'zod';
 import { redis } from '../../shared/utils/redis';
 import { AppError } from '../../shared/middleware/errorHandler';
+import { unsubscribeOutreachSchema } from './outreach.schema';
 
 const payloadSchema = z.object({
   leadId: z.string().uuid(),
@@ -57,10 +58,17 @@ export async function createOutreachUnsubscribeUrl(leadId: string, email: string
 }
 
 /** Confirm an email recipient's opt-out; retained tokens make retries idempotent. */
-export async function unsubscribeOutreachRecipient(token: string): Promise<void> {
+export async function unsubscribeOutreachRecipient(
+  token: string,
+  reason?: z.infer<typeof unsubscribeOutreachSchema>['reason'],
+): Promise<void> {
   const stored = await redis.get(tokenKey(token));
   if (!stored) throw new AppError('This unsubscribe link is invalid or expired', 404);
   const payload = payloadSchema.parse(JSON.parse(stored) as unknown);
   const { optOutLeadByEmail } = await import('../leads/leads.service');
   await optOutLeadByEmail(payload.leadId, payload.emailHash);
+  if (reason) {
+    // Feedback never gates opt-out and expires with the existing capability token.
+    await redis.set(tokenKey(token), JSON.stringify({ ...payload, reason }), 'KEEPTTL');
+  }
 }
