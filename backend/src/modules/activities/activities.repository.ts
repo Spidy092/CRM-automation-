@@ -1,4 +1,4 @@
-import { query, queryOne } from '../../shared/utils/db';
+import { pool, query, queryOne } from '../../shared/utils/db';
 import {
   Activity,
   ActivityListFilters,
@@ -10,8 +10,12 @@ import {
 const ACTIVITY_COLS = 'id, lead_id, user_id, type, metadata, created_at';
 const ACTIVITY_COLS_ALIASED = 'a.id, a.lead_id, a.user_id, a.type, a.metadata, a.created_at';
 
-export async function insertActivity(input: CreateActivityInput): Promise<Activity> {
-  const row = await queryOne<Activity>(
+export async function insertActivity(
+  input: CreateActivityInput,
+  executor?: { query: typeof pool.query },
+): Promise<Activity> {
+  const db = executor ?? pool;
+  const res = await db.query<Activity>(
     `INSERT INTO activities (lead_id, user_id, type, metadata)
      VALUES ($1, $2, $3, COALESCE($4::jsonb, '{}'::jsonb))
      RETURNING ${ACTIVITY_COLS}`,
@@ -22,6 +26,7 @@ export async function insertActivity(input: CreateActivityInput): Promise<Activi
       input.metadata ? JSON.stringify(input.metadata) : null,
     ],
   );
+  const row = res.rows[0] ?? null;
   if (!row) throw new Error('Failed to insert activity');
   return row;
 }

@@ -13,6 +13,7 @@ import {
   getLeadTimelineHandler,
   getLeadLogsHandler,
   listTasksHandler,
+  getTaskHandler,
   sendManualOutreachHandler,
   quickSendHandler,
   createTaskHandler,
@@ -48,6 +49,7 @@ router.post(
 
 // Tasks (sales + admin + manager can create/update)
 router.get('/tasks', authorize('admin', 'manager', 'sales'), wrap(listTasksHandler));
+router.get('/tasks/:id', authorize('admin', 'manager', 'sales'), wrap(getTaskHandler));
 router.post('/tasks', authorize('admin', 'manager', 'sales'), wrap(createTaskHandler));
 router.put('/tasks/:id', authorize('admin', 'manager', 'sales'), wrap(updateTaskHandler));
 

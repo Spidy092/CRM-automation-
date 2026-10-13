@@ -54,16 +54,19 @@ export async function updateAssignmentConfig(
   return result.rows[0];
 }
 
-export async function findEligibleUsers(): Promise<RoundRobinUser[]> {
+export async function findEligibleUsers(roles?: string[]): Promise<RoundRobinUser[]> {
+  const allowed = roles && roles.length > 0 ? roles : ['sales'];
   const result = await pool.query<RoundRobinUser>(
-    `SELECT u.id, u.name, u.email, u.is_available,
+    `SELECT u.id, u.name, u.email, u.role, u.is_available,
             MAX(a.created_at) as last_assigned_at,
             COUNT(a.id) as assignment_count
      FROM users u
      LEFT JOIN assignments a ON u.id = a.assigned_to
-     WHERE u.role = 'sales' AND u.is_active = TRUE AND u.is_available = TRUE
-     GROUP BY u.id, u.name, u.email, u.is_available
+     WHERE u.role = ANY($1) AND u.is_active = TRUE AND u.is_available = TRUE
+       AND u.deleted_at IS NULL
+     GROUP BY u.id, u.name, u.email, u.role, u.is_available
      ORDER BY last_assigned_at ASC NULLS FIRST, assignment_count ASC`,
+    [allowed],
   );
   return result.rows;
 }
@@ -71,7 +74,7 @@ export async function findEligibleUsers(): Promise<RoundRobinUser[]> {
 export async function insertAssignment(
   leadId: string,
   assignedTo: string,
-  assignedBy: string,
+  assignedBy: string | null,
   assignmentType: 'round_robin' | 'manual' | 'override',
   executor?: { query: typeof pool.query },
 ): Promise<Assignment> {
@@ -84,8 +87,12 @@ export async function insertAssignment(
   return result.rows[0];
 }
 
-export async function findAssignmentByLead(leadId: string): Promise<Assignment | null> {
-  const result = await pool.query<Assignment>(
+export async function findAssignmentByLead(
+  leadId: string,
+  executor?: { query: typeof pool.query },
+): Promise<Assignment | null> {
+  const db = executor ?? pool;
+  const result = await db.query<Assignment>(
     'SELECT * FROM assignments WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1',
     [leadId],
   );
@@ -100,19 +107,7 @@ export async function findAssignmentsByUser(userId: string): Promise<Assignment[
   return result.rows;
 }
 
-export async function updateLeadAssignment(
-  leadId: string,
-  userId: string,
-  executor?: { query: typeof pool.query },
-): Promise<void> {
-  const db = executor ?? pool;
-  await db.query('UPDATE leads SET assigned_to = $1 WHERE id = $2 AND deleted_at IS NULL', [
-    userId,
-    leadId,
-  ]);
-}
-
-export async function getNextRoundRobinUser(): Promise<RoundRobinUser | null> {
-  const users = await findEligibleUsers();
+export async function getNextRoundRobinUser(roles?: string[]): Promise<RoundRobinUser | null> {
+  const users = await findEligibleUsers(roles);
   return users[0] || null;
 }

@@ -215,14 +215,24 @@ describe('buildPageContext', () => {
       updated_at: '2026-06-29T00:00:00.000Z',
     };
     const eligibleUsers: EligibleUser[] = [
-      { id: '99999999-9999-4999-8999-999999999999', first_name: 'Sales', last_name: 'Rep', email: 'sales@example.com', role: 'sales' },
+      {
+        id: '99999999-9999-4999-8999-999999999999',
+        name: 'Sales Rep',
+        email: 'sales@example.com',
+        role: 'sales',
+        is_available: true,
+        last_assigned_at: null,
+        assignment_count: 3,
+      },
     ];
     assignmentClient.setQueryData(['assignments-config'], assignmentConfig);
     assignmentClient.setQueryData(['assignments-eligible-users'], eligibleUsers);
     const assignmentContext = buildPageContext('/settings/assignments', assignmentClient);
     expect(assignmentContext.pageMetrics).toEqual(expect.objectContaining({ assignmentEnabled: true, thresholdScore: 60 }));
     expect(assignmentContext.visibleRecords).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: 'assignment_user', name: 'Sales Rep', status: 'sales' })]),
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'assignment_user', name: 'Sales Rep', status: 'available' }),
+      ]),
     );
 
     const fieldsClient = createClient();

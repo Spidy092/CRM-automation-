@@ -1,4 +1,4 @@
-import { query, queryOne } from '../../shared/utils/db';
+import { pool, query, queryOne } from '../../shared/utils/db';
 import {
   createOutboundActivityAndUpdateLead,
   findActivitiesByLeadId,
@@ -7,10 +7,12 @@ import {
 } from './activities.repository';
 
 jest.mock('../../shared/utils/db', () => ({
+  pool: { query: jest.fn() },
   query: jest.fn(),
   queryOne: jest.fn(),
 }));
 
+const mockedPoolQuery = pool.query as jest.Mock;
 const mockedQuery = query as jest.MockedFunction<typeof query>;
 const mockedQueryOne = queryOne as jest.MockedFunction<typeof queryOne>;
 
@@ -30,7 +32,7 @@ describe('activities.repository', () => {
 
   describe('insertActivity', () => {
     it('inserts and returns activity', async () => {
-      mockedQueryOne.mockResolvedValue(baseActivity);
+      mockedPoolQuery.mockResolvedValue({ rows: [baseActivity] });
       const res = await insertActivity({
         lead_id: 'lead-1',
         user_id: 'user-1',
@@ -38,14 +40,14 @@ describe('activities.repository', () => {
         metadata: { note: 'hello' },
       });
       expect(res).toEqual(baseActivity);
-      expect(mockedQueryOne).toHaveBeenCalledWith(
+      expect(mockedPoolQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO activities'),
         ['lead-1', 'user-1', 'note', JSON.stringify({ note: 'hello' })],
       );
     });
 
     it('throws when insert returns no row', async () => {
-      mockedQueryOne.mockResolvedValue(null);
+      mockedPoolQuery.mockResolvedValue({ rows: [] });
       await expect(
         insertActivity({ lead_id: 'lead-1', user_id: 'user-1', type: 'call' }),
       ).rejects.toThrow('Failed to insert activity');
@@ -69,9 +71,8 @@ describe('activities.repository', () => {
 
   describe('createOutboundActivityAndUpdateLead', () => {
     it('inserts activity and updates lead first_contacted_at', async () => {
-      mockedQueryOne
-        .mockResolvedValueOnce(baseActivity)
-        .mockResolvedValueOnce({ first_contacted_at: new Date() });
+      mockedPoolQuery.mockResolvedValue({ rows: [baseActivity] });
+      mockedQueryOne.mockResolvedValueOnce({ first_contacted_at: new Date() });
       const res = await createOutboundActivityAndUpdateLead({
         lead_id: 'lead-1',
         user_id: 'user-1',

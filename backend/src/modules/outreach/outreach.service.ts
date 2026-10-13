@@ -24,6 +24,7 @@ import {
   findTaskAssigneeForLead,
   findTaskById,
   findTasks,
+  findTasksVisibleToUser,
   findTimelineByLead,
   getSequenceEnrollmentStats,
   insertOutreachLog,
@@ -35,6 +36,11 @@ import {
 } from './outreach.repository';
 import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from '../../workers/queue';
 import { findLeadById } from '../leads/leads.repository';
+import {
+  assertAccess,
+  getLeadById as getLeadByIdService,
+  getLeadIdsOwnedBy,
+} from '../leads/leads.service';
 import { findTemplateById } from '../templates/templates.repository';
 import { personalizeMessage } from './outreach.prompt';
 import {
@@ -181,21 +187,93 @@ export async function getLeadLogs(leadId: string, limit?: number): Promise<Outre
 
 // ── Tasks ──────────────────────────────────────────────────────────────────
 
+/**
+ * Actor id reserved for worker-originated task writes (outreach worker
+ * phone-call tasks). HTTP actors always carry database UUIDs from verified
+ * JWTs, so this sentinel can never arrive from a client and is safe to
+ * trust as internal-only.
+ */
+const SYSTEM_ACTOR_ID = 'system';
+
+function isSystemActor(actor: OutreachActor): boolean {
+  return actor.id === SYSTEM_ACTOR_ID;
+}
+
+function isPrivileged(actor: OutreachActor): boolean {
+  return actor.role === 'admin' || actor.role === 'manager';
+}
+
+/**
+ * Adapts an outreach actor to the leads-module Actor shape. Roles arrive
+ * from verified JWTs via route-level `authorize(...)`, so the cast is a
+ * type-level bridge, not a trust boundary.
+ */
+function toLeadActor(actor: OutreachActor): {
+  id: string;
+  role: 'admin' | 'manager' | 'sales' | 'marketing' | 'viewer';
+  ipAddress?: string | null;
+} {
+  return {
+    id: actor.id,
+    role: actor.role as 'admin' | 'manager' | 'sales' | 'marketing' | 'viewer',
+    ipAddress: actor.ipAddress ?? null,
+  };
+}
+
 function toTaskResponse(row: TaskRow) {
   return { ...row };
 }
 
-export async function getTask(id: string): Promise<TaskRow> {
-  const row = await findTaskById(id);
-  if (!row) throw new AppError('Task not found', 404);
-  return toTaskResponse(row);
+/**
+ * Loads a task and enforces read access: task assignee, task creator, lead
+ * owner, or admin/manager. An assignee can always read their own task —
+ * the minimum visibility needed to perform delegated work — even without
+ * access to the parent lead (whose detail endpoints stay gated).
+ */
+async function loadTaskForRead(id: string, actor: OutreachActor): Promise<TaskRow> {
+  const task = await findTaskById(id);
+  if (!task) throw new AppError('Task not found', 404);
+  if (
+    isSystemActor(actor) ||
+    isPrivileged(actor) ||
+    task.assigned_to === actor.id ||
+    task.created_by === actor.id
+  ) {
+    return task;
+  }
+  try {
+    await getLeadByIdService(task.lead_id, toLeadActor(actor));
+  } catch (error) {
+    if (error instanceof AppError && error.statusCode === 403) {
+      throw new AppError('Task not found', 404);
+    }
+    throw error;
+  }
+  return task;
+}
+
+export async function getTask(id: string, actor: OutreachActor): Promise<TaskRow> {
+  const task = await loadTaskForRead(id, actor);
+  return toTaskResponse(task);
 }
 
 export async function listTasks(
   filters: { status?: string; assignedTo?: 'me'; limit?: number },
   actor: OutreachActor,
 ): Promise<TaskRow[]> {
-  const rows = await findTasks({
+  if (isSystemActor(actor) || isPrivileged(actor)) {
+    const rows = await findTasks({
+      status: filters.status,
+      assignedTo: filters.assignedTo === 'me' ? actor.id : undefined,
+      limit: clampLimit(filters.limit),
+    });
+    return rows.map(toTaskResponse);
+  }
+  // Non-privileged actors see only tasks assigned to them, created by them,
+  // or on leads they own — enforced in the query, not just the service.
+  const rows = await findTasksVisibleToUser({
+    userId: actor.id,
+    ownedLeadIds: await getLeadIdsOwnedBy(actor.id),
     status: filters.status,
     assignedTo: filters.assignedTo === 'me' ? actor.id : undefined,
     limit: clampLimit(filters.limit),
@@ -204,6 +282,21 @@ export async function listTasks(
 }
 
 export async function createTask(input: TaskInput, actor: OutreachActor): Promise<TaskRow> {
+  if (!isSystemActor(actor)) {
+    // The creator needs write access to the parent lead. Delegating the
+    // task to someone else additionally requires the reassign right
+    // (lead owner or admin/manager) — see updateTask below.
+    const lead = await getLeadByIdService(input.leadId, toLeadActor(actor));
+    assertAccess(lead.assigned_to, toLeadActor(actor), true);
+    if (
+      input.assignedTo != null &&
+      input.assignedTo !== actor.id &&
+      !isPrivileged(actor) &&
+      lead.assigned_to !== actor.id
+    ) {
+      throw new AppError('Forbidden: only the lead owner may delegate tasks to others', 403);
+    }
+  }
   const row = await insertTask({
     lead_id: input.leadId,
     campaign_id: input.campaignId ?? null,
@@ -214,10 +307,12 @@ export async function createTask(input: TaskInput, actor: OutreachActor): Promis
     title: input.title,
     description: input.description ?? null,
     due_at: input.dueAt ?? null,
-    created_by: actor.id,
+    // tasks.created_by references users; internal worker actors have no
+    // user row and must be stored as NULL.
+    created_by: isSystemActor(actor) ? null : actor.id,
   });
   await writeAuditLog({
-    userId: actor.id,
+    userId: isSystemActor(actor) ? null : actor.id,
     action: 'task.created',
     entityType: 'task',
     entityId: row.id,
@@ -313,6 +408,55 @@ export async function updateTask(
   const before = await findTaskById(id);
   if (!before) throw new AppError('Task not found', 404);
 
+  // Per-field authorization, evaluated exhaustively BEFORE any write: a
+  // mixed-field request is rejected in full if any requested change is
+  // unauthorized, so no partial mutation can slip through.
+  if (!isSystemActor(actor) && !isPrivileged(actor)) {
+    let leadOwnerId: string | null = null;
+    try {
+      const lead = await getLeadByIdService(before.lead_id, toLeadActor(actor));
+      leadOwnerId = lead.assigned_to;
+    } catch (error) {
+      // A sales task assignee or creator may work on a delegated task without
+      // access to the full parent lead. Treat only an access denial as
+      // "not the owner"; propagate database and not-found failures.
+      if (!(error instanceof AppError) || error.statusCode !== 403) throw error;
+    }
+    const isAssignee = before.assigned_to === actor.id;
+    const isCreator = before.created_by === actor.id;
+    const isLeadOwner = leadOwnerId === actor.id;
+
+    if (fields.status !== undefined) {
+      // Completing (or reopening/cancelling): assignee, lead owner, or privileged.
+      if (!isAssignee && !isLeadOwner) {
+        throw new AppError(
+          'Forbidden: only the assignee or lead owner may change task status',
+          403,
+        );
+      }
+    }
+    if (fields.assignedTo !== undefined) {
+      // Reassigning: lead owner only. The assignee may only release the
+      // task back (null), never name another user.
+      const releasing = fields.assignedTo === null && isAssignee;
+      if (!isLeadOwner && !releasing) {
+        throw new AppError('Forbidden: only the lead owner may reassign tasks', 403);
+      }
+    }
+    const editsContent = fields.title !== undefined || fields.description !== undefined;
+    if (editsContent && !isCreator && !isLeadOwner) {
+      // The assignee's completion permission does not grant editing: only
+      // due-date replanning is theirs (covered by the dueAt branch below).
+      throw new AppError('Forbidden: only the creator or lead owner may edit task content', 403);
+    }
+    if (fields.dueAt !== undefined && !isAssignee && !isCreator && !isLeadOwner) {
+      throw new AppError('Forbidden: you cannot change this task', 403);
+    }
+    if (!isAssignee && !isCreator && !isLeadOwner) {
+      throw new AppError('Forbidden: you cannot update this task', 403);
+    }
+  }
+
   const row = await updateTaskRepo(id, {
     assigned_to: fields.assignedTo,
     status: fields.status,
@@ -326,7 +470,7 @@ export async function updateTask(
   }
 
   await writeAuditLog({
-    userId: actor.id,
+    userId: isSystemActor(actor) ? null : actor.id,
     action: 'task.updated',
     entityType: 'task',
     entityId: id,

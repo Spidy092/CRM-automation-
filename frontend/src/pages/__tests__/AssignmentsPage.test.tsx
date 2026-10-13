@@ -23,6 +23,9 @@ vi.mock('@/api/client', () => {
       is_default: true,
       last_name: 'Test',
       first_name: 'Test',
+      is_available: true,
+      assignment_count: 2,
+      last_assigned_at: null,
       campaign_id: '1',
       user_id: '1',
       position: 1,
@@ -77,5 +80,7 @@ describe('AssignmentsPage', () => {
     const { container } = renderWithProviders(<AssignmentsPage />);
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(container).toBeTruthy();
+    expect(screen.getByText('Test')).toBeTruthy();
+    expect(screen.getByText(/2 assigned/)).toBeTruthy();
   });
 });
