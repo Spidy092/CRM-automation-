@@ -59,7 +59,7 @@ export async function findEligibleUsers(roles?: string[]): Promise<RoundRobinUse
   const result = await pool.query<RoundRobinUser>(
     `SELECT u.id, u.name, u.email, u.role, u.is_available,
             MAX(a.created_at) as last_assigned_at,
-            COUNT(a.id) as assignment_count
+            COUNT(a.id)::int as assignment_count
      FROM users u
      LEFT JOIN assignments a ON u.id = a.assigned_to
      WHERE u.role = ANY($1) AND u.is_active = TRUE AND u.is_available = TRUE

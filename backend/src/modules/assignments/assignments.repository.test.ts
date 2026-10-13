@@ -81,14 +81,15 @@ describe('assignments.repository', () => {
   describe('findEligibleUsers', () => {
     it('returns sales users ordered by load by default', async () => {
       const rows = [
-        { id: 'u1', assignment_count: '2' },
-        { id: 'u2', assignment_count: '5' },
+        { id: 'u1', assignment_count: 2 },
+        { id: 'u2', assignment_count: 5 },
       ];
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows));
       await expect(findEligibleUsers()).resolves.toEqual(rows);
-      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('u.role = ANY($1)'), [
-        ['sales'],
-      ]);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('COUNT(a.id)::int as assignment_count'),
+        [['sales']],
+      );
     });
 
     it('binds configured roles', async () => {

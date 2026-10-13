@@ -444,6 +444,42 @@ describe('updateLeadFields', () => {
     );
   });
 
+  it('allows sales to resend the current owner while updating other fields', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (findLeadByIdForUpdate as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, notes: 'updated' });
+
+    const result = await updateLeadFields(
+      'lead-1',
+      { assigned_to: 'rep-1', notes: 'updated' },
+      { id: 'rep-1', role: 'sales' },
+    );
+
+    expect(result.notes).toBe('updated');
+    expect(mockOwnershipApplier).not.toHaveBeenCalled();
+    expect(updateLead).toHaveBeenCalledWith(
+      'lead-1',
+      expect.not.objectContaining({ assigned_to: 'rep-1' }),
+      expect.anything(),
+    );
+  });
+
+  it('still forbids sales from changing lead ownership', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (findLeadByIdForUpdate as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+
+    await expect(
+      updateLeadFields(
+        'lead-1',
+        { assigned_to: 'rep-2' },
+        { id: 'rep-1', role: 'sales' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+
+    expect(updateLead).not.toHaveBeenCalled();
+    expect(mockOwnershipApplier).not.toHaveBeenCalled();
+  });
+
   it('routes assigned_to changes through the ownership applier', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-2' });

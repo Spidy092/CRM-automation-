@@ -465,9 +465,6 @@ export async function updateLeadFields(
   }
 
   const includesOwner = input.assigned_to !== undefined;
-  if (includesOwner && actor.role !== 'admin' && actor.role !== 'manager') {
-    throw new AppError('Forbidden: only an admin or manager may change lead ownership', 403);
-  }
   // Ownership changes must go through the registered cross-module
   // orchestrator so owner, history, notification, and activity stay aligned.
   // The transaction below returns 503 if an actual change has no applier.
@@ -485,6 +482,9 @@ export async function updateLeadFields(
     assertAccess(locked.assigned_to, actor, true);
 
     const ownershipChanged = includesOwner && newOwner !== locked.assigned_to;
+    if (ownershipChanged && actor.role !== 'admin' && actor.role !== 'manager') {
+      throw new AppError('Forbidden: only an admin or manager may change lead ownership', 403);
+    }
     if (ownershipChanged && !applier) {
       throw new AppError('Ownership service is unavailable', 503);
     }
