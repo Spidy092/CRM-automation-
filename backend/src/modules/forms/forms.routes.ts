@@ -13,6 +13,8 @@ import {
   getEmbedSnippetHandler,
   getPublicFormHandler,
   submitFormHandler,
+  listFailedSubmissionsHandler,
+  retrySubmissionLeadHandler,
 } from './forms.controller';
 
 const router = Router();
@@ -35,6 +37,17 @@ router.get(
   '/admin/:formId/embed',
   authorize('admin', 'manager', 'marketing'),
   wrap(getEmbedSnippetHandler),
+);
+
+router.get(
+  '/admin/:formId/failed-submissions',
+  authorize('admin', 'manager'),
+  wrap(listFailedSubmissionsHandler),
+);
+router.post(
+  '/admin/:formId/submissions/:submissionId/retry',
+  authorize('admin', 'manager'),
+  wrap(retrySubmissionLeadHandler),
 );
 
 // ── Public Routes (no auth) ──────────────────────────────────────────────

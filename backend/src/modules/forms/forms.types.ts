@@ -14,27 +14,9 @@ export interface FormFieldDef {
 
 // ── Form Email Settings ───────────────────────────────────────────────────
 
-export interface EmailSettings {
-  autoReply?: {
-    enabled: boolean;
-    fromName: string;
-    fromEmail: string;
-    subject: string;
-    body: string;
-  };
-  teamNotification?: {
-    enabled: boolean;
-    emails: string;
-    subject: string;
-    body: string;
-  };
-  partnerNotification?: {
-    enabled: boolean;
-    emails: string;
-    subject: string;
-    body: string;
-  };
-}
+export type EmailSettings = import('zod').infer<
+  typeof import('./forms.schema').emailSettingsSchema
+>;
 
 // ── Form Row ──────────────────────────────────────────────────────────────
 
@@ -106,6 +88,7 @@ export interface UpdateFormInput {
 }
 
 export interface FormAnalytics {
+  failedLeadSubmissions?: number;
   formId: string;
   formName: string;
   totalSubmissions: number;
