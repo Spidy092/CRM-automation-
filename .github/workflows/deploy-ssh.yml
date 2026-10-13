@@ -116,7 +116,9 @@ jobs:
             cd /home/ubuntu/crm
 
             echo "Running database migrations..."
-            docker compose -f docker-compose.prod.yml run --rm -T --entrypoint '' api npx node-pg-migrate up -m /migrations </dev/null
+            # Two legacy migrations share the 0075 timestamp; production has already applied
+            # notification_action_types, so retain migration history and skip the order guard.
+            docker compose -f docker-compose.prod.yml run --rm -T --entrypoint '' api npx node-pg-migrate up --no-check-order -m /migrations </dev/null
 
             echo "Recreating containers..."
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
