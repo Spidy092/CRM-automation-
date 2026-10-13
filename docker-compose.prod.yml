@@ -67,6 +67,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
     volumes:
       - ./migrations:/migrations:ro
+      - uploads_data:/app/uploads
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health || exit 1']
       interval: 30s
@@ -101,6 +102,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
     command: node dist/workers/index.js
+    volumes:
+      - uploads_data:/app/uploads
     healthcheck:
       disable: true
     deploy:
@@ -179,6 +182,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  uploads_data:
+    name: crm_uploads
 
 networks:
   crm-network:
