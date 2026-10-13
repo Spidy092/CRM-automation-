@@ -16,6 +16,7 @@ import {
   insertPageView,
   findPageViews,
   countPageViews,
+  findPagesReferencingFile,
 } from './pages.repository';
 
 const mockQuery = query as jest.Mock;
@@ -168,5 +169,18 @@ describe('countPageViews', () => {
   it('returns 0 when no row', async () => {
     mockQueryOne.mockResolvedValue(null);
     await expect(countPageViews('p1')).resolves.toBe(0);
+  });
+});
+
+describe('findPagesReferencingFile', () => {
+  it('matches gallery and attachment blocks while excluding deleted pages', async () => {
+    mockQuery.mockResolvedValue([{ id: 'p1', title: 'Pricing' }]);
+    await expect(findPagesReferencingFile('f1')).resolves.toEqual([
+      { id: 'p1', title: 'Pricing' },
+    ]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('deleted_at IS NULL'),
+      [JSON.stringify([{ type: 'gallery', fileIds: ['f1'] }]), JSON.stringify([{ type: 'attachment', fileId: 'f1' }])],
+    );
   });
 });

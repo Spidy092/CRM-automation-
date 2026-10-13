@@ -13,6 +13,7 @@ import {
   deleteTemplate,
   appendTemplateAttachment,
   removeTemplateAttachment,
+  findTemplatesReferencingFile,
 } from './templates.repository';
 
 const mockQuery = query as jest.Mock;
@@ -180,5 +181,18 @@ describe('removeTemplateAttachment', () => {
   it('throws 404 when template not found', async () => {
     mockQueryOne.mockResolvedValue(null);
     await expect(removeTemplateAttachment('x', 'a1')).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('findTemplatesReferencingFile', () => {
+  it('matches live library references via jsonb containment', async () => {
+    mockQuery.mockResolvedValue([{ id: 't1', name: 'Welcome' }]);
+    await expect(findTemplatesReferencingFile('f1')).resolves.toEqual([
+      { id: 't1', name: 'Welcome' },
+    ]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('@>'),
+      [JSON.stringify([{ libraryFileId: 'f1' }])],
+    );
   });
 });

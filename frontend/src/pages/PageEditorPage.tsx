@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   usePage,
   useCreatePage,
@@ -16,8 +16,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { AlertDialog } from '@/components/ui/AlertDialog';
+import { AddContentPicker } from '@/components/content/AddContentPicker';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
+import { resolveAssetUrl } from '@/lib/contentLinks';
 import { AICopyModal } from '@/components/AICopyModal';
 import { SeoSocialPreviewCard } from '@/components/SeoSocialPreviewCard';
 import {
@@ -42,86 +45,45 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-// ── File picker modal (shared by gallery + attachment blocks) ────────────────
+// ── File selection reuses the shared AddContentPicker (with in-picker upload).
+// Gallery blocks select images only; attachment blocks accept any library file.
 
-function FilePickerModal({
-  multiple,
-  onSelect,
-  onClose,
-}: {
-  multiple: boolean;
-  onSelect: (fileIds: string[]) => void;
-  onClose: () => void;
-}) {
-  const { data: files = [], isLoading } = useFiles();
-  const [selected, setSelected] = useState<string[]>([]);
-
-  const toggle = (file: LibraryFile) => {
-    if (!multiple) {
-      onSelect([file.id]);
-      return;
-    }
-    setSelected((current) =>
-      current.includes(file.id) ? current.filter((id) => id !== file.id) : [...current, file.id],
-    );
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">
-            Choose {multiple ? 'images' : 'a file'} from library
-          </h3>
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        {!isLoading && files.length === 0 && (
-          <p className="text-sm text-slate-500">
-            No files in the library yet. Upload some from the Files tab first.
-          </p>
-        )}
-        <div className="space-y-2">
-          {files.map((file) => (
-            <button
-              key={file.id}
-              type="button"
-              onClick={() => toggle(file)}
-              className={`flex w-full items-center gap-3 rounded-md border p-2 text-left hover:bg-slate-50 ${
-                selected.includes(file.id) ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200'
-              }`}
-            >
-              {file.mime_type.startsWith('image/') ? (
-                <img src={file.url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
-              ) : (
-                <FileText className="h-6 w-6 shrink-0 text-slate-500" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-slate-900">{file.filename}</div>
-                <div className="text-xs text-slate-500">{(file.size_bytes / 1024).toFixed(0)} KB</div>
-              </div>
-            </button>
-          ))}
-        </div>
-        {multiple && (
-          <div className="mt-4 flex justify-end gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="button" size="sm" disabled={selected.length === 0} onClick={() => onSelect(selected)}>
-              Add {selected.length || ''} image{selected.length === 1 ? '' : 's'}
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+const PAGE_PRESETS: Array<{
+  key: string;
+  name: string;
+  title: string;
+  description: string;
+  blocks: PageBlock[];
+}> = [
+  {
+    key: 'product-overview',
+    name: 'Product overview',
+    title: 'Product overview',
+    description: 'A short summary of what you offer and who it is for. Replace this text with your own copy.',
+    blocks: [
+      { type: 'link', label: 'Visit our website', url: 'https://example.com' },
+      { type: 'map', address: 'Your street address, City' },
+    ],
+  },
+  {
+    key: 'pricing',
+    name: 'Pricing',
+    title: 'Pricing',
+    description: 'Summarize your plans and what each includes. Replace the example link with your pricing page.',
+    blocks: [
+      { type: 'link', label: 'See full pricing', url: 'https://example.com/pricing' },
+    ],
+  },
+  {
+    key: 'offer',
+    name: 'Offer',
+    title: 'Special offer',
+    description: 'Describe the offer, who is eligible, and when it ends. Replace the example link with your offer page.',
+    blocks: [
+      { type: 'link', label: 'Claim the offer', url: 'https://example.com/offer' },
+    ],
+  },
+];
 
 // ── Block editors ─────────────────────────────────────────────────────────────
 
@@ -152,6 +114,20 @@ function BlockCard({
   );
 }
 
+function GalleryImage({ file }: { file: LibraryFile }): React.JSX.Element {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="flex h-16 w-16 items-center justify-center rounded bg-slate-100 px-1 text-center text-[10px] text-slate-400" title={file.filename}>
+        unavailable
+      </div>
+    );
+  }
+  return (
+    <img src={resolveAssetUrl(file.url)} alt={file.filename} title={file.filename} className="h-16 w-16 rounded object-cover" loading="lazy" onError={() => setFailed(true)} />
+  );
+}
+
 function GalleryBlockEditor({
   block,
   filesById,
@@ -173,7 +149,7 @@ function GalleryBlockEditor({
           return (
             <div key={id} className="relative">
               {file ? (
-                <img src={file.url} alt="" className="h-16 w-16 rounded object-cover" />
+                <GalleryImage file={file} />
               ) : (
                 <div className="flex h-16 w-16 items-center justify-center rounded bg-slate-100 text-xs text-slate-400">
                   missing
@@ -182,7 +158,8 @@ function GalleryBlockEditor({
               <button
                 type="button"
                 onClick={() => onChange({ ...block, fileIds: block.fileIds.filter((f) => f !== id) })}
-                className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 shadow ring-1 ring-slate-200"
+                className="absolute -right-1.5 -top-1.5 min-h-[44px] min-w-[44px] rounded-full bg-white p-2 shadow ring-1 ring-slate-200"
+                aria-label={`Remove ${file?.filename ?? 'image'}`}
               >
                 <X className="h-3 w-3 text-slate-500" />
               </button>
@@ -192,19 +169,27 @@ function GalleryBlockEditor({
         <button
           type="button"
           onClick={() => setPicking(true)}
-          className="flex h-16 w-16 items-center justify-center rounded border border-dashed border-slate-300 text-slate-400 hover:border-slate-400 hover:text-slate-600"
+          aria-label="Add images from library"
+          className="flex h-16 min-h-[44px] w-16 items-center justify-center rounded border border-dashed border-slate-300 text-slate-400 hover:border-slate-400 hover:text-slate-600"
         >
           +
         </button>
       </div>
+      <p className="mt-1 text-[11px] text-slate-500">Images only. Upload new files without leaving this editor.</p>
       {picking && (
-        <FilePickerModal
-          multiple
+        <AddContentPicker
+          open
+          channel="email"
+          editorMode="simple"
+          fileFilter="image"
+          allowPages={false}
+          dialogTitle="Choose images from library"
           onClose={() => setPicking(false)}
-          onSelect={(ids) => {
+          onAddFile={(file) => {
             setPicking(false);
-            onChange({ ...block, fileIds: Array.from(new Set([...block.fileIds, ...ids])) });
+            onChange({ ...block, fileIds: Array.from(new Set([...block.fileIds, file.id])) });
           }}
+          onAddPage={() => undefined}
         />
       )}
     </BlockCard>
@@ -270,13 +255,18 @@ function AttachmentBlockEditor({
         />
       </div>
       {picking && (
-        <FilePickerModal
-          multiple={false}
+        <AddContentPicker
+          open
+          channel="email"
+          editorMode="simple"
+          allowPages={false}
+          dialogTitle="Choose a file from library"
           onClose={() => setPicking(false)}
-          onSelect={([id]) => {
+          onAddFile={(file) => {
             setPicking(false);
-            onChange({ ...block, fileId: id });
+            onChange({ ...block, fileId: file.id });
           }}
+          onAddPage={() => undefined}
         />
       )}
     </BlockCard>
@@ -368,6 +358,9 @@ export function PageEditorPage() {
   const [blocks, setBlocks] = useState<PageBlock[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showAiModal, setShowAiModal] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const filesById = new Map(files.map((f) => [f.id, f]));
 
@@ -378,11 +371,33 @@ export function PageEditorPage() {
       setDescription(existing.description ?? '');
       setBlocks(existing.blocks ?? []);
       setSlugTouched(true);
+      setDirty(false);
     }
   }, [existing]);
 
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
+  const markDirty = () => setDirty(true);
+
+  const applyPreset = (key: string) => {
+    const preset = PAGE_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    setTitle(preset.title);
+    if (!slugTouched) setSlug(slugify(preset.title));
+    setDescription(preset.description);
+    setBlocks(JSON.parse(JSON.stringify(preset.blocks)) as PageBlock[]);
+    markDirty();
+    showToast(`“${preset.name}” preset applied — edit the placeholders before publishing.`, 'success');
+  };
+
   const handleTitleChange = (value: string) => {
     setTitle(value);
+    markDirty();
     if (!slugTouched) setSlug(slugify(value));
   };
 
@@ -393,6 +408,7 @@ export function PageEditorPage() {
     if (generated.blocks.length > 0) {
       setBlocks((prev) => [...prev, ...generated.blocks]);
     }
+    markDirty();
     showToast('AI copy applied to page editor.', 'success');
   };
 
@@ -425,15 +441,33 @@ export function PageEditorPage() {
     try {
       if (isEdit && id) {
         await updatePage.mutateAsync({ id, input });
-        showToast('Page updated.', 'success');
-        navigate('/pages');
+        showToast('Draft saved. Publishing is a separate step — nothing goes public until you publish.', 'success');
+        setDirty(false);
       } else {
-        await createPage.mutateAsync(input);
-        showToast('Page created.', 'success');
-        navigate('/pages');
+        const created = await createPage.mutateAsync(input);
+        showToast('Draft saved. Publish it from the editor when it is ready to share.', 'success');
+        setDirty(false);
+        if (created) navigate(`/pages/${created.id}/edit`, { replace: true });
       }
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to save page.'), 'error');
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!isEdit || !id) {
+      showToast('Save the draft first, then publish it from the editor.', 'error');
+      return;
+    }
+    if (!validate()) return;
+    try {
+      const input = { title: title.trim(), slug: slug.trim(), description: description.trim() || null, blocks };
+      await updatePage.mutateAsync({ id, input });
+      await publishPage.mutateAsync(id);
+      showToast('Page published. It can now be shared from templates.', 'success');
+      setDirty(false);
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to publish page.'), 'error');
     }
   };
 
@@ -454,14 +488,17 @@ export function PageEditorPage() {
 
   const updateBlock = (index: number, next: PageBlock) => {
     setBlocks((current) => current.map((b, i) => (i === index ? next : b)));
+    markDirty();
   };
 
   const removeBlock = (index: number) => {
     setBlocks((current) => current.filter((_, i) => i !== index));
+    markDirty();
   };
 
   const addBlock = (type: PageBlock['type']) => {
     setBlocks((current) => [...current, newBlock(type)]);
+    markDirty();
   };
 
   const saving = createPage.isPending || updatePage.isPending;
@@ -471,7 +508,7 @@ export function PageEditorPage() {
       <PageHeader
         eyebrow="Content"
         title={isEdit ? 'Edit Page' : 'New Page'}
-        description={isEdit ? 'Update this page.' : 'Create a new published page.'}
+        description={isEdit ? 'Update this page. Saving keeps it as a draft until you publish.' : 'Create a new page. It stays a private draft until you publish it.'}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -484,15 +521,16 @@ export function PageEditorPage() {
               <Sparkles className="mr-2 h-4 w-4 text-indigo-600" />
               AI Generate Copy
             </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/pages">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Cancel
-              </Link>
+            <Button variant="outline" size="sm" onClick={() => (dirty ? setConfirmCancel(true) : navigate('/pages'))}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Cancel
             </Button>
           </div>
         }
       />
+      {dirty && (
+        <p role="status" className="text-xs text-amber-700">Unsaved changes — save the draft before leaving.</p>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -519,6 +557,20 @@ export function PageEditorPage() {
                     <Button type="button" variant="outline" size="sm" onClick={handleTogglePublish}>
                       {existing.status === 'published' ? 'Unpublish' : 'Publish'}
                     </Button>
+                  </div>
+                )}
+
+                {!isEdit && blocks.length === 0 && (
+                  <div className="rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
+                    <p className="text-xs font-medium text-slate-700">Start from a preset (optional)</p>
+                    <p className="mt-0.5 text-xs text-slate-500">Neutral placeholders you edit before publishing — no customer claims.</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {PAGE_PRESETS.map((p) => (
+                        <Button key={p.key} type="button" variant="outline" size="sm" className="min-h-[44px] text-xs" onClick={() => applyPreset(p.key)}>
+                          {p.name}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -553,6 +605,7 @@ export function PageEditorPage() {
                       onChange={(e) => {
                         setSlug(e.target.value);
                         setSlugTouched(true);
+                        markDirty();
                       }}
                       placeholder="pricing"
                       className="flex-1"
@@ -566,7 +619,7 @@ export function PageEditorPage() {
                   <Textarea
                     id="description"
                     value={description}
-                    onChange={(e) => setDescription(e.target.value)}
+                    onChange={(e) => { setDescription(e.target.value); markDirty(); }}
                     rows={4}
                     placeholder="A short summary shown at the top of the page."
                   />
@@ -645,15 +698,31 @@ export function PageEditorPage() {
                   </div>
                 </div>
 
-                <div className="flex gap-3 pt-2">
-                  <Button type="submit" disabled={saving}>
+                <div className="flex flex-wrap gap-3 pt-2">
+                  <Button type="submit" disabled={saving} className="min-h-[44px]">
                     <Save className="mr-2 h-4 w-4" />
-                    {saving ? 'Saving…' : isEdit ? 'Update Page' : 'Create Page'}
+                    {saving ? 'Saving…' : isEdit ? 'Save draft' : 'Save draft'}
                   </Button>
-                  <Button type="button" variant="outline" asChild>
-                    <Link to="/pages">Cancel</Link>
+                  <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => setShowPreview(true)}>
+                    Preview
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-[44px]"
+                    disabled={publishPage.isPending || (!isEdit && blocks.length === 0 && !title.trim())}
+                    title={!isEdit ? 'Save the draft first, then publish' : undefined}
+                    onClick={() => void handlePublish()}
+                  >
+                    {existing?.status === 'published' ? 'Publish changes' : 'Publish'}
+                  </Button>
+                  <Button type="button" variant="ghost" className="min-h-[44px]" onClick={() => (dirty ? setConfirmCancel(true) : navigate('/pages'))}>
+                    Cancel
                   </Button>
                 </div>
+                {!isEdit && (
+                  <p className="text-xs text-slate-500">New pages are saved as private drafts. Publishing is a separate, explicit step.</p>
+                )}
               </form>
             </CardContent>
           </Card>
@@ -674,6 +743,55 @@ export function PageEditorPage() {
         isOpen={showAiModal}
         onClose={() => setShowAiModal(false)}
         onApply={handleApplyAiCopy}
+      />
+
+      {showPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowPreview(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Draft preview: ${title || 'Untitled page'}`}
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">{title || 'Untitled page'}</h2>
+                <p className="mt-0.5 font-mono text-xs text-slate-500">/p/{slug || '…'}</p>
+              </div>
+              <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px]" onClick={() => setShowPreview(false)} aria-label="Close draft preview">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Draft preview — not publicly shareable until you publish.
+            </p>
+            {description && <p className="mt-3 text-sm text-slate-700">{description}</p>}
+            <div className="mt-3 space-y-2">
+              {blocks.map((b, i) => (
+                <div key={`${b.type}-${i}`} className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  {b.type === 'gallery' && `Image gallery · ${b.fileIds.length} image${b.fileIds.length === 1 ? '' : 's'}`}
+                  {b.type === 'link' && `Link · ${b.label || '(no label)'} → ${b.url || '(no URL)'}`}
+                  {b.type === 'attachment' && `Attachment · ${b.label || filesById.get(b.fileId)?.filename || '(no file)'}`}
+                  {b.type === 'video' && `Video · ${b.youtubeUrl || '(no URL)'}`}
+                  {b.type === 'map' && `Map · ${b.address || '(no address)'}`}
+                </div>
+              ))}
+              {blocks.length === 0 && <p className="text-xs text-slate-500">No content blocks yet.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AlertDialog
+        open={confirmCancel}
+        title="Discard unsaved changes?"
+        description="You have unsaved changes in this page editor. Leaving now discards them."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        variant="destructive"
+        onConfirm={() => { setConfirmCancel(false); navigate('/pages'); }}
+        onCancel={() => setConfirmCancel(false)}
       />
     </div>
   );

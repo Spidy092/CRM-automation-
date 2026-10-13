@@ -18,3 +18,24 @@ export function getApiErrorStatus(error: unknown): number | undefined {
   const status = (response as { status?: unknown }).status;
   return typeof status === 'number' ? status : undefined;
 }
+
+export interface FileReferenceInfo {
+  id: string;
+  name?: string;
+  title?: string;
+}
+
+export interface FileReferencesMeta {
+  templates: FileReferenceInfo[];
+  pages: FileReferenceInfo[];
+}
+
+/** Structured `meta.references` from a 409 file-delete conflict (absent for other errors). */
+export function getApiErrorReferences(error: unknown): FileReferencesMeta | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const data = (error as { response?: { data?: { meta?: { references?: unknown } } } })?.response?.data?.meta?.references;
+  if (typeof data !== 'object' || data === null) return undefined;
+  const { templates, pages } = data as { templates?: unknown; pages?: unknown };
+  if (!Array.isArray(templates) || !Array.isArray(pages)) return undefined;
+  return { templates: templates as FileReferenceInfo[], pages: pages as FileReferenceInfo[] };
+}

@@ -5,7 +5,7 @@ const TABS = [
   { name: 'Sequences', href: '/outreach/sequences' },
   { name: 'Messages', href: '/messages' },
   { name: 'Files', href: '/files' },
-  { name: 'Pages', href: '/pages' },
+  { name: 'Landing pages', href: '/pages' },
 ] as const;
 
 /** Tab strip shared by the Content section (Sequences/Messages/Files/Pages) — mirrors Privyr's Content IA. */

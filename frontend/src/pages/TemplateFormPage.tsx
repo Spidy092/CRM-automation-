@@ -10,7 +10,7 @@ import {
   type TemplateInput,
 } from '@/api/templates';
 import { useFiles, type LibraryFile } from '@/api/files';
-import { usePages } from '@/api/pages';
+import { usePages, type LandingPage } from '@/api/pages';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,9 +29,18 @@ import {
 } from '@/lib/emailDesign';
 import { VisualEmailEditor, type VisualEditorInitial } from '@/components/templates/VisualEmailEditor';
 import { SmsEditor, WhatsappEditor } from '@/components/templates/ChannelEditors';
+import { AddContentPicker } from '@/components/content/AddContentPicker';
+import {
+  ATTACHMENT_LIMITS,
+  buildFileDownloadLine,
+  channelSupportsAttachments,
+  pagePublicUrl,
+  resolveAssetUrl,
+  type ContentPlacement,
+} from '@/lib/contentLinks';
 import { TemplatePreviewModal, TestSendModal } from '@/components/templates/TemplatePreviewModal';
 import type { MessageChannel, Template, TemplateAttachment } from '@/types';
-import { ArrowLeft, Eye, FileStack, FileText, FolderOpen, Image as ImageIcon, Link as LinkIcon, Mail, Paperclip, Save, Trash2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Eye, FileText, FolderOpen, Image as ImageIcon, Mail, Paperclip, Save, Trash2, Upload } from 'lucide-react';
 
 const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,application/pdf';
 const MAX_ATTACHMENTS = 3;
@@ -42,131 +51,33 @@ type EmailMode = 'simple' | 'visual' | 'html';
 
 function AttachmentThumb({ attachment }: { attachment: TemplateAttachment }) {
   const isImage = attachment.mimeType.startsWith('image/');
+  const [failed, setFailed] = useState(false);
   return (
-    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-slate-100">
-      {isImage ? (
-        <img src={attachment.url} alt="" className="h-8 w-8 rounded object-cover" />
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-slate-100" title={attachment.filename}>
+      {isImage && !failed ? (
+        <img src={resolveAssetUrl(attachment.url)} alt={attachment.filename} className="h-8 w-8 rounded object-cover" onError={() => setFailed(true)} loading="lazy" />
       ) : (
-        <FileText className="h-4 w-4 text-slate-500" />
+        <FileText className="h-4 w-4 text-slate-500" aria-hidden="true" />
       )}
     </div>
   );
 }
 
-function PagePickerModal({ onSelect, onClose }: { onSelect: (slug: string) => void; onClose: () => void }) {
-  const { data: pages = [], isLoading } = usePages();
-  const publishedPages = pages.filter((p) => p.status === 'published');
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Insert Public Page Link</h3>
-          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
-        </div>
-        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        {!isLoading && publishedPages.length === 0 && (
-          <p className="text-sm text-slate-500">No published pages found. Create & publish a page in Content &gt; Pages first.</p>
-        )}
-        <div className="space-y-2">
-          {publishedPages.map((page) => (
-            <button key={page.id} type="button" onClick={() => onSelect(page.slug)} className="flex w-full items-center gap-3 rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50">
-              <FileStack className="h-5 w-5 shrink-0 text-indigo-600" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-slate-900">{page.title}</div>
-                <div className="font-mono text-xs text-slate-500">/p/{page.slug}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+// Shared AddContentPicker (components/content/AddContentPicker.tsx) replaces the
+// three duplicated inline pickers that used to live here.
 
-function FileLinkPickerModal({ onSelect, onClose, portfolioOnly = false }: {
-  onSelect: (file: LibraryFile) => void; onClose: () => void; portfolioOnly?: boolean;
-}) {
-  const { data: allFiles = [], isLoading, error } = useFiles();
-  const files = portfolioOnly ? allFiles.filter((file) => file.mime_type === 'application/pdf') : allFiles;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">{portfolioOnly ? 'Choose your portfolio PDF' : 'Insert Library File Link'}</h3>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close file picker"><X className="h-4 w-4" /></Button>
-        </div>
-        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        {error && <p role="alert" className="text-sm text-red-600">Could not load files. Close this picker and try again.</p>}
-        {!isLoading && !error && files.length === 0 && (
-          <p className="text-sm text-slate-500">
-            {portfolioOnly ? 'Upload your portfolio PDF to the Files library, then choose it here.' : 'No files in library. Upload files in Content > Files first.'}{' '}
-            <Link to="/files" target="_blank" rel="noopener noreferrer" className="underline">Open Files library (new tab)</Link>
-          </p>
-        )}
-        <div className="space-y-2">
-          {files.map((file) => (
-            <button key={file.id} type="button" onClick={() => onSelect(file)} className="flex w-full items-center gap-3 rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50">
-              {file.mime_type.startsWith('image/') ? (
-                <img src={file.url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
-              ) : (
-                <FileText className="h-6 w-6 shrink-0 text-slate-500" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-slate-900">{file.filename}</div>
-                <div className="text-xs text-slate-500">{(file.size_bytes / 1024).toFixed(0)} KB</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LibraryPickerModal({ onSelect, onClose }: { onSelect: (fileId: string) => void; onClose: () => void }) {
-  const { data: files = [], isLoading } = useFiles();
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Choose from Files library</h3>
-          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
-        </div>
-        {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-        {!isLoading && files.length === 0 && (
-          <p className="text-sm text-slate-500">No files in the library yet. Upload some from the Files page first.</p>
-        )}
-        <div className="space-y-2">
-          {files.map((file) => (
-            <button key={file.id} type="button" onClick={() => onSelect(file.id)} className="flex w-full items-center gap-3 rounded-md border border-slate-200 p-2 text-left hover:bg-slate-50">
-              {file.mime_type.startsWith('image/') ? (
-                <img src={file.url} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
-              ) : (
-                <FileText className="h-6 w-6 shrink-0 text-slate-500" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-slate-900">{file.filename}</div>
-                <div className="text-xs text-slate-500">{(file.size_bytes / 1024).toFixed(0)} KB</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AttachmentsPanel({ templateId }: { templateId: string }) {
+function AttachmentsPanel({ templateId, channel }: { templateId: string; channel: MessageChannel }) {
   const { data: template } = useTemplate(templateId);
   const uploadAttachment = useUploadTemplateAttachment();
   const attachFromLibrary = useAttachTemplateFromLibrary();
   const deleteAttachment = useDeleteTemplateAttachment();
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   const attachments = template?.attachments ?? [];
   const atLimit = attachments.length >= MAX_ATTACHMENTS;
+  const attachedNames = new Set(attachments.map((a) => a.filename));
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -180,11 +91,16 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
     }
   };
 
-  const handleSelectFromLibrary = async (fileId: string) => {
-    setShowLibraryPicker(false);
+  const handlePickFile = async (file: LibraryFile, placement: ContentPlacement) => {
+    if (placement !== 'attach') return;
+    setShowPicker(false);
+    if (attachedNames.has(file.filename) && attachments.some((a) => a.filename === file.filename)) {
+      showToast('This file is already attached to this template.', 'error');
+      return;
+    }
     try {
-      await attachFromLibrary.mutateAsync({ id: templateId, fileId });
-      showToast('Attachment added from library.', 'success');
+      await attachFromLibrary.mutateAsync({ id: templateId, fileId: file.id });
+      showToast('Attachment added from library. Saved immediately.', 'success');
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to attach file from library.'), 'error');
     }
@@ -193,7 +109,7 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
   const handleRemove = async (attachmentId: string) => {
     try {
       await deleteAttachment.mutateAsync({ id: templateId, attachmentId });
-      showToast('Attachment removed.', 'success');
+      showToast('Attachment removed. Saved immediately.', 'success');
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to remove attachment.'), 'error');
     }
@@ -202,9 +118,13 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
   return (
     <Card className="max-w-2xl">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base"><Paperclip className="h-4 w-4" />Attachments</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base"><Paperclip className="h-4 w-4" />Content / Attachments</CardTitle>
         <CardDescription>
-          Images or PDFs sent along with this message (WhatsApp media / email attachments). Max {MAX_ATTACHMENTS}, 10MB each.
+          {channel === 'email'
+            ? `Files send as email attachments. A download link in the body is just text — attachments ride along. Max ${MAX_ATTACHMENTS}, 10MB each. Changes save immediately.`
+            : channel === 'whatsapp'
+              ? `Only the first attachment is sent as WhatsApp media (Cloud API). A download link in the body is plain text. Max ${MAX_ATTACHMENTS}, 10MB each. Changes save immediately.`
+              : 'Attachments are not sent on this channel — use “Add content” to insert a download link instead. Changes save immediately.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -214,8 +134,8 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
               <div key={attachment.id} className="flex items-center gap-3 rounded-md border border-slate-200 px-3 py-2">
                 <AttachmentThumb attachment={attachment} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-slate-900">{attachment.filename}</div>
-                  <div className="text-xs text-slate-500">{(attachment.sizeBytes / 1024).toFixed(0)} KB</div>
+                  <div className="truncate text-sm font-medium text-slate-900" title={attachment.filename}>{attachment.filename}</div>
+                  <div className="text-xs text-slate-500">{(attachment.sizeBytes / 1024).toFixed(0)} KB · saved</div>
                 </div>
                 <Button type="button" variant="outline" size="sm" aria-label={`Remove ${attachment.filename}`} className="h-7 shrink-0 text-xs text-red-600 hover:bg-red-50" onClick={() => handleRemove(attachment.id)} disabled={deleteAttachment.isPending}>
                   <Trash2 className="h-3 w-3" />
@@ -225,15 +145,77 @@ function AttachmentsPanel({ templateId }: { templateId: string }) {
           </div>
         )}
         <input ref={fileInputRef} type="file" accept={ATTACHMENT_ACCEPT} className="hidden" onChange={handleFileChange} />
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploadAttachment.isPending || atLimit}>
-            {uploadAttachment.isPending ? (<><ImageIcon className="mr-2 h-3.5 w-3.5 animate-pulse" />Uploading…</>) : atLimit ? (`Limit reached (${MAX_ATTACHMENTS})`) : (<><Upload className="mr-2 h-3.5 w-3.5" />Add attachment</>)}
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => setShowLibraryPicker(true)} disabled={attachFromLibrary.isPending || atLimit}>
-            <FolderOpen className="mr-2 h-3.5 w-3.5" />Browse Library
-          </Button>
+        <div className="flex flex-wrap gap-2">
+          {channelSupportsAttachments(channel) && (
+            <>
+              <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={() => fileInputRef.current?.click()} disabled={uploadAttachment.isPending || atLimit}>
+                {uploadAttachment.isPending ? (<><ImageIcon className="mr-2 h-3.5 w-3.5 animate-pulse" />Uploading…</>) : atLimit ? (`Limit reached (${MAX_ATTACHMENTS})`) : (<><Upload className="mr-2 h-3.5 w-3.5" />Add attachment</>)}
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={() => setShowPicker(true)} disabled={attachFromLibrary.isPending || atLimit}>
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />Browse Library
+              </Button>
+            </>
+          )}
         </div>
-        {showLibraryPicker && <LibraryPickerModal onSelect={handleSelectFromLibrary} onClose={() => setShowLibraryPicker(false)} />}
+        {showPicker && (
+          <AddContentPicker
+            open
+            channel={channel}
+            editorMode="simple"
+            allowPages={false}
+            alreadyAttachedIds={attachments.map((a) => a.libraryFileId ?? '').filter((v) => v.length > 0)}
+            onClose={() => setShowPicker(false)}
+            onAddFile={(file, placement) => void handlePickFile(file, placement)}
+            onAddPage={() => undefined}
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Staged attachments for a not-yet-saved template. Editor-local only — nothing is written until Save. */
+function StagedAttachmentsCard({
+  channel,
+  stagedFiles,
+  onRemove,
+  pendingCount,
+}: {
+  channel: MessageChannel;
+  stagedFiles: LibraryFile[];
+  onRemove: (id: string) => void;
+  pendingCount: number;
+}): React.JSX.Element {
+  void pendingCount;
+  return (
+    <Card className="max-w-2xl border-dashed">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base"><Paperclip className="h-4 w-4" />Content / Attachments</CardTitle>
+        <CardDescription>
+          {channelSupportsAttachments(channel)
+            ? `Staged files attach when you save (max ${ATTACHMENT_LIMITS.maxCount}, 10MB each). A download link in the body stays editable text — it is not the same as an attachment.`
+            : 'Attachments are not sent on this channel. Stage a download link with “Add content” instead — staged attachments would be ignored at send time.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {stagedFiles.length === 0 && (
+          <p className="flex items-center gap-2 text-sm text-slate-500">
+            <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+            No staged attachments. Use “Add content” in the editor, then save the template.
+          </p>
+        )}
+        {stagedFiles.map((f) => (
+          <div key={f.id} className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2">
+            <AttachmentThumb attachment={{ id: f.id, filename: f.filename, mimeType: f.mime_type, sizeBytes: f.size_bytes, url: f.url }} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-slate-900" title={f.filename}>{f.filename}</div>
+              <div className="text-xs text-slate-500">Pending — attaches on save</div>
+            </div>
+            <Button type="button" variant="outline" size="sm" aria-label={`Remove staged ${f.filename}`} className="h-7 shrink-0 text-xs" onClick={() => onRemove(f.id)}>
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+        ))}
       </CardContent>
     </Card>
   );
@@ -255,11 +237,15 @@ function simpleBodyFor(existing: Template): string {
   return existing.text_body ?? existing.body;
 }
 
-function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
+function SimpleEmailForm({ channel, draft, setDraft, onDirty, stagedFiles, onStageFile, onUnstageFile, existingAttachments }: {
   channel: MessageChannel;
   draft: SimpleDraft;
   setDraft: (patch: Partial<SimpleDraft>) => void;
   onDirty: () => void;
+  stagedFiles: LibraryFile[];
+  onStageFile: (file: LibraryFile) => void;
+  onUnstageFile: (id: string) => void;
+  existingAttachments: TemplateAttachment[];
 }) {
   const { id } = useParams<{ id?: string }>();
   const isEdit = !!id;
@@ -267,12 +253,15 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
   const { showToast } = useToast();
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
+  const attachFromLibrary = useAttachTemplateFromLibrary();
 
   const { name, subject, body } = draft;
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [showPagePicker, setShowPagePicker] = useState(false);
-  const [showFilePicker, setShowFilePicker] = useState(false);
-  const [portfolioPicker, setPortfolioPicker] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState<null | 'content' | 'portfolio'>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+  const [retrying, setRetrying] = useState(false);
 
   const touch = () => onDirty();
   const setBody = (v: string | ((prev: string) => string)) => {
@@ -281,17 +270,23 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
   };
   const setName = (v: string) => { setDraft({ name: v }); touch(); };
   const setSubject = (v: string) => { setDraft({ subject: v }); touch(); };
-  const handleInsertPageLink = (slug: string) => {
-    setShowPagePicker(false);
-    const linkUrl = `${window.location.origin}/p/${slug}`;
-    setBody((prev) => (prev ? `${prev}\n${linkUrl}` : linkUrl));
+
+  const handleAddPage = (page: LandingPage, label: string) => {
+    setPickerOpen(null);
+    const line = `${label}: ${pagePublicUrl(page.slug)}`;
+    setBody((prev) => (prev ? `${prev}\n${line}` : line));
     touch();
-    showToast('Page link inserted into body text.', 'success');
+    showToast('Page link inserted. Save the template to keep it.', 'success');
   };
 
-  const handleInsertFileLink = (file: LibraryFile) => {
-    setShowFilePicker(false);
-    if (portfolioPicker) {
+  const handleAddFile = (file: LibraryFile, placement: ContentPlacement) => {
+    const isPortfolio = pickerOpen === 'portfolio';
+    setPickerOpen(null);
+    if (isPortfolio) {
+      if (file.mime_type !== 'application/pdf') {
+        showToast('Choose a PDF for the portfolio button.', 'error');
+        return;
+      }
       try {
         const button = buildPortfolioButton(file.url);
         setBody((prev) => `${splitPortfolioButton(prev).text}\n\n${button}`.trim());
@@ -302,9 +297,41 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
       }
       return;
     }
-    setBody((prev) => (prev ? `${prev}\n${file.url}` : file.url));
+    if (placement === 'attach') {
+      if (!channelSupportsAttachments(channel)) {
+        showToast('Attachments are not sent on this channel — added as a download link instead.', 'error');
+      }
+      if (isEdit && id) {
+        if (existingAttachments.some((a) => a.filename === file.filename)) {
+          showToast('This file is already attached to this template.', 'error');
+          return;
+        }
+        if (existingAttachments.length >= MAX_ATTACHMENTS) {
+          showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+          return;
+        }
+        void attachFromLibrary.mutateAsync({ id, fileId: file.id }).then(
+          () => showToast('Attachment added from library. Saved immediately.', 'success'),
+          (err) => showToast(getApiErrorMessage(err, 'Failed to attach file from library.'), 'error'),
+        );
+        return;
+      }
+      if (stagedFiles.some((f) => f.id === file.id)) {
+        showToast('This file is already staged in the current draft.', 'error');
+        return;
+      }
+      if (stagedFiles.length >= MAX_ATTACHMENTS) {
+        showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+        return;
+      }
+      onStageFile(file);
+      showToast('File staged. It attaches when you save the template.', 'success');
+      return;
+    }
+    const line = buildFileDownloadLine(file);
+    setBody((prev) => (prev ? `${prev}\n${line}` : line));
     touch();
-    showToast('File URL inserted into body text.', 'success');
+    showToast('File link inserted. Save the template to keep it.', 'success');
   };
 
   const detectedVars = extractVariables(body);
@@ -319,9 +346,22 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
     return Object.keys(errs).length === 0;
   }
 
+  const attachStaged = async (templateId: string, ids: string[]): Promise<string[]> => {
+    const failed: string[] = [];
+    for (const fileId of ids) {
+      try {
+        await attachFromLibrary.mutateAsync({ id: templateId, fileId });
+      } catch {
+        failed.push(fileId);
+      }
+    }
+    return failed;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+    setSaveError(null);
     const input: TemplateInput = {
       name: name.trim(),
       channel,
@@ -335,17 +375,61 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
         await updateTemplate.mutateAsync({ id, input });
         showToast('Template updated.', 'success');
         navigate('/templates');
-      } else {
-        const created = await createTemplate.mutateAsync(input);
-        showToast('Template created. Add attachments below, or go back to the list.', 'success');
-        if (created) navigate(`/templates/${created.id}/edit`, { replace: true });
+        return;
       }
+      // New template: reuse the in-progress id on retry so we never duplicate.
+      const templateId = createdId ?? (await createTemplate.mutateAsync(input))?.id ?? null;
+      if (!templateId) throw new Error('Template was not created.');
+      setCreatedId(templateId);
+      const pending = failedIds.length > 0
+        ? stagedFiles.filter((f) => failedIds.includes(f.id))
+        : stagedFiles;
+      if (pending.length === 0) {
+        showToast('Template created.', 'success');
+        navigate(`/templates/${templateId}/edit`, { replace: true });
+        return;
+      }
+      const failed = await attachStaged(templateId, pending.map((f) => f.id));
+      if (failed.length > 0) {
+        setFailedIds(failed);
+        const okCount = pending.length - failed.length;
+        setSaveError(
+          `Template saved, but ${failed.length} attachment${failed.length === 1 ? '' : 's'} failed${okCount > 0 ? ` (${okCount} attached)` : ''}. Retry below — this will not create another template or duplicate attachments.`,
+        );
+        showToast('Template saved; some attachments failed. Retry below.', 'error');
+        return;
+      }
+      setFailedIds([]);
+      stagedFiles.forEach((f) => onUnstageFile(f.id));
+      showToast('Template created with attachments.', 'success');
+      navigate(`/templates/${templateId}/edit`, { replace: true });
     } catch {
-      showToast('Failed to save template.', 'error');
+      if (!createdId) showToast('Failed to save template.', 'error');
     }
   };
 
-  const saving = createTemplate.isPending || updateTemplate.isPending;
+  const handleRetryAttachments = async () => {
+    if (!createdId) return;
+    setRetrying(true);
+    setSaveError(null);
+    try {
+      const pending = stagedFiles.filter((f) => failedIds.includes(f.id));
+      const failed = await attachStaged(createdId, pending.map((f) => f.id));
+      setFailedIds(failed);
+      if (failed.length > 0) {
+        setSaveError('Some attachments still failed. Check the file type and size, then retry — no duplicate template is created.');
+        showToast('Attachments retry failed.', 'error');
+      } else {
+        stagedFiles.forEach((f) => onUnstageFile(f.id));
+        showToast('Attachments saved.', 'success');
+        navigate(`/templates/${createdId}/edit`, { replace: true });
+      }
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const saving = createTemplate.isPending || updateTemplate.isPending || attachFromLibrary.isPending;
 
   return (
     <>
@@ -367,20 +451,20 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label htmlFor="body">{channel === 'phone_call' ? 'Call script *' : 'Message body *'}</Label>
-                <div className="flex items-center gap-1.5">
-                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowPagePicker(true)}>
-                    <FileStack className="mr-1 h-3.5 w-3.5 text-indigo-600" />Insert Page Link
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setPortfolioPicker(false); setShowFilePicker(true); }}>
-                    <LinkIcon className="mr-1 h-3.5 w-3.5 text-blue-600" />Insert File Link
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Button type="button" variant="outline" size="sm" className="min-h-[44px] text-xs" onClick={() => setPickerOpen('content')}>
+                    <FolderOpen className="mr-1 h-3.5 w-3.5 text-indigo-600" />Add content
                   </Button>
                   {channel === 'email' && (
-                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setPortfolioPicker(true); setShowFilePicker(true); }}>
+                    <Button type="button" variant="outline" size="sm" className="min-h-[44px] text-xs" onClick={() => setPickerOpen('portfolio')}>
                       Add portfolio button
                     </Button>
                   )}
                 </div>
               </div>
+              <p className="text-xs text-slate-500">
+                Attachments ride along with the message; download links stay editable text in the body.
+              </p>
               <p className="text-xs text-slate-500">
                 Use <code className="rounded bg-slate-100 px-1">{'{{variable}}'}</code> placeholders.
                 Available: <code>{'{{business_name}}'}</code>, <code>{'{{contact_name}}'}</code>, <code>{'{{industry}}'}</code>, <code>{'{{location}}'}</code>
@@ -411,31 +495,55 @@ function SimpleEmailForm({ channel, draft, setDraft, onDirty }: {
                 </div>
               </div>
             )}
-            <div className="flex gap-3 pt-2">
-              <Button type="submit" disabled={saving}><Save className="mr-2 h-4 w-4" />{saving ? 'Saving…' : isEdit ? 'Update Template' : 'Create Template'}</Button>
-              <Button type="button" variant="outline" asChild><Link to="/templates">Cancel</Link></Button>
+            <div className="flex flex-wrap gap-3 pt-2">
+              <Button type="submit" disabled={saving} className="min-h-[44px]"><Save className="mr-2 h-4 w-4" />{saving ? 'Saving…' : isEdit ? 'Update Template' : createdId ? 'Retry attachments' : 'Create Template'}</Button>
+              <Button type="button" variant="outline" className="min-h-[44px]" asChild><Link to="/templates">Cancel</Link></Button>
             </div>
+            {saveError && (
+              <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <p>{saveError}</p>
+                {createdId && failedIds.length > 0 && (
+                  <Button type="button" variant="outline" size="sm" className="mt-2 min-h-[44px]" disabled={retrying} onClick={() => void handleRetryAttachments()}>
+                    {retrying ? 'Retrying…' : `Retry ${failedIds.length} failed attachment${failedIds.length === 1 ? '' : 's'}`}
+                  </Button>
+                )}
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>
-      {showPagePicker && <PagePickerModal onSelect={handleInsertPageLink} onClose={() => setShowPagePicker(false)} />}
-      {showFilePicker && <FileLinkPickerModal portfolioOnly={portfolioPicker} onSelect={handleInsertFileLink} onClose={() => setShowFilePicker(false)} />}
+      {pickerOpen && (
+        <AddContentPicker
+          open
+          channel={channel}
+          editorMode="simple"
+          fileFilter={pickerOpen === 'portfolio' ? 'pdf' : 'all'}
+          dialogTitle={pickerOpen === 'portfolio' ? 'Choose your portfolio PDF' : 'Add content to template'}
+          alreadyAttachedIds={isEdit ? existingAttachments.map((a) => a.libraryFileId ?? '').filter((v) => v.length > 0) : stagedFiles.map((f) => f.id)}
+          onClose={() => setPickerOpen(null)}
+          onAddFile={handleAddFile}
+          onAddPage={handleAddPage}
+        />
+      )}
     </>
   );
 }
 
 // ── Custom HTML email editor ─────────────────────────────────────────────────
 
-function HtmlEmailEditor({ existing, onDirty, onSaved }: {
+function HtmlEmailEditor({ existing, onDirty, onSaved, stagedFiles, onUnstageFile }: {
   existing?: Template | null;
   onDirty: () => void;
   onSaved: (id: string) => void;
+  stagedFiles: LibraryFile[];
+  onUnstageFile: (id: string) => void;
 }) {
   const { id } = useParams<{ id?: string }>();
   const isEdit = !!id;
   const { showToast } = useToast();
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
+  const attachFromLibrary = useAttachTemplateFromLibrary();
 
   const [name, setName] = useState('');
   const [subject, setSubject] = useState('');
@@ -444,6 +552,10 @@ function HtmlEmailEditor({ existing, onDirty, onSaved }: {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showPreview, setShowPreview] = useState(false);
   const [showTest, setShowTest] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     if (existing) {
@@ -466,8 +578,21 @@ function HtmlEmailEditor({ existing, onDirty, onSaved }: {
     return Object.keys(errs).length === 0;
   };
 
+  const attachStaged = async (templateId: string, ids: string[]): Promise<string[]> => {
+    const failed: string[] = [];
+    for (const fileId of ids) {
+      try {
+        await attachFromLibrary.mutateAsync({ id: templateId, fileId });
+      } catch {
+        failed.push(fileId);
+      }
+    }
+    return failed;
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
+    setSaveError(null);
     const input: TemplateInput = {
       name: name.trim(),
       channel: 'email',
@@ -481,17 +606,56 @@ function HtmlEmailEditor({ existing, onDirty, onSaved }: {
       if (isEdit && id) {
         await updateTemplate.mutateAsync({ id, input });
         showToast('Custom HTML template saved — sanitized on the server.', 'success');
-      } else {
-        const created = await createTemplate.mutateAsync(input);
-        showToast('Custom HTML template created.', 'success');
-        if (created) onSaved(created.id);
+        return;
       }
+      const templateId = createdId ?? (await createTemplate.mutateAsync(input))?.id ?? null;
+      if (!templateId) throw new Error('Template was not created.');
+      setCreatedId(templateId);
+      const pending = failedIds.length > 0
+        ? stagedFiles.filter((f) => failedIds.includes(f.id))
+        : stagedFiles;
+      if (pending.length === 0) {
+        showToast('Custom HTML template created.', 'success');
+        onSaved(templateId);
+        return;
+      }
+      const failed = await attachStaged(templateId, pending.map((f) => f.id));
+      if (failed.length > 0) {
+        setFailedIds(failed);
+        setSaveError('Template saved, but some attachments failed. Retry below — this will not create another template or duplicate attachments.');
+        showToast('Template saved; some attachments failed. Retry below.', 'error');
+        return;
+      }
+      setFailedIds([]);
+      stagedFiles.forEach((f) => onUnstageFile(f.id));
+      showToast('Custom HTML template created with attachments.', 'success');
+      onSaved(templateId);
     } catch (err) {
-      showToast(getApiErrorMessage(err, 'Failed to save template. Unsupported content is stripped or rejected — see the message.'), 'error');
+      if (!createdId) showToast(getApiErrorMessage(err, 'Failed to save template. Unsupported content is stripped or rejected — see the message.'), 'error');
     }
   };
 
-  const saving = createTemplate.isPending || updateTemplate.isPending;
+  const handleRetryAttachments = async () => {
+    if (!createdId) return;
+    setRetrying(true);
+    setSaveError(null);
+    try {
+      const pending = stagedFiles.filter((f) => failedIds.includes(f.id));
+      const failed = await attachStaged(createdId, pending.map((f) => f.id));
+      setFailedIds(failed);
+      if (failed.length > 0) {
+        setSaveError('Some attachments still failed. Retry again — no duplicate template is created.');
+      } else {
+        stagedFiles.forEach((f) => onUnstageFile(f.id));
+        showToast('Attachments saved.', 'success');
+        onSaved(createdId);
+      }
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const saving = createTemplate.isPending || updateTemplate.isPending || attachFromLibrary.isPending;
 
   return (
     <div className="space-y-4">
@@ -530,7 +694,7 @@ function HtmlEmailEditor({ existing, onDirty, onSaved }: {
             </div>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button onClick={handleSave} disabled={saving}><Save className="mr-2 h-4 w-4" />{saving ? 'Saving…' : isEdit ? 'Save HTML template' : 'Create HTML template'}</Button>
+            <Button onClick={handleSave} disabled={saving} className="min-h-[44px]"><Save className="mr-2 h-4 w-4" />{saving ? 'Saving…' : isEdit ? 'Save HTML template' : createdId ? 'Retry attachments' : 'Create HTML template'}</Button>
             {isEdit && id && (
               <>
                 <Button variant="outline" onClick={() => setShowPreview(true)}><Eye className="mr-2 h-4 w-4" />Preview</Button>
@@ -538,6 +702,16 @@ function HtmlEmailEditor({ existing, onDirty, onSaved }: {
               </>
             )}
             {!isEdit && <p className="w-full text-xs text-slate-500">Save first to enable preview and test email.</p>}
+            {saveError && (
+              <div role="alert" className="w-full rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <p>{saveError}</p>
+                {createdId && failedIds.length > 0 && (
+                  <Button type="button" variant="outline" size="sm" className="mt-2 min-h-[44px]" disabled={retrying} onClick={() => void handleRetryAttachments()}>
+                    {retrying ? 'Retrying…' : `Retry ${failedIds.length} failed attachment${failedIds.length === 1 ? '' : 's'}`}
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -549,12 +723,16 @@ function HtmlEmailEditor({ existing, onDirty, onSaved }: {
 
 // ── WhatsApp / SMS / phone-call editor ───────────────────────────────────────
 
-function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCount }: {
+function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCount, stagedFiles, onStageFile, onUnstageFile, existingAttachments }: {
   channel: MessageChannel;
   draft: SimpleDraft;
   setDraft: (patch: Partial<SimpleDraft>) => void;
   onDirty: () => void;
   attachmentCount: number;
+  stagedFiles: LibraryFile[];
+  onStageFile: (file: LibraryFile) => void;
+  onUnstageFile: (id: string) => void;
+  existingAttachments: TemplateAttachment[];
 }) {
   const { id } = useParams<{ id?: string }>();
   const isEdit = !!id;
@@ -562,13 +740,70 @@ function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCo
   const { showToast } = useToast();
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
+  const attachFromLibrary = useAttachTemplateFromLibrary();
 
   const { name, body } = draft;
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+  const [retrying, setRetrying] = useState(false);
 
   const touch = () => onDirty();
   const setName = (v: string) => { setDraft({ name: v }); touch(); };
   const setBody = (v: string) => { setDraft({ body: v }); touch(); };
+
+  const handleAddFile = (file: LibraryFile, placement: ContentPlacement) => {
+    setPickerOpen(false);
+    if (placement === 'attach') {
+      if (!channelSupportsAttachments(channel)) {
+        const line = buildFileDownloadLine(file);
+        setBody(body ? `${body}\n${line}` : line);
+        touch();
+        showToast('Attachments are not sent on this channel — added as a download link instead.', 'success');
+        return;
+      }
+      if (isEdit && id) {
+        if (existingAttachments.some((a) => a.filename === file.filename)) {
+          showToast('This file is already attached to this template.', 'error');
+          return;
+        }
+        if (existingAttachments.length >= MAX_ATTACHMENTS) {
+          showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+          return;
+        }
+        void attachFromLibrary.mutateAsync({ id, fileId: file.id }).then(
+          () => showToast('Attachment added from library. Saved immediately.', 'success'),
+          (err) => showToast(getApiErrorMessage(err, 'Failed to attach file from library.'), 'error'),
+        );
+        return;
+      }
+      if (stagedFiles.some((f) => f.id === file.id)) {
+        showToast('This file is already staged in the current draft.', 'error');
+        return;
+      }
+      if (stagedFiles.length >= MAX_ATTACHMENTS) {
+        showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+        return;
+      }
+      onStageFile(file);
+      showToast('File staged. It attaches when you save the template.', 'success');
+      return;
+    }
+    const line = buildFileDownloadLine(file);
+    setBody(body ? `${body}\n${line}` : line);
+    touch();
+    showToast('File link inserted. Save the template to keep it.', 'success');
+  };
+
+  const handleAddPage = (page: LandingPage, label: string) => {
+    setPickerOpen(false);
+    const line = `${label}: ${pagePublicUrl(page.slug)}`;
+    setBody(body ? `${body}\n${line}` : line);
+    touch();
+    showToast('Page link inserted. Save the template to keep it.', 'success');
+  };
 
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
@@ -579,8 +814,21 @@ function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCo
     return Object.keys(errs).length === 0;
   };
 
+  const attachStaged = async (templateId: string, ids: string[]): Promise<string[]> => {
+    const failed: string[] = [];
+    for (const fileId of ids) {
+      try {
+        await attachFromLibrary.mutateAsync({ id: templateId, fileId });
+      } catch {
+        failed.push(fileId);
+      }
+    }
+    return failed;
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
+    setSaveError(null);
     const input: TemplateInput = {
       name: name.trim(),
       channel,
@@ -594,17 +842,55 @@ function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCo
         await updateTemplate.mutateAsync({ id, input });
         showToast('Template updated.', 'success');
         navigate('/templates');
-      } else {
-        const created = await createTemplate.mutateAsync(input);
-        showToast('Template created.', 'success');
-        if (created) navigate(`/templates/${created.id}/edit`, { replace: true });
+        return;
       }
+      const templateId = createdId ?? (await createTemplate.mutateAsync(input))?.id ?? null;
+      if (!templateId) throw new Error('Template was not created.');
+      setCreatedId(templateId);
+      const pending = failedIds.length > 0
+        ? stagedFiles.filter((f) => failedIds.includes(f.id))
+        : stagedFiles;
+      if (pending.length === 0) {
+        showToast('Template created.', 'success');
+        navigate(`/templates/${templateId}/edit`, { replace: true });
+        return;
+      }
+      const failed = await attachStaged(templateId, pending.map((f) => f.id));
+      if (failed.length > 0) {
+        setFailedIds(failed);
+        setSaveError('Template saved, but some attachments failed. Retry below — this will not create another template or duplicate attachments.');
+        showToast('Template saved; some attachments failed. Retry below.', 'error');
+        return;
+      }
+      setFailedIds([]);
+      stagedFiles.forEach((f) => onUnstageFile(f.id));
+      showToast('Template created with attachments.', 'success');
+      navigate(`/templates/${templateId}/edit`, { replace: true });
     } catch (err) {
-      showToast(getApiErrorMessage(err, 'Failed to save template.'), 'error');
+      if (!createdId) showToast(getApiErrorMessage(err, 'Failed to save template.'), 'error');
     }
   };
 
-  const saving = createTemplate.isPending || updateTemplate.isPending;
+  const handleRetry = async () => {
+    if (!createdId) return;
+    setRetrying(true);
+    try {
+      const pending = stagedFiles.filter((f) => failedIds.includes(f.id));
+      const failed = await attachStaged(createdId, pending.map((f) => f.id));
+      setFailedIds(failed);
+      if (failed.length > 0) {
+        setSaveError('Some attachments still failed. Retry again — no duplicate template is created.');
+      } else {
+        stagedFiles.forEach((f) => onUnstageFile(f.id));
+        showToast('Attachments saved.', 'success');
+        navigate(`/templates/${createdId}/edit`, { replace: true });
+      }
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const saving = createTemplate.isPending || updateTemplate.isPending || attachFromLibrary.isPending;
 
   return (
     <Card className="max-w-2xl">
@@ -614,7 +900,15 @@ function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCo
           <Input id="ch-name" value={name} onChange={(e) => { setName(e.target.value); touch(); }} placeholder={channel === 'sms' ? 'e.g. Appointment reminder (SMS)' : 'e.g. Intro (WhatsApp)'} />
           {errors.name && <p className="text-xs text-red-600">{errors.name}</p>}
         </div>
-        {channel === 'whatsapp' && <WhatsappEditor body={body} onChange={(v) => { setBody(v); touch(); }} attachmentCount={attachmentCount} error={errors.body} />}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" className="min-h-[44px] text-xs" onClick={() => setPickerOpen(true)}>
+            <FolderOpen className="mr-1 h-3.5 w-3.5 text-indigo-600" />Add content
+          </Button>
+          {!channelSupportsAttachments(channel) && (
+            <p className="w-full text-xs text-slate-500">Attachments are not sent on this channel — “Attach file” is hidden and links are inserted as plain text with the URL.</p>
+          )}
+        </div>
+        {channel === 'whatsapp' && <WhatsappEditor body={body} onChange={(v) => { setBody(v); touch(); }} attachmentCount={attachmentCount + stagedFiles.length} error={errors.body} />}
         {channel === 'sms' && <SmsEditor body={body} onChange={(v) => { setBody(v); touch(); }} error={errors.body} />}
         {channel === 'phone_call' && (
           <div className="space-y-1.5">
@@ -623,11 +917,32 @@ function StructuredChannelForm({ channel, draft, setDraft, onDirty, attachmentCo
             {errors.body && <p className="text-xs text-red-600">{errors.body}</p>}
           </div>
         )}
-        <div className="flex gap-3">
-          <Button onClick={handleSave} disabled={saving}><Save className="mr-2 h-4 w-4" />{saving ? 'Saving…' : isEdit ? 'Update Template' : 'Create Template'}</Button>
-          <Button variant="outline" asChild><Link to="/templates">Cancel</Link></Button>
+        {saveError && (
+          <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p>{saveError}</p>
+            {createdId && failedIds.length > 0 && (
+              <Button type="button" variant="outline" size="sm" className="mt-2 min-h-[44px]" disabled={retrying} onClick={() => void handleRetry()}>
+                {retrying ? 'Retrying…' : `Retry ${failedIds.length} failed attachment${failedIds.length === 1 ? '' : 's'}`}
+              </Button>
+            )}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={handleSave} disabled={saving} className="min-h-[44px]"><Save className="mr-2 h-4 w-4" />{saving ? 'Saving…' : isEdit ? 'Update Template' : createdId ? 'Retry attachments' : 'Create Template'}</Button>
+          <Button variant="outline" className="min-h-[44px]" asChild><Link to="/templates">Cancel</Link></Button>
         </div>
       </CardContent>
+      {pickerOpen && (
+        <AddContentPicker
+          open
+          channel={channel}
+          editorMode="simple"
+          onClose={() => setPickerOpen(false)}
+          onAddFile={handleAddFile}
+          onAddPage={handleAddPage}
+          alreadyAttachedIds={isEdit ? existingAttachments.map((a) => a.libraryFileId ?? '').filter((v) => v.length > 0) : stagedFiles.map((f) => f.id)}
+        />
+      )}
     </Card>
   );
 }
@@ -651,12 +966,17 @@ export function TemplateFormPage() {
   const { id } = useParams<{ id?: string }>();
   const isEdit = !!id;
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { showToast } = useToast();
 
   const { data: existing, isLoading } = useTemplate(id ?? '');
+  const { data: libraryFiles = [] } = useFiles();
+  const { data: libraryPages = [] } = usePages();
 
   const queryChannel = searchParams.get('channel') as MessageChannel | null;
   const queryMode = searchParams.get('mode') as EmailMode | null;
+  const pendingFileId = searchParams.get('addFile');
+  const pendingPageSlug = searchParams.get('addPage');
   const starterKey = searchParams.get('starter');
   const starter: StarterTemplate | null = starterKey
     ? (starterTemplates().find((s) => s.key === starterKey) ?? null)
@@ -669,8 +989,36 @@ export function TemplateFormPage() {
   const [pendingMode, setPendingMode] = useState<EmailMode | null>(null);
   const [pendingChannel, setPendingChannel] = useState<MessageChannel | null>(null);
   const [draft, setDraftState] = useState<SimpleDraft>({ name: '', subject: '', body: '' });
+  const [stagedFiles, setStagedFiles] = useState<LibraryFile[]>([]);
+  const [pendingLabel, setPendingLabel] = useState('');
+  const [shellPickerOpen, setShellPickerOpen] = useState(false);
+  const attachFromLibraryShell = useAttachTemplateFromLibrary();
 
   const setDraft = (patch: Partial<SimpleDraft>) => setDraftState((d) => ({ ...d, ...patch }));
+  const stageFile = (file: LibraryFile) => {
+    setStagedFiles((prev) => (prev.some((f) => f.id === file.id) ? prev : [...prev, file]));
+    setHasUnsaved(true);
+  };
+  const unstageFile = (fileId: string) => setStagedFiles((prev) => prev.filter((f) => f.id !== fileId));
+  /** Library file IDs already attached to the saved template (live references). */
+  const savedLibraryIds = (existing?.attachments ?? [])
+    .map((a) => a.libraryFileId)
+    .filter((v): v is string => typeof v === 'string' && v.length > 0);
+
+  const pendingFile: LibraryFile | null = pendingFileId
+    ? (libraryFiles.find((f) => f.id === pendingFileId) ?? stagedFiles.find((f) => f.id === pendingFileId) ?? null)
+    : null;
+  const pendingPage: LandingPage | null = pendingPageSlug
+    ? (libraryPages.find((p) => p.slug === pendingPageSlug) ?? null)
+    : null;
+
+  const clearPendingParams = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('addFile');
+    next.delete('addPage');
+    setSearchParams(next, { replace: true });
+    setPendingLabel('');
+  };
 
   useEffect(() => {
     if (initialized) return;
@@ -715,7 +1063,8 @@ export function TemplateFormPage() {
 
   const handleChannelChange = (next: MessageChannel) => {
     if (next === channel) return;
-    if (hasUnsaved && channel === 'email' && mode !== 'simple') {
+    const stagedIncompatible = stagedFiles.length > 0 && !channelSupportsAttachments(next);
+    if ((hasUnsaved && channel === 'email' && mode !== 'simple') || stagedIncompatible) {
       setPendingChannel(next);
       return;
     }
@@ -728,10 +1077,106 @@ export function TemplateFormPage() {
     if (channel === 'email' && next !== 'email') {
       const { text, url } = splitPortfolioButton(draft.body);
       if (url) setDraftState((d) => ({ ...d, body: `${text}\n\nView portfolio: ${url}`.trim() }));
+      // Staged attachments would be ignored at send time on SMS/phone —
+      // convert them to visible download links instead of discarding.
+      if (stagedFiles.length > 0 && !channelSupportsAttachments(next)) {
+        const lines = stagedFiles.map((f) => buildFileDownloadLine(f));
+        setDraftState((d) => ({ ...d, body: `${d.body}\n${lines.join('\n')}`.trim() }));
+        setStagedFiles([]);
+        showToast('Staged attachments were kept as download links — this channel does not send attachments.', 'success');
+      }
     }
     setChannel(next);
     if (next !== 'email') setMode('simple');
     setHasUnsaved(true);
+  };
+
+  const confirmPendingFileLink = () => {
+    if (!pendingFile) return;
+    setDraftState((d) => {
+      const line = buildFileDownloadLine(pendingFile);
+      return { ...d, body: d.body ? `${d.body}\n${line}` : line };
+    });
+    setHasUnsaved(true);
+    showToast('File link added to the draft. Save the template to keep it.', 'success');
+    clearPendingParams();
+  };
+
+  const confirmPendingFileAttach = () => {
+    if (!pendingFile) return;
+    if (stagedFiles.some((f) => f.id === pendingFile.id)) {
+      showToast('This file is already staged in the current draft.', 'error');
+      return;
+    }
+    if (stagedFiles.length >= MAX_ATTACHMENTS) {
+      showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+      return;
+    }
+    stageFile(pendingFile);
+    showToast('File staged. It attaches when you save the template.', 'success');
+    clearPendingParams();
+  };
+
+  const confirmPendingPage = () => {
+    if (!pendingPage) return;
+    const label = pendingLabel.trim() || `View ${pendingPage.title}`;
+    setDraftState((d) => {
+      const labelled = `${label}: ${pagePublicUrl(pendingPage.slug)}`;
+      return { ...d, body: d.body ? `${d.body}\n${labelled}` : labelled };
+    });
+    setHasUnsaved(true);
+    showToast('Page link added to the draft. Save the template to keep it.', 'success');
+    clearPendingParams();
+  };
+
+  /** Attach a library file to the already-saved template right away (edit mode). */
+  const attachFileNow = async (file: LibraryFile): Promise<void> => {
+    if (!isEdit || !id) return;
+    if (!channelSupportsAttachments(channel)) {
+      showToast('Attachments are not sent on this channel — use a download link instead.', 'error');
+      return;
+    }
+    const current = existing?.attachments ?? [];
+    if (current.some((a) => a.libraryFileId === file.id || a.filename === file.filename)) {
+      showToast('This file is already attached to this template.', 'error');
+      return;
+    }
+    if (current.length >= MAX_ATTACHMENTS) {
+      showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+      return;
+    }
+    try {
+      await attachFromLibraryShell.mutateAsync({ id, fileId: file.id });
+      showToast('Attachment added from library. Saved immediately.', 'success');
+      clearPendingParams();
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to attach file from library.'), 'error');
+    }
+  };
+
+  const confirmPendingFileAttachNow = () => {
+    if (!pendingFile) return;
+    void attachFileNow(pendingFile);
+  };
+
+  /** Shared file handler for the visual/HTML shell picker (attach-only context). */
+  const handleShellPickFile = (file: LibraryFile, placement: ContentPlacement) => {
+    if (placement !== 'attach') return;
+    setShellPickerOpen(false);
+    if (isEdit) {
+      void attachFileNow(file);
+      return;
+    }
+    if (stagedFiles.some((f) => f.id === file.id)) {
+      showToast('This file is already staged in the current draft.', 'error');
+      return;
+    }
+    if (stagedFiles.length >= MAX_ATTACHMENTS) {
+      showToast(`Attachment limit reached (${MAX_ATTACHMENTS}).`, 'error');
+      return;
+    }
+    stageFile(file);
+    showToast('File staged. It attaches when you save the template.', 'success');
   };
 
   const visualInitial: VisualEditorInitial | null = (() => {
@@ -815,8 +1260,124 @@ export function TemplateFormPage() {
             </CardContent>
           </Card>
 
+          {(pendingFileId || pendingPageSlug) && (pendingFile || pendingPage) && (pendingFile != null || channel !== 'email' || mode === 'simple') && (
+            <Card className="max-w-2xl border-indigo-200 bg-indigo-50/50">
+              <CardContent className="space-y-3 pt-6">
+                {pendingFile && (
+                  <>
+                    <p className="text-sm font-medium text-slate-900">
+                      Selected file: <span title={pendingFile.filename}>{pendingFile.filename}</span>
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      {isEdit
+                        ? (channel !== 'email' || mode === 'simple')
+                          ? 'Confirm how to add it. Links insert into the draft text; Attach saves immediately to this template.'
+                          : 'Confirm how to attach it. Attach saves immediately to this template; links can only be inserted in the Simple editor.'
+                        : 'Confirm how to add it. Nothing is saved until you press Save — cancelling keeps your draft unchanged.'}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(channel !== 'email' || mode === 'simple') && (
+                        <Button type="button" size="sm" className="min-h-[44px]" onClick={confirmPendingFileLink}>
+                          Add download link
+                        </Button>
+                      )}
+                      {channelSupportsAttachments(channel) && !isEdit && (
+                        <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={confirmPendingFileAttach}>
+                          Stage attachment
+                        </Button>
+                      )}
+                      {channelSupportsAttachments(channel) && isEdit && (
+                        <Button type="button" variant="outline" size="sm" className="min-h-[44px]" disabled={attachFromLibraryShell.isPending} onClick={confirmPendingFileAttachNow}>
+                          {attachFromLibraryShell.isPending ? 'Attaching…' : 'Attach now'}
+                        </Button>
+                      )}
+                      <Button type="button" variant="ghost" size="sm" className="min-h-[44px]" onClick={clearPendingParams}>
+                        Dismiss
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {pendingPage && !pendingFile && (
+                  <>
+                    <p className="text-sm font-medium text-slate-900">
+                      Selected page: {pendingPage.title} {pendingPage.status !== 'published' ? '(draft)' : ''}
+                    </p>
+                    {pendingPage.status !== 'published' ? (
+                      <>
+                        <p className="text-xs text-amber-700">
+                          This page is still a draft. Publish it before sharing — drafts cannot be inserted as public links.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" variant="outline" size="sm" className="min-h-[44px]" asChild>
+                            <Link to={`/pages/${pendingPage.id}/edit`}>Edit and publish</Link>
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" className="min-h-[44px]" onClick={clearPendingParams}>
+                            Dismiss
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="pending-page-label">Link label</Label>
+                          <Input
+                            id="pending-page-label"
+                            value={pendingLabel || `View ${pendingPage.title}`}
+                            onChange={(e) => setPendingLabel(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" className="min-h-[44px]" onClick={confirmPendingPage}>
+                            Add page link
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" className="min-h-[44px]" onClick={clearPendingParams}>
+                            Dismiss
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          {(channel === 'email' && (mode === 'visual' || mode === 'html') && (pendingFileId || pendingPageSlug)) && (
+            <Card className="max-w-2xl border-amber-200 bg-amber-50">
+              <CardContent className="pt-6 text-sm text-amber-800">
+                File and page links insert into the Simple editor. Switch to Simple to add this item as a link, use “Add content” below to attach the file, or use the block pickers in Visual design.
+              </CardContent>
+            </Card>
+          )}
+          {channel === 'email' && (mode === 'visual' || mode === 'html') && (
+            <Card className="max-w-2xl">
+              <CardContent className="flex flex-wrap items-center gap-2 pt-6">
+                <Button type="button" variant="outline" size="sm" className="min-h-[44px] text-xs" onClick={() => setShellPickerOpen(true)}>
+                  <FolderOpen className="mr-1 h-3.5 w-3.5 text-indigo-600" />Add content
+                </Button>
+                <p className="w-full text-xs text-slate-500">
+                  Attachments ride along with the message and can be staged before the first save. Download links can only be inserted in the Simple editor.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          {shellPickerOpen && (
+            <AddContentPicker
+              open
+              channel={channel}
+              editorMode={mode}
+              fileFilter="all"
+              allowPages={false}
+              allowedPlacements={['attach']}
+              dialogTitle="Attach a file to this template"
+              alreadyAttachedIds={[...savedLibraryIds, ...stagedFiles.map((f) => f.id)]}
+              onClose={() => setShellPickerOpen(false)}
+              onAddFile={handleShellPickFile}
+              onAddPage={() => undefined}
+            />
+          )}
+
           {channel === 'email' && mode === 'simple' && (
-            <SimpleEmailForm channel={channel} draft={draft} setDraft={setDraft} onDirty={() => setHasUnsaved(true)} />
+            <SimpleEmailForm channel={channel} draft={draft} setDraft={setDraft} onDirty={() => setHasUnsaved(true)} stagedFiles={stagedFiles} onStageFile={stageFile} onUnstageFile={unstageFile} existingAttachments={existing?.attachments ?? []} />
           )}
           {channel === 'email' && mode === 'visual' && (
             <VisualEmailEditor
@@ -826,10 +1387,12 @@ export function TemplateFormPage() {
               approvalStatus={existing?.approval_status}
               onDirtyChange={setHasUnsaved}
               onSaved={(newId) => navigate(`/templates/${newId}/edit`, { replace: true })}
+              stagedFiles={stagedFiles}
+              onUnstageFile={unstageFile}
             />
           )}
           {channel === 'email' && mode === 'html' && (
-            <HtmlEmailEditor existing={existing} onDirty={() => setHasUnsaved(true)} onSaved={(newId) => navigate(`/templates/${newId}/edit`, { replace: true })} />
+            <HtmlEmailEditor existing={existing} onDirty={() => setHasUnsaved(true)} onSaved={(newId) => navigate(`/templates/${newId}/edit`, { replace: true })} stagedFiles={stagedFiles} onUnstageFile={unstageFile} />
           )}
           {channel !== 'email' && (
             <StructuredChannelForm
@@ -838,17 +1401,23 @@ export function TemplateFormPage() {
               setDraft={setDraft}
               onDirty={() => setHasUnsaved(true)}
               attachmentCount={existing?.attachments?.length ?? 0}
+              stagedFiles={stagedFiles}
+              onStageFile={stageFile}
+              onUnstageFile={unstageFile}
+              existingAttachments={existing?.attachments ?? []}
             />
           )}
 
-          {showAttachments && id && (
-            <AttachmentsPanel templateId={id} />
+          {(channel === 'email' || channel === 'whatsapp') && showAttachments && id && (
+            <AttachmentsPanel templateId={id} channel={channel} />
           )}
-          {!isEdit && (
+          {(channel === 'email' || channel === 'whatsapp') && !isEdit && (
+            <StagedAttachmentsCard channel={channel} stagedFiles={stagedFiles} onRemove={unstageFile} pendingCount={stagedFiles.length} />
+          )}
+          {!channelSupportsAttachments(channel) && (
             <Card className="max-w-2xl border-dashed">
-              <CardContent className="flex items-center gap-2 pt-6 text-sm text-slate-500">
-                <Paperclip className="h-4 w-4 shrink-0" />
-                Save the template first to attach images or PDFs.
+              <CardContent className="pt-6 text-sm text-slate-500">
+                Attachments are not sent on {channel === 'sms' ? 'SMS' : 'phone calls'}. Use “Add content” to insert a download link with the full URL instead.
               </CardContent>
             </Card>
           )}
@@ -858,7 +1427,11 @@ export function TemplateFormPage() {
       <AlertDialog
         open={pendingMode !== null || pendingChannel !== null}
         title="Switch editor?"
-        description="Switching views discards unsaved edits in the current view. Anything you already saved is preserved — including the other mode's content, which is restored when you switch back."
+        description={
+          pendingChannel && stagedFiles.length > 0 && !channelSupportsAttachments(pendingChannel)
+            ? `Switching to ${pendingChannel} keeps your text, but staged attachments are not sent on that channel — they will be kept as download links. Unsaved edits in the current view are discarded.`
+            : 'Switching views discards unsaved edits in the current view. Anything you already saved is preserved — including the other mode\'s content, which is restored when you switch back.'
+        }
         confirmLabel="Switch (discard unsaved edits)"
         cancelLabel="Stay here"
         onConfirm={confirmModeSwitch}

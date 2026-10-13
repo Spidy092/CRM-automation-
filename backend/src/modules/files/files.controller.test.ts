@@ -1,11 +1,18 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
+// Captures the module-load-time wiring (beforeEach(clearAllMocks) below wipes
+// the mock's own call history, so the args are recorded here instead).
+const mockWiredCheckers: unknown[] = [];
+
 jest.mock('./files.service', () => ({
   listFiles: jest.fn(),
   getFile: jest.fn(),
   uploadFile: jest.fn(),
   updateFile: jest.fn(),
   removeFile: jest.fn(),
+  setFileReferenceCheckers: jest.fn((checkers: unknown) => {
+    mockWiredCheckers.push(checkers);
+  }),
 }));
 
 import * as filesService from './files.service';
@@ -107,5 +114,17 @@ describe('deleteFileHandler', () => {
     const res = mockRes();
     await deleteFileHandler(mockReq({ params: { id: VALID_ID } }), res, next);
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe('file lifecycle wiring', () => {
+  it('injects the owning modules service interfaces (no repository imports, no cycle)', () => {
+    expect(mockWiredCheckers).toHaveLength(1);
+    expect(mockWiredCheckers[0]).toEqual(
+      expect.objectContaining({
+        findTemplatesUsingFile: expect.any(Function),
+        findPagesUsingFile: expect.any(Function),
+      }),
+    );
   });
 });

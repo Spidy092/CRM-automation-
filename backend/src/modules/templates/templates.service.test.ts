@@ -29,6 +29,11 @@ jest.mock('fs/promises', () => ({
   mkdir: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('../files/files.service', () => ({ getFileRow: jest.fn() }));
+// Advisory lock passthrough (same rationale as files.service.test.ts).
+jest.mock('../../shared/utils/db', () => ({
+  advisoryLockKey: jest.fn((namespace: string, id: string) => `${namespace}:${id}`),
+  withAdvisoryLock: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+}));
 
 import {
   findTemplates,
@@ -517,6 +522,23 @@ describe('addTemplateAttachmentFromLibrary', () => {
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'template.attachment_added_from_library' }),
     );
+  });
+
+  it('reads the file and appends inside the file lifecycle lock', async () => {
+    (findTemplateById as jest.Mock).mockResolvedValue(baseRow);
+    (getFileRow as jest.Mock).mockResolvedValue(libraryFile);
+    (appendTemplateAttachment as jest.Mock).mockResolvedValue({ ...baseRow, attachments: [] });
+
+    const { withAdvisoryLock } = await import('../../shared/utils/db');
+    await addTemplateAttachmentFromLibrary(baseRow.id, 'lib-1', actor);
+
+    expect(withAdvisoryLock).toHaveBeenCalledWith('file-lifecycle:lib-1', expect.any(Function));
+    // The live row re-read and the append must execute within the lock
+    // callback — after a concurrent delete commits, the re-read 404s instead
+    // of returning a row whose disk copy is already unlinked.
+    const lockOrder = (withAdvisoryLock as jest.Mock).mock.invocationCallOrder[0];
+    expect((getFileRow as jest.Mock).mock.invocationCallOrder[0]).toBeGreaterThan(lockOrder);
+    expect((appendTemplateAttachment as jest.Mock).mock.invocationCallOrder[0]).toBeGreaterThan(lockOrder);
   });
 });
 

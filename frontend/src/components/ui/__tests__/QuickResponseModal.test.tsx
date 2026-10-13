@@ -79,6 +79,21 @@ describe('QuickResponseModal', () => {
     } as ReturnType<typeof useQuickSend>);
   });
 
+  it('renders personalized HTML in an isolated email preview instead of showing markup', async () => {
+    useTemplatesMock.mockReturnValue({
+      data: { items: [{ ...approvedTemplate, body: '<h1>Hello {{first_name}}</h1>' }], meta: { hasMore: false } },
+      isLoading: false,
+    } as ReturnType<typeof useTemplates>);
+    const user = userEvent.setup();
+    renderWithProviders(<QuickResponseModal lead={lead} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Email' }));
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    const frame = screen.getByTitle('Personalized email preview');
+    expect(frame).toHaveAttribute('srcdoc', '<h1>Hello Alex</h1>');
+    expect(frame).toHaveAttribute('sandbox', '');
+    expect(screen.queryByText('<h1>Hello Alex</h1>')).not.toBeInTheDocument();
+  });
+
   it('lets a user compose and send a custom email when no approved template exists', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
@@ -126,7 +141,7 @@ describe('QuickResponseModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Email' }));
     await user.click(screen.getByRole('button', { name: 'Select' }));
-    expect(screen.getByText('Previewing personalized text with lead details.')).toBeInTheDocument();
+    expect(screen.getByText(/Preview with lead details/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => {

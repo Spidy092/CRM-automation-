@@ -61,21 +61,21 @@ describe('errorHandler', () => {
   it('handles an AppError instance without reporting to Sentry below 500', () => {
     const err = new AppError('not found', 404);
     errorHandler(err, buildReq(), res, next);
-    expect(sendError).toHaveBeenCalledWith(res, 'not found', 404);
+    expect(sendError).toHaveBeenCalledWith(res, 'not found', 404, undefined);
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it('reports AppError to Sentry when statusCode >= 500', () => {
     const err = new AppError('server exploded', 500);
     errorHandler(err, buildReq(), res, next);
-    expect(sendError).toHaveBeenCalledWith(res, 'server exploded', 500);
+    expect(sendError).toHaveBeenCalledWith(res, 'server exploded', 500, undefined);
     expect(Sentry.captureException).toHaveBeenCalledWith(err);
   });
 
   it('handles a plain object carrying isAppError (surviving module reloads)', () => {
     const err = { message: 'reloaded error', statusCode: 409, isAppError: true };
     errorHandler(err, buildReq(), res, next);
-    expect(sendError).toHaveBeenCalledWith(res, 'reloaded error', 409);
+    expect(sendError).toHaveBeenCalledWith(res, 'reloaded error', 409, undefined);
   });
 
   it('handles a Postgres exclusion constraint violation (23P01)', () => {
@@ -109,5 +109,22 @@ describe('errorHandler', () => {
     errorHandler('a string error', buildReq(), res, next);
     expect(sendError).toHaveBeenCalledWith(res, 'Internal server error', 500);
     expect(Sentry.captureException).toHaveBeenCalledWith(new Error('a string error'));
+  });
+});
+
+describe('AppError meta', () => {
+  it('carries structured context for conflict responses', () => {
+    const meta = { references: { templates: [{ id: 't1', name: 'Welcome' }], pages: [] } };
+    const err = new AppError('referenced', 409, meta);
+    expect(err.meta).toEqual(meta);
+  });
+
+  it('passes meta through to the error envelope', () => {
+    const meta = { references: { templates: [{ id: 't1', name: 'Welcome' }], pages: [] } };
+    const err = new AppError('referenced', 409, meta);
+    const req = { originalUrl: '/api/v1/files/f1' } as Request;
+    const res = {} as Response;
+    errorHandler(err, req, res, jest.fn());
+    expect(sendError).toHaveBeenCalledWith(res, 'referenced', 409, meta);
   });
 });

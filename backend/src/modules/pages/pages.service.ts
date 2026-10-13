@@ -1,11 +1,13 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { advisoryLockKey, withAdvisoryLocks } from '../../shared/utils/db';
 import {
   countPageViews,
   findPageById,
   findPageBySlug,
   findPages,
   findPageViews,
+  findPagesReferencingFile,
   findPublishedPageBySlug,
   insertPage,
   insertPageView,
@@ -33,6 +35,17 @@ export async function getPage(id: string): Promise<LandingPageResponse> {
   return row;
 }
 
+/**
+ * Live pages whose gallery/attachment blocks reference a Files-library entry.
+ * Consumed by the files module before deleting a library entry — deleting a
+ * referenced file turns those blocks into "missing" renders.
+ */
+export async function findPagesUsingFile(
+  fileId: string,
+): Promise<Array<{ id: string; title: string }>> {
+  return findPagesReferencingFile(fileId);
+}
+
 /** Collect every fileId referenced by gallery/attachment blocks, deduplicated. */
 function collectFileIds(blocks: PublicLandingPageResponse['blocks']): string[] {
   const ids = new Set<string>();
@@ -41,6 +54,36 @@ function collectFileIds(blocks: PublicLandingPageResponse['blocks']): string[] {
     if (block.type === 'attachment') ids.add(block.fileId);
   }
   return Array.from(ids);
+}
+
+/**
+ * Referenced file ids in globally sorted order — the file-lifecycle protocol
+ * requires sorted multi-key acquisition to stay deadlock-free.
+ */
+function sortedReferencedFileIds(blocks: PublicLandingPageResponse['blocks']): string[] {
+  return collectFileIds(blocks).sort();
+}
+
+/**
+ * Re-read every referenced file through the files service interface while
+ * the caller holds the lifecycle locks. `getFile` already excludes
+ * soft-deleted rows, so a missing/deleted file surfaces as 404, reworded to
+ * name the dangling reference so the editor knows which block to drop.
+ */
+async function assertFilesLive(fileIds: string[]): Promise<void> {
+  for (const fileId of fileIds) {
+    try {
+      await getFile(fileId);
+    } catch (err) {
+      if ((err as AppError | null)?.statusCode === 404) {
+        throw new AppError(
+          `Referenced file ${fileId} was not found or was deleted — remove it from the page blocks and try again`,
+          404,
+        );
+      }
+      throw err;
+    }
+  }
 }
 
 export async function getPublicPage(slug: string): Promise<PublicLandingPageResponse> {
@@ -100,13 +143,26 @@ export async function createPage(
   const existing = await findPageBySlug(input.slug);
   if (existing) throw new AppError(`Slug "${input.slug}" is already in use`, 409);
 
-  const row = await insertPage({
-    title: input.title,
-    slug: input.slug,
-    description: input.description ?? null,
-    blocks: input.blocks ?? [],
-    created_by: actor.id,
-  });
+  // File-lifecycle protocol: every file referenced by the new blocks is
+  // locked (sorted — see withAdvisoryLocks) and re-read while locked, so a
+  // concurrent file deletion either commits first (re-read 404s here, never
+  // a dangling block) or lands after this insert commits (and its reference
+  // re-check then blocks with 409). Reads go through the files service
+  // interface, which already excludes soft-deleted rows.
+  const fileIds = sortedReferencedFileIds(input.blocks ?? []);
+  const row = await withAdvisoryLocks(
+    fileIds.map((id) => advisoryLockKey('file-lifecycle', id)),
+    async () => {
+      await assertFilesLive(fileIds);
+      return insertPage({
+        title: input.title,
+        slug: input.slug,
+        description: input.description ?? null,
+        blocks: input.blocks ?? [],
+        created_by: actor.id,
+      });
+    },
+  );
 
   await writeAuditLog({
     userId: actor.id,
@@ -133,7 +189,20 @@ export async function updatePage(
     if (existing) throw new AppError(`Slug "${input.slug}" is already in use`, 409);
   }
 
-  const row = await updatePageRepo(id, input);
+  // Same lifecycle protocol as createPage, applied only when the blocks
+  // themselves are rewritten — title/slug/description edits take the
+  // lock-free fast path. Writing the full block set re-validates every
+  // reference, so a page holding a previously deleted file must drop that
+  // block before any other block edit can save (the editor already renders
+  // such blocks as missing / unselected).
+  const fileIds = input.blocks !== undefined ? sortedReferencedFileIds(input.blocks) : [];
+  const row = await withAdvisoryLocks(
+    fileIds.map((id) => advisoryLockKey('file-lifecycle', id)),
+    async () => {
+      await assertFilesLive(fileIds);
+      return updatePageRepo(id, input);
+    },
+  );
 
   await writeAuditLog({
     userId: actor.id,

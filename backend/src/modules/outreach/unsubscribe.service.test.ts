@@ -8,8 +8,28 @@ jest.mock('../leads/leads.service', () => ({ optOutLeadByEmail: jest.fn() }));
 const leadId = '123e4567-e89b-42d3-a456-426614174000';
 
 describe('recipient outreach unsubscribe tokens', () => {
+  const originalEnv = { ...process.env };
+  afterEach(() => { process.env = { ...originalEnv }; });
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('uses the configured HTTPS browser origin when the production base is localhost', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.APP_BASE_URL = 'http://localhost:3000';
+    delete process.env.BASE_URL;
+    process.env.CORS_ORIGIN = 'https://crm.example.com';
+    const url = new URL(await createOutreachUnsubscribeUrl(leadId, 'recipient@example.com'));
+    expect(url.origin).toBe('https://crm.example.com');
+  });
+
+  it('fails closed when no public HTTPS origin is configured in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.APP_BASE_URL = 'https://localhost:3000';
+    delete process.env.BASE_URL;
+    process.env.CORS_ORIGIN = 'http://crm.example.com';
+    await expect(createOutreachUnsubscribeUrl(leadId, 'recipient@example.com')).rejects.toMatchObject({ statusCode: 500 });
+    expect(redis.set).not.toHaveBeenCalled();
   });
 
   it('issues an opaque link and stores only its digest with an email-bound payload', async () => {

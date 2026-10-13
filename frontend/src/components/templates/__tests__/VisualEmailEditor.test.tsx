@@ -4,15 +4,21 @@ import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { VisualEmailEditor } from '../VisualEmailEditor';
 import { starterTemplates } from '@/lib/emailDesign';
-import { useCreateTemplate, useUpdateTemplate } from '@/api/templates';
+import { useAttachTemplateFromLibrary, useCreateTemplate, useUpdateTemplate } from '@/api/templates';
 
 vi.mock('@/api/templates', () => ({
   useCreateTemplate: vi.fn(),
   useUpdateTemplate: vi.fn(),
+  useAttachTemplateFromLibrary: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock('@/api/files', () => ({
   useFiles: vi.fn().mockReturnValue({ data: [], isLoading: false }),
+  useUploadFile: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+vi.mock('@/api/pages', () => ({
+  usePages: vi.fn().mockReturnValue({ data: [], isLoading: false }),
 }));
 
 const mutateAsync = vi.fn();
@@ -23,6 +29,7 @@ describe('VisualEmailEditor', () => {
     mutateAsync.mockResolvedValue({ id: 'new-1' });
     vi.mocked(useCreateTemplate).mockReturnValue({ mutateAsync, isPending: false } as ReturnType<typeof useCreateTemplate>);
     vi.mocked(useUpdateTemplate).mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as ReturnType<typeof useUpdateTemplate>);
+    vi.mocked(useAttachTemplateFromLibrary).mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as ReturnType<typeof useAttachTemplateFromLibrary>);
   });
 
   it('starts from a starter with editable blocks and saves the design document', async () => {
@@ -99,6 +106,42 @@ describe('VisualEmailEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
     expect(await screen.findByText(/template name is required/i)).toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('attaches staged files after creating a new template without duplicating it', async () => {
+    const attachMutate = vi.fn().mockResolvedValue({ id: 'new-1' });
+    vi.mocked(useAttachTemplateFromLibrary).mockReturnValue({ mutateAsync: attachMutate, isPending: false } as ReturnType<typeof useAttachTemplateFromLibrary>);
+    const onSaved = vi.fn();
+    const onUnstageFile = vi.fn();
+    const staged = [
+      { id: 'f-v', filename: 'hero.png', mime_type: 'image/png', size_bytes: 100, url: 'http://x/hero.png', tags: [], created_by: 'u1', created_at: '', updated_at: '' },
+    ];
+    renderWithProviders(<VisualEmailEditor starter={null} onSaved={onSaved} stagedFiles={staged} onUnstageFile={onUnstageFile} />);
+    fireEvent.change(screen.getByLabelText('Template name *'), { target: { value: 'Visual launch' } });
+    fireEvent.change(screen.getByLabelText('Subject *'), { target: { value: 'News' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(attachMutate).toHaveBeenCalledWith({ id: 'new-1', fileId: 'f-v' }));
+    expect(onUnstageFile).toHaveBeenCalledWith('f-v');
+    expect(onSaved).toHaveBeenCalledWith('new-1');
+  });
+
+  it('retries failed staged attachments without creating another template', async () => {
+    const attachMutate = vi.fn()
+      .mockRejectedValueOnce(new Error('nope'))
+      .mockResolvedValueOnce({ id: 'new-1' });
+    vi.mocked(useAttachTemplateFromLibrary).mockReturnValue({ mutateAsync: attachMutate, isPending: false } as ReturnType<typeof useAttachTemplateFromLibrary>);
+    const staged = [
+      { id: 'f-v', filename: 'hero.png', mime_type: 'image/png', size_bytes: 100, url: 'http://x/hero.png', tags: [], created_by: 'u1', created_at: '', updated_at: '' },
+    ];
+    renderWithProviders(<VisualEmailEditor starter={null} stagedFiles={staged} onUnstageFile={() => undefined} />);
+    fireEvent.change(screen.getByLabelText('Template name *'), { target: { value: 'Visual launch' } });
+    fireEvent.change(screen.getByLabelText('Subject *'), { target: { value: 'News' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(screen.getByText(/will not create another template/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Retry 1 failed attachment/i }));
+    await waitFor(() => expect(attachMutate).toHaveBeenCalledTimes(2));
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
   });
 });
 
