@@ -366,6 +366,40 @@ export async function findTasks(filters: {
   );
 }
 
+/**
+ * Tasks visible to a non-privileged user: assigned to them, created by
+ * them, or on lead ids supplied by the leads service. This repository only
+ * queries the outreach module's tasks table.
+ */
+export async function findTasksVisibleToUser(filters: {
+  userId: string;
+  ownedLeadIds: string[];
+  status?: string;
+  assignedTo?: string;
+  limit: number;
+}): Promise<TaskRow[]> {
+  const conditions: string[] = [
+    `(t.assigned_to = $1 OR t.created_by = $1 OR t.lead_id = ANY($2::uuid[]))`,
+  ];
+  const params: unknown[] = [filters.userId, filters.ownedLeadIds];
+  let i = 3;
+
+  if (filters.status) {
+    conditions.push(`t.status = $${i++}`);
+    params.push(filters.status);
+  }
+  if (filters.assignedTo) {
+    conditions.push(`t.assigned_to = $${i++}`);
+    params.push(filters.assignedTo);
+  }
+
+  params.push(filters.limit);
+  return query<TaskRow>(
+    `SELECT ${TASK_COLS} FROM tasks t WHERE ${conditions.join(' AND ')} ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC LIMIT $${i}`,
+    params,
+  );
+}
+
 export async function updateTask(
   id: string,
   fields: Partial<{

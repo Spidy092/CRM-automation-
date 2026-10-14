@@ -1,3 +1,4 @@
+jest.mock('../leads/leads.service', () => ({ getLeadEnrollmentOptions: jest.fn() }));
 jest.mock('./campaigns.repository', () => ({
   findCampaigns: jest.fn(),
   findCampaignById: jest.fn(),
@@ -142,6 +143,12 @@ describe('getAllCampaigns', () => {
 });
 
 describe('createCampaign', () => {
+  it('persists source and tag enrollment rules on creation', async () => {
+    (insertCampaign as jest.Mock).mockResolvedValue(baseCampaign);
+    await createCampaign({ name: 'Sources', trigger_source: ['google_business'], trigger_tags: ['vip'] }, actor);
+    expect(insertCampaign).toHaveBeenCalledWith(expect.objectContaining({ trigger_source: ['google_business'], trigger_tags: ['vip'] }), actor.id);
+  });
+
   it('inserts and audits', async () => {
     (insertCampaign as jest.Mock).mockResolvedValue(baseCampaign);
     const res = await createCampaign(
@@ -154,6 +161,21 @@ describe('createCampaign', () => {
 });
 
 describe('updateCampaignById', () => {
+  it.each([null, ['facebook']])('saves or clears enrollment rules: %s', async (value) => {
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (updateCampaign as jest.Mock).mockResolvedValue(baseCampaign);
+    await updateCampaignById('camp-1', { trigger_source: value, trigger_tags: value, pipeline_id: null }, actor);
+    expect(updateCampaign).toHaveBeenCalledWith('camp-1', expect.objectContaining({ trigger_source: value, trigger_tags: value, pipeline_id: null }));
+  });
+
+  it('leaves trigger rules unchanged when omitted in an update', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
+    (updateCampaign as jest.Mock).mockResolvedValue(baseCampaign);
+    await updateCampaignById('camp-1', { name: 'Renamed' }, actor);
+    expect((updateCampaign as jest.Mock).mock.calls[0][1]).not.toHaveProperty('trigger_source');
+    expect((updateCampaign as jest.Mock).mock.calls[0][1]).not.toHaveProperty('trigger_tags');
+  });
+
   it('refuses to edit an active campaign', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
     await expect(updateCampaignById('camp-1', { name: 'x' }, actor)).rejects.toMatchObject({
@@ -186,8 +208,13 @@ describe('deleteCampaignById', () => {
 
 describe('launch / pause / resume', () => {
   it('launches from draft', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', launched_at: '2026-06-19T01:00:00Z' });
+    const campaign = { ...baseCampaign, sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(campaign);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({ ...campaign, status: 'active', launched_at: '2026-06-19T01:00:00Z' });
     const res = await launchCampaignById('camp-1', actor);
     expect(res.campaign.status).toBe('active');
     expect(res.automation).toEqual({ enqueued: 0, skipped: 0, mockMode: false });
@@ -227,10 +254,84 @@ describe('launch / pause / resume', () => {
 describe('addLeads / removeLead', () => {
   it('adds leads and audits', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
-    (addLeadsToCampaign as jest.Mock).mockResolvedValue([{ id: 'cl-1' }, { id: 'cl-2' }]);
+    (addLeadsToCampaign as jest.Mock).mockResolvedValue([
+      { id: 'cl-1', lead_id: 'lead-1' },
+      { id: 'cl-2', lead_id: 'lead-2' },
+    ]);
     const res = await addLeads('camp-1', ['lead-1', 'lead-2'], actor);
     expect(res.added).toBe(2);
+    expect(res.enqueued).toBe(0);
     expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('queues the first message when leads are manually added to an active campaign', async () => {
+    const activeCampaignWithSequence = { ...baseCampaign, status: 'active', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaignWithSequence);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([
+      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
+    ]);
+    (addLeadsToCampaign as jest.Mock).mockResolvedValue([
+      { id: 'cl-1', campaign_id: 'camp-1', lead_id: 'lead-1' },
+    ]);
+    (findCampaignLeadsWithProgress as jest.Mock).mockResolvedValue([
+      { lead_id: 'lead-1', latest_step: null },
+    ]);
+
+    const res = await addLeads('camp-1', ['lead-1'], actor);
+
+    expect(res).toEqual({ added: 1, enqueued: 1 });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      leadId: 'lead-1',
+      campaignId: 'camp-1',
+      sequenceId: 'seq-1',
+      stepNumber: 1,
+      channel: 'email',
+      templateId: 'tmpl-1',
+    }));
+  });
+
+  it('queues an already-enrolled lead with no outreach history when added again', async () => {
+    const activeCampaignWithSequence = { ...baseCampaign, status: 'active', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaignWithSequence);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([
+      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
+    ]);
+    (addLeadsToCampaign as jest.Mock).mockResolvedValue([]);
+    (findCampaignLeadsWithProgress as jest.Mock).mockResolvedValue([
+      { lead_id: 'lead-1', latest_step: null },
+    ]);
+
+    const res = await addLeads('camp-1', ['lead-1'], actor);
+
+    expect(res).toEqual({ added: 0, enqueued: 1 });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      leadId: 'lead-1',
+      campaignId: 'camp-1',
+      stepNumber: 1,
+    }));
+  });
+
+  it('refuses to add leads to an active campaign when its sending provider is disconnected', async () => {
+    const activeCampaignWithSequence = { ...baseCampaign, status: 'active', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaignWithSequence);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (findByName as jest.Mock).mockResolvedValue(null);
+
+    await expect(addLeads('camp-1', ['lead-1'], actor)).rejects.toThrow(
+      'Campaign is not ready to contact leads. No ready connector configured for email.',
+    );
+    expect(addLeadsToCampaign).not.toHaveBeenCalled();
   });
 
   it('throws 404 when adding to missing campaign', async () => {
@@ -313,8 +414,13 @@ describe('deleteCampaignById 404 branch', () => {
 
 describe('launch / pause / resume — additional status variants', () => {
   it('launches from paused status', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'paused' });
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
+    const campaign = { ...baseCampaign, status: 'paused', sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(campaign);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({ ...campaign, status: 'active' });
     const res = await launchCampaignById('camp-1', actor);
     expect(res.campaign.status).toBe('active');
   });
@@ -461,12 +567,13 @@ describe('launchCampaignById — outreach enqueueing', () => {
     }));
   });
 
-  it('launches without sequence — skips enqueue', async () => {
+  it('does not launch without an outreach sequence', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
 
-    const res = await launchCampaignById('camp-1', actor);
-    expect(res.campaign.status).toBe('active');
+    await expect(launchCampaignById('camp-1', actor)).rejects.toThrow(
+      'Campaign is not ready to launch. Campaign has no outreach sequence.',
+    );
+    expect(launchCampaign).not.toHaveBeenCalled();
     expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
   });
 
@@ -484,13 +591,29 @@ describe('launchCampaignById — outreach enqueueing', () => {
     expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
   });
 
-  it('launches with sequence but sequence has no steps — skips enqueue', async () => {
+  it('does not launch when the sequence has no steps', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', sequence_id: 'seq-1' });
     (findSequenceById as jest.Mock).mockResolvedValue({ id: 'seq-1', steps: [] });
 
-    const res = await launchCampaignById('camp-1', actor);
-    expect(res.campaign.status).toBe('active');
+    await expect(launchCampaignById('camp-1', actor)).rejects.toThrow(
+      'Campaign is not ready to launch. Outreach sequence has no steps.',
+    );
+    expect(launchCampaign).not.toHaveBeenCalled();
+    expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not activate a campaign when its required sending provider is disconnected', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 't1', delayHours: 0 }],
+    });
+    (findByName as jest.Mock).mockResolvedValue(null);
+
+    await expect(launchCampaignById('camp-1', actor)).rejects.toThrow(
+      'Campaign is not ready to launch. No ready connector configured for email.',
+    );
+    expect(launchCampaign).not.toHaveBeenCalled();
     expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
   });
 
@@ -615,9 +738,14 @@ describe('launchCampaignById — AI brief approval requirement', () => {
   };
 
   it('succeeds when an approved AI brief exists', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue(guardedCampaign);
+    const campaign = { ...guardedCampaign, sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(campaign);
     (findCampaignBrief as jest.Mock).mockResolvedValue(approvedBrief);
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...guardedCampaign, status: 'active' });
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({ ...campaign, status: 'active' });
 
     const res = await launchCampaignById('camp-1', actor);
 
@@ -626,8 +754,13 @@ describe('launchCampaignById — AI brief approval requirement', () => {
   });
 
   it('succeeds under override when autonomy is supervised and ai_min_confidence is 0 without a brief', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
+    const campaign = { ...baseCampaign, sequence_id: 'seq-1' };
+    (findCampaignById as jest.Mock).mockResolvedValue(campaign);
+    (findSequenceById as jest.Mock).mockResolvedValue({
+      id: 'seq-1',
+      steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({ ...campaign, status: 'active' });
 
     const res = await launchCampaignById('camp-1', actor);
 

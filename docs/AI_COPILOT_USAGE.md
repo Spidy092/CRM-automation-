@@ -1,6 +1,6 @@
 # AI Copilot Usage Guide
 
-**Last updated:** 2026-06-29
+**Last updated:** 2026-10-13
 
 This guide explains how to configure the AI provider key, how the CRM Copilot works, and how users should operate it safely.
 
@@ -85,8 +85,10 @@ Never read or expose the real `.env` file in support messages. Use `.env.example
 1. Log in to the CRM.
 2. Look at the bottom-right corner of the screen.
 3. Click the round chat button.
-4. Type a request in plain English.
-5. Press Enter or click the send icon.
+4. Choose **Chat** to type a request in plain English, or **Approvals** to review pending work assigned to you. The launcher badge shows the total pending count, and opening Copilot selects Approvals when work is waiting.
+5. In Chat, press Enter or click the send icon. Admins can also use **Activity** to inspect the ten most recent AI decision outcomes, including failures.
+
+Approvals refresh every 15 seconds; admin activity refreshes every 30 seconds while the panel is open. Use the pagination controls to reach all pending approvals. Activity is an admin-only overview; use **AI & Testing** for the detailed audit log.
 
 Example read prompts:
 
@@ -121,14 +123,13 @@ When Copilot or an AI worker proposes a risky action, the app creates:
 
 To approve or reject:
 
-1. Open **AI Inbox** from the left navigation.
-2. Review the item title, summary, urgency, confidence, draft response, and linked action badge.
+1. Open the bottom-right **Copilot** button and choose **Approvals**. Approval notifications and old `/ai-inbox` links open this tab directly.
+2. Review the item title, summary, and urgency.
 3. Click:
    - **Approve** to execute the linked action once,
-   - **Reject** to cancel the linked action,
-   - **Snooze** to delay it for 4 hours.
+   - **Reject** to cancel the linked action.
 
-After approval, the inbox item stores an action result so the user can see what happened.
+The panel confirms approval or rejection and refreshes the pending list. The backend stores the action result on the inbox item.
 
 ---
 
@@ -238,7 +239,7 @@ Check:
 
 Check:
 
-1. Open **AI Inbox** and verify the item has `Agent action linked`.
+1. Open **Copilot -> Approvals** and review the pending item's title and summary.
 2. Confirm the action was approved, not snoozed or rejected.
 3. If it expired, the executor fails closed.
 4. Check backend logs for `agent action execution failed`.
@@ -279,25 +280,22 @@ npm run build
 - [ ] Save settings.
 - [ ] Open Copilot from the bottom-right chat button.
 - [ ] Ask: `Show dashboard metrics`.
-- [ ] Ask a write request and confirm it appears in **AI Inbox**.
+- [ ] Ask a write request and confirm it appears in **Copilot -> Approvals**.
 
 ---
 
 ## 12. Agent Planner (Multi-Step Plans)
 
-The Agent Planner is an optional Copilot mode that breaks open-ended goals into multi-step execution plans. It is available only when the `AGENT_PLANNER_ENABLED` feature flag is on.
+The Agent Planner is an optional Copilot mode that breaks open-ended goals into multi-step execution plans. Admins control it through **Settings -> AI -> AI Copilot Planner**.
 
 ### 12.1 Enabling the Planner
 
-1. Open the backend environment configuration (for example `.env` or `.env.prod`).
-2. Set:
-   ```env
-   AGENT_PLANNER_ENABLED=true
-   ```
+1. Log in as an admin and open **Settings -> AI**.
+2. Turn on **AI Copilot Planner** and save the settings.
 3. Make sure the AI engine is enabled and a provider key is configured in **Settings -> AI**.
-4. Restart the backend service.
+4. To disable multi-step planning, turn off **AI Copilot Planner** and save again.
 
-When the flag is off, Copilot continues to handle requests with the single-action chat flow described in the previous sections.
+When the setting is off, Copilot continues to handle requests with the single-action chat flow described in the previous sections. `AGENT_PLANNER_ENABLED` remains the fallback when no saved planner setting exists.
 
 ### 12.2 Starting a Plan from Chat
 
@@ -332,10 +330,10 @@ A plan can be in one of the following statuses:
 
 Steps that perform CRM writes are marked `require_approval` and create items in the AI Inbox:
 
-1. Open **AI Inbox** from the left navigation.
-2. Review each planner approval item. It shows the plan title, step description, and affected records.
+1. Open **Copilot -> Approvals** from the bottom-right button.
+2. Review each planner approval item's title, summary, and urgency.
 3. Approve or reject individual steps.
-4. Use the bulk actions to approve or reject multiple planner items at once.
+4. Use pagination to review additional pending items; resolve each item individually.
 5. Once all required approvals are granted, the runner automatically resumes the plan.
 6. If a step is rejected, the plan stops and Copilot reports the cancellation.
 

@@ -3,7 +3,13 @@ import express, { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { notificationsRoutes } from './notifications.routes';
 import { consumeSseTicket } from './notifications.controller';
+import { redis } from '../../shared/utils/redis';
 
+jest.mock('../../shared/utils/redis', () => ({
+  redis: {
+    get: jest.fn(),
+  },
+}));
 jest.mock('jsonwebtoken', () => ({
   verify: jest.fn(),
 }));
@@ -33,6 +39,7 @@ const mockConsumeSseTicket = consumeSseTicket as jest.Mock;
 describe('notifications.routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (redis.get as jest.Mock).mockResolvedValue(null);
     process.env.JWT_PUBLIC_KEY = 'public-key';
   });
 
@@ -97,6 +104,42 @@ describe('notifications.routes', () => {
         .get('/notifications')
         .set('Authorization', 'Bearer validtoken');
       expect(res.status).toBe(200);
+      expect(redis.get).toHaveBeenCalledWith('sse:revoked:u2');
+    });
+
+    it('returns 401 when Bearer JWT user session has been revoked', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({
+        id: 'u2',
+        role: 'manager',
+        email: 'm@y.com',
+        name: 'M',
+        iat: 1,
+        exp: 2,
+      });
+      (redis.get as jest.Mock).mockResolvedValue('session_revoked');
+      const res = await request(app)
+        .get('/notifications')
+        .set('Authorization', 'Bearer validtoken');
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ success: false, error: 'User session has been revoked' });
+      expect(redis.get).toHaveBeenCalledWith('sse:revoked:u2');
+    });
+
+    it('returns 500 when redis.get throws during Bearer JWT revocation check', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({
+        id: 'u2',
+        role: 'manager',
+        email: 'm@y.com',
+        name: 'M',
+        iat: 1,
+        exp: 2,
+      });
+      (redis.get as jest.Mock).mockRejectedValue(new Error('redis down'));
+      const res = await request(app)
+        .get('/notifications')
+        .set('Authorization', 'Bearer validtoken');
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ success: false, error: 'Server misconfiguration' });
     });
 
     it('returns 401 for an invalid Bearer JWT', async () => {
@@ -109,3 +152,5 @@ describe('notifications.routes', () => {
     });
   });
 });
+
+

@@ -1,6 +1,7 @@
 export interface AiSettings {
   id: string;
   enabled: boolean;
+  planner_enabled: boolean;
   base_url: string | null;
   model: string;
   max_tokens: number;
@@ -16,6 +17,7 @@ export interface AiSettings {
 export interface AiSettingsPublic {
   id: string;
   enabled: boolean;
+  planner_enabled: boolean;
   base_url: string | null;
   /** Whether an API key is currently stored (never expose the value) */
   has_api_key: boolean;
@@ -30,6 +32,7 @@ export interface AiSettingsPublic {
 
 export interface UpdateAiSettingsInput {
   enabled?: boolean;
+  planner_enabled?: boolean;
   base_url?: string | null;
   /** Raw API key — will be encrypted at the service layer before storage */
   api_key?: string | null;

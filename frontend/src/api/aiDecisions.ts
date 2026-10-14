@@ -15,7 +15,16 @@ export interface DecisionLogResponse {
   total: number;
 }
 
-export const useDecisionLog = (filters: DecisionLogFilters = {}) => {
+export interface DecisionLogQueryOptions {
+  enabled?: boolean;
+  refetchInterval?: number;
+  refetchOnWindowFocus?: boolean;
+}
+
+export const useDecisionLog = (
+  filters: DecisionLogFilters = {},
+  options: DecisionLogQueryOptions = {},
+) => {
   return useQuery({
     queryKey: ['ai-decisions', filters],
     queryFn: async (): Promise<DecisionLogResponse> => {
@@ -25,5 +34,8 @@ export const useDecisionLog = (filters: DecisionLogFilters = {}) => {
       );
       return { items: data.data, total: data.meta?.total ?? data.data.length };
     },
+    enabled: options.enabled ?? true,
+    refetchInterval: options.refetchInterval,
+    refetchOnWindowFocus: options.refetchOnWindowFocus,
   });
 };

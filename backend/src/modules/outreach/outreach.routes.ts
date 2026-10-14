@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { wrap } from '../../shared/utils/asyncHandler';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
-import { authenticatedLimiter } from '../../shared/middleware/rateLimiter';
+import { authenticatedLimiter, publicLimiter } from '../../shared/middleware/rateLimiter';
 import {
   listSequencesHandler,
   getSequenceHandler,
@@ -13,13 +13,18 @@ import {
   getLeadTimelineHandler,
   getLeadLogsHandler,
   listTasksHandler,
+  getTaskHandler,
   sendManualOutreachHandler,
   quickSendHandler,
   createTaskHandler,
   updateTaskHandler,
+  unsubscribeOutreachHandler,
 } from './outreach.controller';
 
 const router = Router();
+
+// Recipient capability tokens authorize only opt-out; scanners cannot mutate via GET.
+router.post('/unsubscribe', publicLimiter, wrap(unsubscribeOutreachHandler));
 
 router.use(wrap(authenticate), authenticatedLimiter);
 
@@ -44,6 +49,7 @@ router.post(
 
 // Tasks (sales + admin + manager can create/update)
 router.get('/tasks', authorize('admin', 'manager', 'sales'), wrap(listTasksHandler));
+router.get('/tasks/:id', authorize('admin', 'manager', 'sales'), wrap(getTaskHandler));
 router.post('/tasks', authorize('admin', 'manager', 'sales'), wrap(createTaskHandler));
 router.put('/tasks/:id', authorize('admin', 'manager', 'sales'), wrap(updateTaskHandler));
 

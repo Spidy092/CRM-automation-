@@ -14,6 +14,7 @@ import {
   insertWorkflow,
   publishWorkflow,
   recordStepRun,
+  replayFailedEnrollment,
   updateWorkflowStatus,
 } from './workflow.repository';
 import type { WorkflowDefinition } from './workflow.types';
@@ -246,7 +247,15 @@ describe('workflow repository', () => {
       finished_at: null,
       created_at: 'now',
     };
-    mockedPool.mockResolvedValueOnce({ rows: [step] });
+    const client = { query: jest.fn() };
+    mockedTransaction.mockImplementationOnce(
+      async (callback: (value: typeof client) => Promise<unknown>) => callback(client),
+    );
+    client.query
+      .mockResolvedValueOnce({ rows: [{ id: 'enrollment-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ attempt: 1 }] })
+      .mockResolvedValueOnce({ rows: [step] });
     await expect(
       recordStepRun({
         enrollmentId: 'enrollment-1',
@@ -259,9 +268,57 @@ describe('workflow repository', () => {
       }),
     ).resolves.toEqual(step);
     mockedPool.mockResolvedValueOnce({ rows: [step] });
+    await expect(replayFailedEnrollment('enrollment-1')).resolves.toEqual(step);
+    mockedPool.mockResolvedValueOnce({ rows: [step] });
     await expect(findEnrollmentTimeline('enrollment-1', 25)).resolves.toEqual([step]);
     await expect(findEnrollmentTimeline('enrollment-1', 0)).rejects.toMatchObject({
       statusCode: 422,
     });
+  });
+
+  it('creates a new attempt after a failed node while keeping its logical key', async () => {
+    const failedStep = {
+      id: 'step-1',
+      enrollment_id: 'enrollment-1',
+      node_id: 'action',
+      node_type: 'action',
+      status: 'failed',
+      attempt: 1,
+      idempotency_key: 'enrollment-1:action',
+      job_id: 'job-1',
+      input: { actionType: 'lead.add_tag' },
+      result: null,
+      error_code: 'TEMPORARY_FAILURE',
+      error_message: 'temporary failure',
+      started_at: 'now',
+      finished_at: 'now',
+      created_at: 'now',
+    };
+    const nextStep = { ...failedStep, id: 'step-2', status: 'running', attempt: 2, job_id: 'job-2', error_code: null, error_message: null, finished_at: null };
+    const client = { query: jest.fn() };
+    mockedTransaction.mockImplementationOnce(
+      async (callback: (value: typeof client) => Promise<unknown>) => callback(client),
+    );
+    client.query
+      .mockResolvedValueOnce({ rows: [{ id: 'enrollment-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ attempt: 2 }] })
+      .mockResolvedValueOnce({ rows: [nextStep] });
+
+    await expect(
+      recordStepRun({
+        enrollmentId: 'enrollment-1',
+        nodeId: 'action',
+        nodeType: 'action',
+        idempotencyKey: 'enrollment-1:action',
+        jobId: 'job-2',
+        input: { actionType: 'lead.add_tag' },
+        lockVersion: 2,
+        workerId: 'worker-2',
+      }),
+    ).resolves.toEqual(nextStep);
+    expect(client.query.mock.calls[3]?.[1]).toEqual(
+      expect.arrayContaining(['enrollment-1:action', 'job-2']),
+    );
   });
 });

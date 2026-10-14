@@ -1,6 +1,37 @@
+import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import { LeadStatus } from '../../shared/types';
-import { LeadInput, LeadListFilters, LeadRow, LeadSortBy } from './leads.types';
+import { encodeCursor } from '../../shared/utils/pagination';
+import {
+  LeadInput,
+  LeadListFilters,
+  LeadRow,
+  LeadSortBy,
+  LeadTimelineEntry,
+  LeadTimelineFilters,
+  LeadTimelineResult,
+} from './leads.types';
+
+/** Minimal structural type for running queries on a transaction client. */
+type Executor = { query: typeof pool.query };
+
+async function queryOneOn<T extends object>(
+  db: Executor,
+  text: string,
+  params?: unknown[],
+): Promise<T | null> {
+  const res = await db.query<T>(text, params);
+  return res.rows[0] ?? null;
+}
+
+/** Update only the recipient whose email still matches the verified token. */
+export async function optOutLeadByEmail(id: string, email: string): Promise<LeadRow | null> {
+  return queryOne<LeadRow>(
+    `UPDATE leads SET status = 'opted_out', updated_at = NOW()
+     WHERE id = $1 AND lower(email) = $2 AND deleted_at IS NULL RETURNING ${COLS}`,
+    [id, email.trim().toLowerCase()],
+  );
+}
 
 /** Whitelist of sortable columns — the only place a column name reaches the SQL string. */
 const SORT_COLUMNS: Record<LeadSortBy, string> = {
@@ -21,7 +52,7 @@ const SORT_COLUMNS: Record<LeadSortBy, string> = {
 const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
-  deal_value, won_at, lost_at, next_follow_up_at, created_at, updated_at, deleted_at, scraper_log_id`;
+  deal_value, won_at, lost_at, next_follow_up_at, created_at, updated_at, deleted_at, scraper_log_id, google_place_id, google_contact_provenance`;
 
 function jsonArray(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -151,20 +182,89 @@ export async function findLeadById(id: string): Promise<LeadRow | null> {
   return queryOne<LeadRow>(`SELECT ${COLS} FROM leads WHERE id = $1 AND deleted_at IS NULL`, [id]);
 }
 
+export async function findDueFollowUpLeads(
+  limit = 100,
+  after?: { nextFollowUpAt: string; id: string },
+): Promise<Array<Pick<LeadRow, 'id' | 'business_name' | 'assigned_to' | 'next_follow_up_at'>>> {
+  const cursorClause = after ? 'AND (next_follow_up_at, id) > ($2::timestamptz, $3::uuid)' : '';
+  const params = after ? [limit, after.nextFollowUpAt, after.id] : [limit];
+  const result = await pool.query<
+    Pick<LeadRow, 'id' | 'business_name' | 'assigned_to' | 'next_follow_up_at'>
+  >(
+    `SELECT id, business_name, assigned_to, next_follow_up_at
+       FROM leads
+      WHERE deleted_at IS NULL
+        AND status = 'active'
+        AND assigned_to IS NOT NULL
+        AND next_follow_up_at IS NOT NULL
+        AND next_follow_up_at <= NOW()
+        ${cursorClause}
+      ORDER BY next_follow_up_at ASC, id ASC
+      LIMIT $1`,
+    params,
+  );
+  return result.rows;
+}
+
+/**
+ * Locks a non-deleted lead row for an ownership transaction (`SELECT ...
+ * FOR UPDATE`). Ownership orchestration must read through this (never the
+ * unlocked `findLeadById`) before guarding or writing, so concurrent
+ * assignments to the same lead serialize instead of double-assigning.
+ */
+export async function findLeadByIdForUpdate(id: string, client: Executor): Promise<LeadRow | null> {
+  return queryOneOn<LeadRow>(
+    client,
+    `SELECT ${COLS} FROM leads WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+    [id],
+  );
+}
+
+/**
+ * Writes `leads.assigned_to` — the authoritative current owner. This is the
+ * only sanctioned writer of the column for ownership changes; all callers
+ * (assignments orchestration, lead updates, bulk updates) go through the
+ * leads service, which pairs this write with history + notification.
+ */
+export async function updateLeadAssignment(
+  leadId: string,
+  userId: string | null,
+  executor?: Executor,
+): Promise<LeadRow> {
+  const db = executor ?? pool;
+  const row = await queryOneOn<LeadRow>(
+    db,
+    `UPDATE leads SET assigned_to = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING ${COLS}`,
+    [userId, leadId],
+  );
+  if (!row) throw new Error('Lead not found or deleted');
+  return row;
+}
+
 /** Find an existing non-deleted lead in the same source matching email OR phone (dedup). */
 export async function findExistingForDedup(
   email: string,
   phone: string,
   sourcePlatform: string,
+  googlePlaceId?: string | null,
+  executor?: Executor,
 ): Promise<LeadRow | null> {
-  return queryOne<LeadRow>(
-    `SELECT ${COLS} FROM leads
+  // Place identity takes precedence: branches can share phone numbers.
+  if (googlePlaceId && sourcePlatform === 'google_business') {
+    const sql = `SELECT ${COLS} FROM leads
+       WHERE source_platform = $1 AND google_place_id = $2 AND deleted_at IS NULL
+       LIMIT 1`;
+    const params = [sourcePlatform, googlePlaceId];
+    return executor ? queryOneOn<LeadRow>(executor, sql, params) : queryOne<LeadRow>(sql, params);
+  }
+  const sql = `SELECT ${COLS} FROM leads
      WHERE source_platform = $1
        AND deleted_at IS NULL
+       AND google_place_id IS NULL
        AND (lower(email) = lower($2) OR phone = $3)
-     LIMIT 1`,
-    [sourcePlatform, email, phone],
-  );
+     LIMIT 1`;
+  const params = [sourcePlatform, email, phone];
+  return executor ? queryOneOn<LeadRow>(executor, sql, params) : queryOne<LeadRow>(sql, params);
 }
 
 /** All non-deleted leads created by a given scraper run, newest first. */
@@ -190,45 +290,61 @@ export async function findLeadsByIds(ids: string[]): Promise<LeadRow[]> {
   );
 }
 
-export async function insertLead(input: LeadInput): Promise<LeadRow> {
-  const row = await queryOne<LeadRow>(
-    `INSERT INTO leads (
-       business_name, contact_name, phone, email, website, industry, location, country,
-       google_rating, review_count, social_links, source_platform, lead_score, classification,
-       status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id
-     ) VALUES (
-       $1, $2, $3, lower($4), $5, $6, $7, $8,
-       $9, $10, $11::jsonb, $12, 0, NULL,
-       'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19
-     )
-     RETURNING ${COLS}`,
-    [
-      input.business_name,
-      input.contact_name,
-      input.phone,
-      input.email,
-      input.website ?? null,
-      input.industry,
-      input.location,
-      input.country ?? null,
-      input.google_rating ?? null,
-      input.review_count ?? null,
-      jsonArray(input.social_links),
-      input.source_platform,
-      input.assigned_to ?? null,
-      input.pipeline_stage_id ?? null,
-      jsonArray(input.custom_fields) ?? '{}',
-      input.tags ?? null,
-      input.notes ?? null,
-      input.deal_value ?? null,
-      input.scraper_log_id ?? null,
-    ],
+/** Return the lead ids owned by one sales representative for task scoping. */
+export async function findLeadIdsByOwner(userId: string): Promise<string[]> {
+  const rows = await query<{ id: string }>(
+    `SELECT id FROM leads WHERE assigned_to = $1 AND deleted_at IS NULL`,
+    [userId],
   );
+  return rows.map((row) => row.id);
+}
+
+export async function insertLead(input: LeadInput, executor?: Executor): Promise<LeadRow> {
+  const sql = `INSERT INTO leads (
+     business_name, contact_name, phone, email, website, industry, location, country,
+     google_rating, review_count, social_links, source_platform, lead_score, classification,
+     status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id, google_place_id, google_contact_provenance
+   ) VALUES (
+     $1, $2, $3, lower($4), $5, $6, $7, $8,
+     $9, $10, $11::jsonb, $12, 0, NULL,
+     'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19, $20, $21::jsonb
+   )
+   RETURNING ${COLS}`;
+  const params = [
+    input.business_name,
+    input.contact_name,
+    input.phone,
+    input.email,
+    input.website ?? null,
+    input.industry,
+    input.location,
+    input.country ?? null,
+    input.google_rating ?? null,
+    input.review_count ?? null,
+    jsonArray(input.social_links),
+    input.source_platform,
+    input.assigned_to ?? null,
+    input.pipeline_stage_id ?? null,
+    jsonArray(input.custom_fields) ?? '{}',
+    input.tags ?? null,
+    input.notes ?? null,
+    input.deal_value ?? null,
+    input.scraper_log_id ?? null,
+    input.google_place_id ?? null,
+    jsonArray(input.google_contact_provenance),
+  ];
+  const row = executor
+    ? await queryOneOn<LeadRow>(executor, sql, params)
+    : await queryOne<LeadRow>(sql, params);
   if (!row) throw new Error('Failed to insert lead');
   return row;
 }
 
-export async function updateLead(id: string, input: Partial<LeadInput>): Promise<LeadRow> {
+export async function updateLead(
+  id: string,
+  input: Partial<LeadInput>,
+  executor?: Executor,
+): Promise<LeadRow> {
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
@@ -276,13 +392,20 @@ export async function updateLead(id: string, input: Partial<LeadInput>): Promise
 
   if (sets.length === 0) {
     // Nothing to update; return current row.
-    const current = await findLeadById(id);
+    const current = executor
+      ? await queryOneOn<LeadRow>(
+          executor,
+          `SELECT ${COLS} FROM leads WHERE id = $1 AND deleted_at IS NULL`,
+          [id],
+        )
+      : await findLeadById(id);
     if (!current) throw new Error('Lead not found or deleted');
     return current;
   }
 
   params.push(id);
-  const row = await queryOne<LeadRow>(
+  const row = await queryOneOn<LeadRow>(
+    executor ?? pool,
     `UPDATE leads SET ${sets.join(', ')} WHERE id = $${i} AND deleted_at IS NULL RETURNING ${COLS}`,
     params,
   );
@@ -337,8 +460,10 @@ export async function updateLeadStatus(id: string, status: 'active' | 'paused'):
 export async function updateLeadOutcome(
   id: string,
   outcome: 'won' | 'lost' | 'active',
+  executor?: Executor,
 ): Promise<LeadRow> {
-  const row = await queryOne<LeadRow>(
+  const row = await queryOneOn<LeadRow>(
+    executor ?? pool,
     `UPDATE leads
      SET status = $1,
          won_at = CASE WHEN $1 = 'won' THEN NOW() ELSE NULL END,
@@ -392,7 +517,11 @@ export async function findActivityForLead(
   return rows;
 }
 
-export async function bulkUpdateLeads(ids: string[], input: Partial<LeadInput>): Promise<number> {
+export async function bulkUpdateLeads(
+  ids: string[],
+  input: Partial<LeadInput>,
+  appendTags = false,
+): Promise<number> {
   if (ids.length === 0) return 0;
 
   const sets: string[] = ['updated_at = NOW()'];
@@ -435,7 +564,11 @@ export async function bulkUpdateLeads(ids: string[], input: Partial<LeadInput>):
     params.push(jsonArray(input.custom_fields) ?? '{}');
   }
   if (input.tags !== undefined) {
-    sets.push(`tags = $${i++}`);
+    sets.push(
+      appendTags
+        ? `tags = ARRAY(SELECT DISTINCT tag FROM unnest(COALESCE(tags, '{}'::text[]) || $${i++}::text[]) AS tag)`
+        : `tags = $${i++}`,
+    );
     params.push(input.tags ?? []);
   }
 
@@ -457,4 +590,175 @@ export async function bulkPauseLeads(ids: string[], status: LeadStatus): Promise
     [status, ids],
   );
   return res.rowCount ?? 0;
+}
+
+/** Only labels, excluding deleted leads; no lead identities or contact data. */
+export async function findLeadTimeline(filters: LeadTimelineFilters): Promise<LeadTimelineResult> {
+  const params: unknown[] = [filters.leadId];
+  // $1 is always the lead id, shared by both UNION branches.
+  let i = 1;
+  const push = (value: unknown): string => {
+    i += 1;
+    params.push(value);
+    return `$${i}`;
+  };
+
+  const activityTypesForKind = (kind: LeadTimelineFilters['kind']): string[] | null => {
+    if (kind === 'notes') return ['note'];
+    if (kind === 'system') return ['status_change', 'assignment_change'];
+    if (kind === 'messages') return ['call', 'whatsapp', 'email'];
+    return null;
+  };
+
+  const channelSets = (
+    channel: LeadTimelineFilters['channel'],
+  ): { act: string[]; log: string[] } => {
+    switch (channel) {
+      case 'whatsapp':
+        return { act: ['whatsapp'], log: ['whatsapp'] };
+      case 'email':
+        return { act: ['email'], log: ['email'] };
+      case 'sms':
+        return { act: [], log: ['sms'] };
+      case 'call':
+      case 'phone_call':
+        return { act: ['call'], log: ['phone_call'] };
+      default:
+        return { act: [], log: [] };
+    }
+  };
+
+  const channel = filters.channel ? channelSets(filters.channel) : null;
+
+  // An author filter only matches activity rows (sent messages carry no
+  // author), so the log branch is excluded whenever it is set.
+  const includeLogs =
+    (filters.kind === 'all' || filters.kind === 'messages') &&
+    !filters.authorId &&
+    !filters.pinnedOnly &&
+    (!channel || channel.log.length > 0);
+  const includeActivities =
+    filters.kind === 'all' ||
+    filters.kind === 'notes' ||
+    filters.kind === 'system' ||
+    filters.kind === 'messages';
+
+  const branches: string[] = [];
+
+  // Channels with no activity rows (e.g. sms) exclude this branch entirely.
+  if (includeActivities && (!channel || channel.act.length > 0)) {
+    const conds = ['a.lead_id = $1'];
+    const kindTypes = activityTypesForKind(filters.kind);
+    if (kindTypes) {
+      const placeholders = kindTypes.map((t) => push(t)).join(', ');
+      conds.push(`a.type IN (${placeholders})`);
+    }
+    if (channel) {
+      const placeholders = channel.act.map((t) => push(t)).join(', ');
+      conds.push(`a.type IN (${placeholders})`);
+    }
+    if (filters.pinnedOnly) {
+      conds.push(`a.type = 'note'`);
+      conds.push(`COALESCE((a.metadata->>'pinned')::boolean, false) = true`);
+    }
+    if (filters.authorId) conds.push(`a.user_id = ${push(filters.authorId)}`);
+    if (filters.search) {
+      const p = push(`%${filters.search}%`);
+      conds.push(
+        `(a.metadata->>'note' ILIKE ${p} OR a.metadata->>'outcome_label' ILIKE ${p} OR u.name ILIKE ${p})`,
+      );
+    }
+    if (filters.dateFrom) conds.push(`a.created_at >= ${push(filters.dateFrom)}`);
+    if (filters.dateTo) conds.push(`a.created_at <= ${push(filters.dateTo)}`);
+
+    branches.push(
+      `SELECT a.id, 'activity' AS source, a.type AS activity_type,
+              NULL::text AS channel, NULL::text AS status,
+              a.metadata, NULL::text AS message_body, NULL::int AS step_number,
+              NULL::text AS error_message,
+              a.user_id AS author_id, u.name AS author_name,
+              COALESCE((a.metadata->>'pinned')::boolean, false) AS is_pinned,
+              a.created_at
+         FROM activities a
+         LEFT JOIN users u ON u.id = a.user_id
+        WHERE ${conds.join(' AND ')}`,
+    );
+  }
+
+  if (includeLogs) {
+    const conds = ['l.lead_id = $1'];
+    if (channel && channel.log.length > 0) {
+      const placeholders = channel.log.map((t) => push(t)).join(', ');
+      conds.push(`l.channel IN (${placeholders})`);
+    }
+    if (filters.search) {
+      const p = push(`%${filters.search}%`);
+      conds.push(
+        `(l.message_body ILIKE ${p} OR l.error_message ILIKE ${p} OR l.status::text ILIKE ${p})`,
+      );
+    }
+    if (filters.dateFrom) conds.push(`l.created_at >= ${push(filters.dateFrom)}`);
+    if (filters.dateTo) conds.push(`l.created_at <= ${push(filters.dateTo)}`);
+
+    branches.push(
+      `SELECT l.id, 'message' AS source, NULL AS activity_type,
+              l.channel::text AS channel, l.status::text AS status,
+              NULL::jsonb AS metadata, l.message_body, l.step_number, l.error_message,
+              NULL::uuid AS author_id, NULL::text AS author_name,
+              false AS is_pinned, l.created_at
+         FROM outreach_logs l
+        WHERE ${conds.join(' AND ')}`,
+    );
+  }
+
+  if (branches.length === 0) {
+    return { items: [], meta: { limit: filters.limit, hasMore: false } };
+  }
+
+  let outerWhere = '';
+  if (filters.cursorTs && filters.cursorId) {
+    const ts = push(filters.cursorTs);
+    const id = push(filters.cursorId);
+    outerWhere = `WHERE (t.created_at, t.id) < (${ts}, ${id})`;
+  }
+
+  const fetchLimit = filters.limit + 1;
+  const rows = await query<LeadTimelineEntry>(
+    `SELECT * FROM (${branches.join(' UNION ALL ')}) t
+     ${outerWhere}
+     ORDER BY t.created_at DESC, t.id DESC
+     LIMIT $${params.length + 1}`,
+    [...params, fetchLimit],
+  );
+
+  const hasMore = rows.length > filters.limit;
+  const items = hasMore ? rows.slice(0, filters.limit) : rows;
+
+  let nextCursor: string | undefined;
+  if (hasMore && items.length > 0) {
+    const last = items[items.length - 1];
+    nextCursor = encodeCursor({ ts: last.created_at, id: last.id });
+  }
+
+  return {
+    items,
+    meta: {
+      limit: filters.limit,
+      hasMore,
+      ...(nextCursor ? { nextCursor } : {}),
+    },
+  };
+}
+
+export async function findLeadEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
+  const result = await pool.query<LeadEnrollmentOptions>(
+    `SELECT
+       ARRAY(SELECT DISTINCT source_platform FROM leads
+         WHERE deleted_at IS NULL AND btrim(source_platform) <> ''
+         ORDER BY source_platform) AS sources,
+       ARRAY(SELECT DISTINCT tag FROM leads CROSS JOIN LATERAL unnest(tags) AS tag
+         WHERE deleted_at IS NULL AND btrim(tag) <> ''
+         ORDER BY tag) AS tags`,
+  );
+  return result.rows[0] ?? { sources: [], tags: [] };
 }

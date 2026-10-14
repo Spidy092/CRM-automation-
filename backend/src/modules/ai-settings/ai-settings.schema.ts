@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const updateAiSettingsSchema = z.object({
   enabled: z.boolean().optional(),
+  planner_enabled: z.boolean().optional(),
   base_url: z.string().url('base_url must be a valid URL').nullable().optional(),
   api_key: z.string().min(1).nullable().optional(),
   model: z.string().min(1).max(255).optional(),

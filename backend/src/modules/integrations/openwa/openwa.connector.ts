@@ -194,25 +194,8 @@ export async function sendMessage(
 
   await jitter(config.jitterMinMs, config.jitterMaxMs);
 
-  let actualSessionId = credentials.sessionId;
+  const actualSessionId = credentials.sessionId;
   const baseUrl = credentials.baseUrl.replace(/\/+$/, '');
-
-  // If the user provided a session name instead of a UUID, resolve it first.
-  if (actualSessionId.length !== 36) {
-    const listUrl = `${baseUrl}/api/sessions`;
-    const resList = await loggedFetch<any[]>(
-      listUrl,
-      { method: 'GET', headers: { 'x-api-key': credentials.apiKey } },
-      { channel: OPENWA_CHANNEL },
-    );
-    if (resList.ok && Array.isArray(resList.data)) {
-      const match = resList.data.find((s) => s.name === actualSessionId);
-      if (match) {
-        actualSessionId = match.id;
-      }
-    }
-  }
-
   const url = `${baseUrl}/api/sessions/${encodeURIComponent(actualSessionId)}/messages/send-text`;
 
   const res = await loggedFetch<OpenWASendResponse>(
@@ -306,7 +289,21 @@ export async function healthCheck(input: {
       status: res.status,
       error: res.error || 'OpenWA health check failed',
       latencyMs: res.latencyMs,
-      retryable: false,
+      retryable: res.retryable ?? res.status >= 500,
+    };
+  }
+
+  if (
+    res.data &&
+    typeof res.data === 'object' &&
+    !Array.isArray(res.data) &&
+    'status' in res.data
+  ) {
+    return {
+      ok: true,
+      status: 200,
+      data: { status: (res.data as any).status || 'CONNECTED' },
+      latencyMs: res.latencyMs,
     };
   }
 

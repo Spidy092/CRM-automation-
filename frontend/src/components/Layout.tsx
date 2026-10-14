@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard,
@@ -10,12 +10,10 @@ import {
   Menu,
   X,
   GitBranch,
-  Inbox,
   BarChart3,
   UsersRound,
   Search,
   ListOrdered,
-  Plug,
   ShieldCheck,
   MessageSquare,
   Zap,
@@ -27,11 +25,8 @@ import {
 import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/ui/NotificationBell';
 import { ChatWidget } from '@/components/ChatWidget';
-import { useInbox } from '@/api/aiInbox';
 
 const navigation = [
-  // Inbox leads the list: it is the surface a rep works out of every day.
-  { name: 'Inbox', href: '/ai-inbox', icon: Inbox, group: 'Workspace' },
   { name: 'Dashboard', href: '/', icon: LayoutDashboard, group: 'Workspace' },
   { name: 'Leads', href: '/leads', icon: Users, group: 'Workspace' },
   { name: 'Pipelines', href: '/pipelines', icon: GitBranch, group: 'Workspace' },
@@ -58,12 +53,9 @@ const groupDescriptions: Record<string, string> = {
   Admin: 'Access and configuration',
 };
 
-const inboxBadgeBase = 'ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-xs font-semibold';
-const inboxBadgeActive = 'bg-white text-slate-950 dark:bg-slate-950 dark:text-white';
-const inboxBadgeIdle = 'bg-indigo-600 text-white';
-
 function isRouteActive(pathname: string, href: string): boolean {
-  return href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const routes = href === '/outreach/sequences' ? ['/outreach/sequences', '/files', '/pages'] : [href];
+  return routes.some((route) => pathname === route || (route !== '/' && pathname.startsWith(`${route}/`)));
 }
 
 export function Layout() {
@@ -79,10 +71,6 @@ export function Layout() {
         .slice(0, 2)
         .toUpperCase()
     : '?';
-
-  // Drives the Inbox badge — the count is what makes the nav item worth glancing at.
-  const { data: inbox } = useInbox({ status: 'pending' });
-  const pendingInboxCount = inbox?.total ?? 0;
 
   const activeItem = navigation.find((item) => isRouteActive(location.pathname, item.href));
   const grouped = navigation.reduce<Record<string, typeof navigation>>((acc, item) => {
@@ -125,34 +113,28 @@ export function Layout() {
               {groupDescriptions[group] && <p className="mt-1 px-3 text-[11px] leading-4 text-slate-400 dark:text-slate-500">{groupDescriptions[group]}</p>}
               <div className="mt-2 space-y-1">
                 {items.map((item) => (
-                  <NavLink
+                  <Link
                     key={item.name}
                     to={item.href}
-                    end={item.href === '/'}
+                    aria-current={isRouteActive(location.pathname, item.href) ? 'page' : undefined}
                     onClick={() => setSidebarOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
+                    className={cn(
                         'group flex min-h-10 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
+                        isRouteActive(location.pathname, item.href)
                           ? 'bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 shadow-sm'
                           : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-slate-950 dark:hover:text-slate-50',
-                      )
-                    }
+                      )}
                   >
-                    {({ isActive }) => (
+                    {(() => {
+                      const isActive = isRouteActive(location.pathname, item.href);
+                      return (
                       <>
                         <item.icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-white dark:text-slate-950' : 'text-slate-400 dark:text-slate-500')} />
                         <span className="truncate">{item.name}</span>
-                        {item.href === '/ai-inbox' && pendingInboxCount > 0 && (
-                          <span
-                            className={cn(inboxBadgeBase, isActive ? inboxBadgeActive : inboxBadgeIdle)}
-                          >
-                            {pendingInboxCount > 99 ? '99+' : pendingInboxCount}
-                          </span>
-                        )}
                       </>
-                    )}
-                  </NavLink>
+                      );
+                    })()}
+                  </Link>
                 ))}
               </div>
             </div>
@@ -205,11 +187,6 @@ export function Layout() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-md border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 sm:flex">
-              <Plug className="h-3.5 w-3.5" />
-              Sprint 4 active
-            </div>
-            <span className="hidden text-sm text-slate-500 dark:text-slate-400 md:block">{user?.email}</span>
             <NotificationBell />
           </div>
         </header>

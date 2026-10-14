@@ -1,24 +1,37 @@
+import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
+import { createHash } from 'crypto';
+import type { PoolClient } from 'pg';
+import { googleContactProvenanceSchema } from './leads.schema';
+import type { BulkTagMode } from './leads.schema';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
 import { normalizePhone } from '../../shared/utils/phone';
 import { clampLimit, decodeCursor, encodeCursor } from '../../shared/utils/pagination';
 import { resolveStageOutcome } from '../../shared/utils/leadOutcome';
+import { withTransaction } from '../../shared/utils/db';
 import { findActiveDefinitions } from '../custom-fields/customFields.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { findStageById } from '../pipeline/pipeline.repository';
 import { AuthenticatedUser, LeadStatus } from '../../shared/types';
 import { enqueueLeadEvent, enqueueScoringCalculate, type LeadEventJob } from '../../workers/queue';
 import {
+  findLeadEnrollmentOptions,
+  optOutLeadByEmail as optOutLeadByEmailRepo,
   countLeads,
   findExistingForDedup,
   findLeadById,
+  findLeadTimeline as repoFindLeadTimeline,
+  findDueFollowUpLeads,
+  findLeadByIdForUpdate,
+  findLeadIdsByOwner,
   findLeads,
   findLeadsByScraperLogId,
   findLeadsByIds,
   insertLead,
   softDeleteLead,
   updateLead,
+  updateLeadAssignment,
   updateLeadStatus,
   updateLeadOutcome,
   findActivityForLead,
@@ -32,11 +45,15 @@ import {
   insertActivity,
 } from '../activities/activities.repository';
 import { Activity } from '../activities/activities.types';
+import { createNotification } from '../notifications/notifications.service';
 import {
   LeadInput,
   LeadListFilters,
   LeadListResult,
   LeadResponse,
+  LeadRow,
+  LeadTimelineFilters,
+  LeadTimelineResult,
   toLeadResponse,
 } from './leads.types';
 import { cancelPendingOutreachJobs } from '../../workers/queue';
@@ -45,6 +62,161 @@ interface Actor {
   id: string;
   role: AuthenticatedUser['role'];
   ipAddress?: string | null;
+}
+
+export class BulkOwnershipError extends AppError {
+  readonly code = 'ownership_via_assignment_endpoints';
+
+  constructor(readonly leadIds: string[]) {
+    super('Bulk ownership changes must use the assignment endpoints', 422);
+    this.name = 'BulkOwnershipError';
+  }
+}
+
+/** Actor shape used by the ownership orchestration (structural subset of Actor). */
+export interface OwnershipActor {
+  id: string;
+  role: string;
+  ipAddress?: string | null;
+}
+
+/** A deferred side effect that must run only after the outermost transaction commits. */
+export type PostCommitEffect = () => Promise<void>;
+
+/**
+ * Runs post-commit effects in order. A failing effect is logged with
+ * identifiers only (never PII) and never rethrown: the business write has
+ * already committed, so a failed effect must not make a successful update
+ * look rolled back. Callers surface durable failures (audit gaps,
+ * undelivered events) through logs/metrics, not HTTP 500s.
+ */
+export async function runPostCommitEffects(
+  effects: PostCommitEffect[],
+  scope: { leadIds: string[] },
+): Promise<void> {
+  for (const effect of effects) {
+    try {
+      await effect();
+    } catch (error) {
+      logger.error('post-commit effect failed; committed data stands', {
+        leadIds: scope.leadIds,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+export interface OwnershipChangeInput {
+  leadId: string;
+  /** Null releases the lead to unclaimed (no history row: assignments.assigned_to is NOT NULL). */
+  newOwnerId: string | null;
+  type: 'manual' | 'override' | 'round_robin';
+  reason?: string;
+  score?: number;
+  classification?: string;
+}
+
+export interface OwnershipChangeResult {
+  assignmentId: string | null;
+  previousOwnerId: string | null;
+  lead: LeadRow;
+  postCommit: PostCommitEffect[];
+}
+
+/**
+ * Cross-module ownership orchestration without an import cycle.
+ *
+ * `leads` owns `leads.assigned_to` persistence but must not import the
+ * assignments module (assignments → leads is the one allowed direction).
+ * The assignments module registers its orchestrator here; every supported
+ * single-lead ownership path delegates through it when present. Bulk
+ * ownership changes are rejected and directed to the assignment endpoints.
+ * When absent, ownership-changing requests fail closed with 503 rather than
+ * bypassing assignment history and notification side effects.
+ */
+export type OwnershipApplier = (
+  input: OwnershipChangeInput,
+  actor: OwnershipActor,
+  client: PoolClient,
+) => Promise<OwnershipChangeResult>;
+
+let ownershipApplier: OwnershipApplier | null = null;
+
+export function registerOwnershipApplier(applier: OwnershipApplier | null): void {
+  ownershipApplier = applier;
+}
+
+/** Visible for tests; prefer `registerOwnershipApplier`. */
+export function getOwnershipApplier(): OwnershipApplier | null {
+  return ownershipApplier;
+}
+
+/**
+ * Locks a lead row for an ownership transaction. Public service interface
+ * for the assignments orchestrator (which must not touch leads tables or
+ * repositories directly). Throws 404 when missing or soft-deleted.
+ */
+export async function lockLeadForUpdate(leadId: string, client: PoolClient): Promise<LeadRow> {
+  const lead = await findLeadByIdForUpdate(leadId, client);
+  if (!lead) throw new AppError('Lead not found', 404);
+  return lead;
+}
+
+/**
+ * Writes `leads.assigned_to` plus the `assignment_change` activity inside
+ * the caller's transaction. Public service interface for the assignments
+ * orchestrator — the only sanctioned writer of the ownership column.
+ */
+export async function writeLeadOwner(
+  leadId: string,
+  newOwnerId: string | null,
+  actor: OwnershipActor,
+  client: PoolClient,
+  opts?: { previousOwnerId?: string | null },
+): Promise<LeadRow> {
+  const updated = await updateLeadAssignment(leadId, newOwnerId, client);
+  await insertActivity(
+    {
+      lead_id: leadId,
+      user_id: actor.role === 'system' ? null : actor.id,
+      type: 'assignment_change',
+      metadata: {
+        from: opts?.previousOwnerId ?? null,
+        to: newOwnerId,
+      },
+    },
+    client,
+  );
+  return updated;
+}
+
+/** Apply only an email-bound recipient opt-out; stop pending outreach on every retry. */
+export async function optOutLeadByEmail(id: string, emailHash: string): Promise<void> {
+  const before = await findLeadById(id);
+  if (
+    !before?.email ||
+    createHash('sha256').update(before.email.trim().toLowerCase()).digest('hex') !== emailHash
+  ) {
+    throw new AppError('This unsubscribe link is invalid or expired', 404);
+  }
+  const updated = await optOutLeadByEmailRepo(id, before.email);
+  if (!updated) throw new AppError('This unsubscribe link is invalid or expired', 404);
+  await cancelPendingOutreachJobs({ leadId: id });
+  if (before.status !== 'opted_out') {
+    await writeAuditLog({
+      userId: null,
+      action: 'lead.opted_out',
+      entityType: 'lead',
+      entityId: id,
+      oldValue: { status: before.status },
+      newValue: { status: 'opted_out', reason: 'recipient_unsubscribe' },
+    });
+    enqueueLeadDomainEvent({
+      event: 'lead.status_changed',
+      leadId: id,
+      payload: { status: 'opted_out' },
+    });
+  }
 }
 
 /** Queue delivery is asynchronous; surface failures without creating an
@@ -80,6 +252,13 @@ export function assertAccess(assignedTo: string | null, actor: Actor, write: boo
 }
 
 async function prepareInput(input: LeadInput): Promise<LeadInput> {
+  if (input.google_place_id && input.source_platform !== 'google_business') {
+    throw new AppError('Google place identity requires google_business source', 422);
+  }
+  if (input.google_contact_provenance) {
+    const parsed = googleContactProvenanceSchema.safeParse(input.google_contact_provenance);
+    if (!parsed.success) throw new AppError('Invalid Google contact provenance', 422);
+  }
   const normalized: LeadInput = {
     ...input,
     email: input.email.trim().toLowerCase(),
@@ -103,15 +282,35 @@ export async function createLead(input: LeadInput, actor: Actor): Promise<LeadRe
     prepared.email,
     prepared.phone,
     prepared.source_platform,
+    ...(prepared.google_place_id ? [prepared.google_place_id] : []),
   );
   if (existing) {
     throw new AppError(
-      'A lead with this email or phone already exists for this source platform',
+      prepared.google_place_id
+        ? 'A lead with this Google place ID already exists'
+        : 'A lead with this email or phone already exists for this source platform',
       409,
     );
   }
 
-  const created = await insertLead(prepared);
+  let created: LeadRow;
+  try {
+    created = await insertLead(prepared);
+  } catch (error) {
+    // Concurrent imports may pass the lookup together; the unique index is authoritative.
+    if (
+      prepared.google_place_id &&
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === '23505' &&
+      'constraint' in error &&
+      error.constraint === 'idx_leads_google_place_id'
+    ) {
+      throw new AppError('A lead with this Google place ID already exists', 409);
+    }
+    throw error;
+  }
   await writeAuditLog({
     userId: actor.id,
     action: 'lead.created',
@@ -125,11 +324,32 @@ export async function createLead(input: LeadInput, actor: Actor): Promise<LeadRe
   return toLeadResponse(created);
 }
 
+/** Scraper-facing lookup keeps persistence behind the leads service boundary. */
+export async function findScrapedLeadDuplicate(
+  email: string,
+  phone: string,
+  sourcePlatform: string,
+  googlePlaceId?: string,
+): Promise<string | null> {
+  const existing = await findExistingForDedup(email, phone, sourcePlatform, googlePlaceId);
+  if (existing && !existing.tags?.includes(sourcePlatform)) {
+    await updateLead(existing.id, {
+      tags: Array.from(new Set([...(existing.tags ?? []), sourcePlatform])),
+    });
+  }
+  return existing?.id ?? null;
+}
+
 export async function getLeadById(id: string, actor: Actor): Promise<LeadResponse> {
   const lead = await findLeadById(id);
   if (!lead) throw new AppError('Lead not found', 404);
   assertAccess(lead.assigned_to, actor, false);
   return toLeadResponse(lead);
+}
+
+/** Service interface for other modules that need to scope work to a rep's leads. */
+export async function getLeadIdsOwnedBy(userId: string): Promise<string[]> {
+  return findLeadIdsByOwner(userId);
 }
 
 /**
@@ -192,6 +412,14 @@ export async function updateLeadFields(
   if (!before) throw new AppError('Lead not found', 404);
   assertAccess(before.assigned_to, actor, true);
 
+  if (
+    before.google_place_id &&
+    input.source_platform !== undefined &&
+    input.source_platform !== 'google_business'
+  ) {
+    throw new AppError('The source of an identified Google business cannot be changed', 422);
+  }
+
   // Merge so custom-field validation sees the full final shape.
   const merged: LeadInput = {
     business_name: before.business_name,
@@ -228,75 +456,133 @@ export async function updateLeadFields(
 
   // If email/phone changed, ensure no dedup collision with a different lead.
   if (input.email || input.phone) {
-    const clash = await findExistingForDedup(merged.email, merged.phone, merged.source_platform);
+    const clash = await findExistingForDedup(
+      merged.email,
+      merged.phone,
+      merged.source_platform,
+      ...(before.google_place_id ? [before.google_place_id] : []),
+    );
     if (clash && clash.id !== id) {
       throw new AppError('Another lead with this email or phone exists for this source', 409);
     }
   }
 
-  let updated = await updateLead(id, input);
+  const includesOwner = input.assigned_to !== undefined;
+  // Ownership changes must go through the registered cross-module
+  // orchestrator so owner, history, notification, and activity stay aligned.
+  // The transaction below returns 503 if an actual change has no applier.
+  const applier = includesOwner ? getOwnershipApplier() : null;
+  const { assigned_to: newOwner, ...fieldPatch } = input;
 
-  if (
-    input.pipeline_stage_id !== undefined &&
-    input.pipeline_stage_id !== before.pipeline_stage_id
-  ) {
-    await insertActivity({
-      lead_id: id,
-      user_id: actor.id,
-      type: 'status_change',
-      metadata: {
-        field: 'pipeline_stage_id',
-        from: before.pipeline_stage_id,
-        to: updated.pipeline_stage_id,
-      },
-    });
+  const { response, postCommit } = await withTransaction(async (client) => {
+    const effects: PostCommitEffect[] = [];
 
-    // Deals moved into (or out of) a Closed Won/Lost stage carry their
-    // outcome automatically — see resolveStageOutcome() for the exact rules.
-    const stage = input.pipeline_stage_id ? await findStageById(input.pipeline_stage_id) : null;
-    const outcome = resolveStageOutcome(before.status, stage);
-    if (outcome) {
-      updated = await updateLeadOutcome(id, outcome);
-      await insertActivity({
-        lead_id: id,
-        user_id: actor.id,
-        type: 'status_change',
-        metadata: {
-          field: 'status',
-          from: before.status,
-          to: outcome,
-          reason: 'pipeline_stage_move',
-        },
-      });
+    // Re-read under lock: ownership may have changed between the
+    // pre-transaction read and now. Access is re-evaluated against current
+    // state so a concurrently reassigned lead cannot be written blindly.
+    const locked = await findLeadByIdForUpdate(id, client);
+    if (!locked) throw new AppError('Lead not found', 404);
+    assertAccess(locked.assigned_to, actor, true);
+
+    const ownershipChanged = includesOwner && newOwner !== locked.assigned_to;
+    if (ownershipChanged && actor.role !== 'admin' && actor.role !== 'manager') {
+      throw new AppError('Forbidden: only an admin or manager may change lead ownership', 403);
     }
-  }
+    if (ownershipChanged && !applier) {
+      throw new AppError('Ownership service is unavailable', 503);
+    }
+    let updated = await updateLead(id, includesOwner && applier ? fieldPatch : input, client);
 
-  if (input.assigned_to !== undefined && input.assigned_to !== before.assigned_to) {
-    await insertActivity({
-      lead_id: id,
-      user_id: actor.id,
-      type: 'assignment_change',
-      metadata: {
-        from: before.assigned_to,
-        to: updated.assigned_to,
-      },
-    });
-  }
+    if (
+      input.pipeline_stage_id !== undefined &&
+      input.pipeline_stage_id !== locked.pipeline_stage_id
+    ) {
+      await insertActivity(
+        {
+          lead_id: id,
+          user_id: actor.id,
+          type: 'status_change',
+          metadata: {
+            field: 'pipeline_stage_id',
+            from: locked.pipeline_stage_id,
+            to: updated.pipeline_stage_id,
+          },
+        },
+        client,
+      );
 
-  await writeAuditLog({
-    userId: actor.id,
-    action: 'lead.updated',
-    entityType: 'lead',
-    entityId: id,
-    oldValue: toLeadResponse(before),
-    newValue: toLeadResponse(updated),
-    ipAddress: actor.ipAddress ?? null,
+      // Deals moved into (or out of) a Closed Won/Lost stage carry their
+      // outcome automatically — see resolveStageOutcome() for the exact rules.
+      const stage = input.pipeline_stage_id ? await findStageById(input.pipeline_stage_id) : null;
+      const outcome = resolveStageOutcome(locked.status, stage);
+      if (outcome) {
+        updated = await updateLeadOutcome(id, outcome, client);
+        await insertActivity(
+          {
+            lead_id: id,
+            user_id: actor.id,
+            type: 'status_change',
+            metadata: {
+              field: 'status',
+              from: locked.status,
+              to: outcome,
+              reason: 'pipeline_stage_move',
+            },
+          },
+          client,
+        );
+      }
+    }
+
+    if (ownershipChanged && applier) {
+      const applied = await applier(
+        {
+          leadId: id,
+          newOwnerId: newOwner ?? null,
+          type: locked.assigned_to ? 'override' : 'manual',
+        },
+        actor,
+        client,
+      );
+      effects.push(...applied.postCommit);
+      updated = applied.lead;
+    }
+
+    // Audit and domain events are post-commit effects: they must never
+    // observe (or imply success of) a rolled-back write, and their failure
+    // must not fail an already-committed update.
+    effects.push(() =>
+      writeAuditLog({
+        userId: actor.id,
+        action: 'lead.updated',
+        entityType: 'lead',
+        entityId: id,
+        oldValue: toLeadResponse(before),
+        newValue: toLeadResponse(updated),
+        ipAddress: actor.ipAddress ?? null,
+      }),
+    );
+    queueLeadUpdateEvents(id, before, updated, effects, input);
+
+    return { response: toLeadResponse(updated), postCommit: effects };
   });
 
-  // Publish the events that the workflow trigger contract exposes. These are
-  // deliberately emitted after the database write so a consumer never sees
-  // an update that was rolled back. The durable outbox migration can replace
-  // this fire-and-forget bridge once the write transaction is shared here.
+  await runPostCommitEffects(postCommit, { leadIds: [id] });
+  return response;
+}
+
+/**
+ * Collects the workflow-trigger domain events for a lead update as deferred
+ * post-commit effects. Kept beside updateLeadFields so bulk updates reuse
+ * the identical event contract.
+ */
+function queueLeadUpdateEvents(
+  id: string,
+  before: LeadRow,
+  updated: LeadRow,
+  effects: PostCommitEffect[],
+  input: Partial<LeadInput>,
+): void {
   const changedFields = Object.keys(input).filter(
     (key) =>
       JSON.stringify(before[key as keyof typeof before]) !==
@@ -306,30 +592,41 @@ export async function updateLeadFields(
     const payload = Object.fromEntries(
       changedFields.map((key) => [key, updated[key as keyof typeof updated]]),
     );
-    enqueueLeadDomainEvent({ event: 'lead.updated', leadId: id, payload });
+    effects.push(() => {
+      enqueueLeadDomainEvent({ event: 'lead.updated', leadId: id, payload });
+      return Promise.resolve();
+    });
   }
   if (before.pipeline_stage_id !== updated.pipeline_stage_id) {
-    enqueueLeadDomainEvent({
-      event: 'lead.stage_moved',
-      leadId: id,
-      payload: {
-        fromStageId: before.pipeline_stage_id,
-        toStageId: updated.pipeline_stage_id,
-      },
+    effects.push(() => {
+      enqueueLeadDomainEvent({
+        event: 'lead.stage_moved',
+        leadId: id,
+        payload: {
+          fromStageId: before.pipeline_stage_id,
+          toStageId: updated.pipeline_stage_id,
+        },
+      });
+      return Promise.resolve();
     });
   }
   if (before.assigned_to !== updated.assigned_to) {
-    enqueueLeadDomainEvent({
-      event: 'lead.assigned',
-      leadId: id,
-      payload: { assignedTo: updated.assigned_to },
+    effects.push(() => {
+      enqueueLeadDomainEvent({
+        event: 'lead.assigned',
+        leadId: id,
+        payload: { assignedTo: updated.assigned_to },
+      });
+      return Promise.resolve();
     });
   }
   const addedTags = (updated.tags ?? []).filter((tag) => !(before.tags ?? []).includes(tag));
   for (const tag of addedTags) {
-    enqueueLeadDomainEvent({ event: 'lead.tag_added', leadId: id, payload: { tag } });
+    effects.push(() => {
+      enqueueLeadDomainEvent({ event: 'lead.tag_added', leadId: id, payload: { tag } });
+      return Promise.resolve();
+    });
   }
-  return toLeadResponse(updated);
 }
 
 export async function softDeleteLeadById(id: string, actor: Actor): Promise<void> {
@@ -413,6 +710,29 @@ export async function setLeadPaused(
   return toLeadResponse(updated);
 }
 
+export async function getLeadTimeline(
+  id: string,
+  actor: Actor,
+  filters: Omit<LeadTimelineFilters, 'leadId'>,
+): Promise<LeadTimelineResult> {
+  const lead = await findLeadById(id);
+  if (!lead) throw new AppError('Lead not found', 404);
+  assertAccess(lead.assigned_to, actor, false);
+  return repoFindLeadTimeline({
+    leadId: id,
+    limit: Math.min(Math.max(filters.limit, 1), 100),
+    cursorTs: filters.cursorTs,
+    cursorId: filters.cursorId,
+    kind: filters.kind,
+    search: filters.search,
+    channel: filters.channel,
+    authorId: filters.authorId,
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+    pinnedOnly: filters.pinnedOnly,
+  });
+}
+
 export async function getLeadActivity(
   id: string,
   actor: Actor,
@@ -468,8 +788,43 @@ export async function bulkUpdateLeads(
   ids: string[],
   patch: Partial<LeadInput>,
   actor: Actor,
+  tagMode: BulkTagMode = 'replace',
 ): Promise<number> {
   if (ids.length === 0) return 0;
+  if (patch.assigned_to !== undefined) throw new BulkOwnershipError(ids);
+
+  if (tagMode === 'append') {
+    const leads = await findLeadsByIds(ids);
+    for (const lead of leads) assertAccess(lead.assigned_to, actor, true);
+    const tags = [...new Set((patch.tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+    if (!tags.length) return 0;
+    const updated = await repoBulkUpdate(
+      leads.map((lead) => lead.id),
+      { tags },
+      true,
+    );
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'lead.bulk_tags_added',
+      entityType: 'lead',
+      entityId: 'bulk',
+      newValue: { ids: leads.map((lead) => lead.id), tags, updated },
+      ipAddress: actor.ipAddress ?? null,
+    });
+    for (const lead of leads) {
+      for (const tag of tags.filter((tag) => !(lead.tags ?? []).includes(tag))) {
+        enqueueLeadDomainEvent({ event: 'lead.tag_added', leadId: lead.id, payload: { tag } });
+      }
+    }
+    return updated;
+  }
+
+  if (patch.source_platform !== undefined && patch.source_platform !== 'google_business') {
+    const leads = await findLeadsByIds(ids);
+    if (leads.some((lead) => lead.google_place_id)) {
+      throw new AppError('The source of an identified Google business cannot be changed', 422);
+    }
+  }
 
   if (patch.custom_fields !== undefined) {
     const defs = await findActiveDefinitions();
@@ -479,6 +834,9 @@ export async function bulkUpdateLeads(
     }
     patch.custom_fields = result.sanitized;
   }
+
+  const existing = await findLeadsByIds(ids);
+  for (const lead of existing) assertAccess(lead.assigned_to, actor, true);
 
   if (patch.pipeline_stage_id !== undefined && patch.pipeline_stage_id !== null) {
     const targetStage = await findStageById(patch.pipeline_stage_id);
@@ -572,4 +930,45 @@ export async function bulkPauseLeads(
   return { updated, cancelledJobs };
 }
 
+export async function notifyDueFollowUps(limit = 100): Promise<number> {
+  let notified = 0;
+  let after: { nextFollowUpAt: string; id: string } | undefined;
+  let hasMore = true;
+
+  while (hasMore) {
+    const leads = await findDueFollowUpLeads(limit, after);
+    for (const lead of leads) {
+      if (!lead.assigned_to || !lead.next_follow_up_at) continue;
+      const result = await createNotification({
+        recipientUserId: lead.assigned_to,
+        occurrenceKey: `follow-up:${lead.id}:${lead.next_follow_up_at}`,
+        type: 'follow_up_due',
+        title: 'Follow-up due',
+        message: `Follow up with ${lead.business_name}.`,
+        metadata: { leadId: lead.id, deepLink: `/leads/${lead.id}` },
+      });
+      if (result.ok && result.value.created) notified += 1;
+      if (!result.ok) {
+        logger.error('Failed to create due follow-up notification', {
+          leadId: lead.id,
+          recipientUserId: lead.assigned_to,
+          error: result.error.message,
+        });
+      }
+    }
+
+    const lastLead = leads[leads.length - 1];
+    hasMore = leads.length === limit && Boolean(lastLead?.next_follow_up_at);
+    if (hasMore && lastLead?.next_follow_up_at) {
+      after = { nextFollowUpAt: lastLead.next_follow_up_at, id: lastLead.id };
+    }
+  }
+
+  return notified;
+}
+
 export { clampLimit, decodeCursor };
+
+export async function getLeadEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
+  return findLeadEnrollmentOptions();
+}

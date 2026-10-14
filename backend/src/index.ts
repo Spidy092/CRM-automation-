@@ -9,7 +9,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
 import morgan from 'morgan';
-import { logger } from './shared/utils/logger';
+import { logger, sanitizeUrlForLogging } from './shared/utils/logger';
 import { register } from './shared/utils/metrics';
 import { checkDbConnection } from './shared/utils/db';
 import { checkRedisConnection } from './shared/utils/redis';
@@ -39,7 +39,10 @@ import { teamMetricsRoutes } from './modules/team-metrics';
 import { scraperRoutes } from './modules/scraper';
 import { webhooksRoutes } from './webhooks/webhooks.routes';
 import { aiSettingsRoutes } from './modules/ai-settings/ai-settings.routes';
-import { notificationsRoutes } from './modules/notifications/notifications.routes';
+import {
+  notificationsRoutes,
+  notificationsRouter,
+} from './modules/notifications/notifications.routes';
 import aiInboxRoutes from './modules/ai-inbox/ai-inbox.routes';
 import aiIntelligenceRoutes from './modules/ai-intelligence/ai-intelligence.routes';
 import aiCampaignBrainRoutes from './modules/ai-campaign-brain/ai-campaign-brain.routes';
@@ -116,9 +119,13 @@ app.use(
   }),
 );
 app.use(express.urlencoded({ extended: false }));
+morgan.token('url', (req: express.Request) => sanitizeUrlForLogging(req.originalUrl || req.url));
+morgan.token('referrer', (req: express.Request) =>
+  sanitizeUrlForLogging((req.headers.referer || req.headers.referrer || '') as string),
+);
 app.use(
   morgan('combined', {
-    stream: { write: (message: string) => logger.info(message.trim()) },
+    stream: { write: (message: string) => logger.info(sanitizeUrlForLogging(message.trim())) },
   }),
 );
 
@@ -195,6 +202,7 @@ app.use('/api/v1/team', teamMetricsRoutes);
 app.use('/api/v1/ai-settings', aiSettingsRoutes);
 app.use('/api/v1/scraper', scraperRoutes);
 app.use('/api/v1/events', notificationsRoutes);
+app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/ai-inbox', authenticatedLimiter, aiInboxRoutes);
 app.use('/api/v1/ai-intelligence', authenticatedLimiter, aiIntelligenceRoutes);
 app.use('/api/v1/ai-campaign-brain', authenticatedLimiter, aiCampaignBrainRoutes);

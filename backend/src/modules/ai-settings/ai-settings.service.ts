@@ -12,6 +12,7 @@
  */
 
 import crypto from 'crypto';
+import { isAgentPlannerEnabled } from '../chat/featureFlag';
 import { findAiSettings, upsertAiSettings } from './ai-settings.repository';
 import { UpdateAiSettingsInput } from './ai-settings.schema';
 import { AiSettingsPublic } from './ai-settings.types';
@@ -76,6 +77,7 @@ export async function getAiSettingsPublic(): Promise<AiSettingsPublic> {
   return {
     id: row.id,
     enabled: row.enabled,
+    planner_enabled: isAgentPlannerEnabled(row.planner_enabled),
     base_url: row.base_url,
     has_api_key: Boolean(row.encrypted_api_key),
     model: row.model,
@@ -94,6 +96,7 @@ export async function updateAiSettings(
 ): Promise<AiSettingsPublic> {
   const repoInput: Parameters<typeof upsertAiSettings>[0] = { updated_by: actorId };
 
+  if (input.planner_enabled !== undefined) repoInput.planner_enabled = input.planner_enabled;
   if (input.enabled !== undefined) repoInput.enabled = input.enabled;
   if (input.base_url !== undefined) repoInput.base_url = input.base_url;
   if (input.model !== undefined) repoInput.model = input.model;
@@ -115,6 +118,7 @@ export async function updateAiSettings(
   return {
     id: row.id,
     enabled: row.enabled,
+    planner_enabled: isAgentPlannerEnabled(row.planner_enabled),
     base_url: row.base_url,
     has_api_key: Boolean(row.encrypted_api_key),
     model: row.model,
@@ -159,4 +163,10 @@ export async function getAiConfig(): Promise<{
     systemPromptOverride: row.system_prompt_override,
     cacheTtlSeconds: row.cache_ttl_seconds,
   };
+}
+
+/** Saved admin preference takes precedence over the deployment default. */
+export async function getAgentPlannerEnabled(): Promise<boolean> {
+  const row = await findAiSettings();
+  return isAgentPlannerEnabled(row?.planner_enabled);
 }

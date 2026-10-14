@@ -1,8 +1,10 @@
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
+import type { PoolClient } from 'pg';
 import { AppError } from '../../shared/middleware/errorHandler';
-import { AuthenticatedUser } from '../../shared/types';
+import { AuthenticatedUser, UserRole } from '../../shared/types';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { withTransaction } from '../../shared/utils/db';
 import { UpdateProfileInput, CreateUserInput, UpdatePermissionsInput, User } from './users.types';
 import * as usersRepository from './users.repository';
 import * as authRepository from '../auth/auth.repository';
@@ -26,6 +28,38 @@ export async function createUser(input: CreateUserInput): Promise<User> {
  */
 export async function listUsers(): Promise<User[]> {
   return usersRepository.findAllUsers();
+}
+
+/**
+ * Locks a user row and verifies the user is currently eligible to receive
+ * an assignment: exists, not soft-deleted, active, and holding one of the
+ * allowed roles. Intended to run inside the ownership transaction that will
+ * write the assignment (see assignments.service `applyOwnershipChange`),
+ * holding the recipient lock so deactivation or role changes cannot slip
+ * in between selection and write.
+ *
+ * Throws 404 when the user does not exist, 409 when the user exists but is
+ * not currently eligible. `allowedRoles` gates the role (omitted for
+ * explicit manual/override choices, where only active status is enforced);
+ * `requireAvailable` additionally gates `is_available` for automatic
+ * assignment (a rep who went unavailable after selection must be skipped).
+ */
+export async function getEligibleRecipientForUpdate(
+  userId: string,
+  client: PoolClient,
+  opts?: { allowedRoles?: UserRole[]; requireAvailable?: boolean },
+): Promise<User> {
+  const user = await usersRepository.lockUserRowForUpdate(userId, client);
+  if (!user) {
+    throw new AppError('Assignment recipient not found', 404);
+  }
+  if (!user.is_active || (opts?.allowedRoles && !opts.allowedRoles.includes(user.role))) {
+    throw new AppError('Assignment recipient is not eligible for assignment', 409);
+  }
+  if (opts?.requireAvailable && !user.is_available) {
+    throw new AppError('Assignment recipient is not currently available', 409);
+  }
+  return user;
 }
 
 /**
@@ -144,5 +178,9 @@ export async function changePassword(
   }
 
   const newHash = await bcrypt.hash(newPassword, BCRYPT_COST_FACTOR);
-  await authRepository.updatePasswordHash(id, newHash);
+  await withTransaction(async (client) => {
+    await authRepository.updatePasswordHash(id, newHash, client);
+    // Revoke sessions in the same transaction so a failure rolls back the password change.
+    await authRepository.revokeAllRefreshTokensForUser(id, client);
+  });
 }

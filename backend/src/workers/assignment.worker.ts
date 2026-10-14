@@ -14,13 +14,11 @@ import { getBullConnection } from './queue';
 import { ASSIGNMENT_QUEUE, ASSIGNMENT_ROUND_ROBIN, type AssignmentRoundRobinJob } from './queue';
 import { logger } from '../shared/utils/logger';
 import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/utils/metrics';
-import { autoAssignLead } from '../modules/assignments/assignments.service';
-import { findEligibleUsers } from '../modules/assignments/assignments.repository';
+import { autoAssignLead, getEligibleUsers } from '../modules/assignments/assignments.service';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import { notifyAssignment } from '../modules/integrations/notifications';
-import { pushToUser } from '../modules/notifications/notifications.emitter';
 
 export function startAssignmentWorker(): Worker {
   const worker = new Worker(
@@ -86,20 +84,27 @@ async function handleRoundRobin(payload: AssignmentRoundRobinJob): Promise<{
   const { leadId } = payload;
 
   // Re-check eligibility: the threshold or eligible user list may have changed
-  // since the job was enqueued.
-  const eligible = await findEligibleUsers();
+  // since the job was enqueued. Roles come from live config so an edited
+  // eligible_roles set takes effect without redeploying.
+  const eligible = await getEligibleUsers();
   if (eligible.length === 0) {
     logger.warn('no eligible users for round-robin assignment; skipping', { leadId });
     return { leadId, assigned: false, notified: false };
   }
 
-  const assignment = await autoAssignLead(leadId);
-  if (!assignment) {
-    // Service refused — e.g. config disabled, threshold not met, or a prior
-    // assignment exists. Not an error; just log at info.
+  // The service owns the transaction (lead lock → recipient revalidation →
+  // owner write → history + durable notification) and publishes post-commit
+  // effects once. A null return is a safe no-op: duplicate delivery or a
+  // lead already taken manually since enqueue.
+  const result = await autoAssignLead(leadId, {
+    score: payload.score,
+    classification: payload.classification,
+  });
+  if (!result) {
     logger.info('autoAssignLead returned null', { leadId, score: payload.score });
     return { leadId, assigned: false, notified: false };
   }
+  const { assignment } = result;
 
   // Build a friendly notification payload. Fetch the lead for the business
   // name; failure here should never block assignment success.
@@ -118,7 +123,9 @@ async function handleRoundRobin(payload: AssignmentRoundRobinJob): Promise<{
       leadId,
       leadName: businessName,
       assignedTo: assignment.assigned_to,
-      assignedBy: assignment.assigned_by,
+      // External display string only; the durable row stores null for
+      // system-originated assignments (UUID FK column).
+      assignedBy: assignment.assigned_by ?? 'system',
       score: payload.score,
       classification: payload.classification,
     });
@@ -129,15 +136,6 @@ async function handleRoundRobin(payload: AssignmentRoundRobinJob): Promise<{
     const message = err instanceof Error ? err.message : String(err);
     logger.error('notifyAssignment threw unexpectedly', { leadId, error: message });
   }
-
-  void pushToUser(assignment.assigned_to, {
-    id: `assign:${leadId}`,
-    type: 'lead_assigned',
-    title: 'New lead assigned',
-    message: `${businessName ?? 'A lead'} (score ${payload.score}, ${payload.classification}) was assigned to you.`,
-    data: { leadId, score: payload.score, classification: payload.classification },
-    timestamp: new Date().toISOString(),
-  });
 
   return { leadId, assigned: true, assignedTo: assignment.assigned_to, notified };
 }

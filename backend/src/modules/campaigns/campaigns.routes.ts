@@ -4,6 +4,7 @@ import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
 import { authenticatedLimiter } from '../../shared/middleware/rateLimiter';
 import {
+  enrollmentOptionsHandler,
   listCampaignsHandler,
   getCampaignHandler,
   createCampaignHandler,
@@ -26,6 +27,11 @@ const router = Router();
 router.use(wrap(authenticate), authenticatedLimiter);
 
 router.get('/', wrap(listCampaignsHandler));
+router.get(
+  '/enrollment-options',
+  authorize('admin', 'manager', 'marketing'),
+  wrap(enrollmentOptionsHandler),
+);
 router.get('/:id', wrap(getCampaignHandler));
 router.post('/', authorize('admin', 'manager', 'marketing'), wrap(createCampaignHandler));
 router.put('/:id', authorize('admin', 'manager', 'marketing'), wrap(updateCampaignHandler));

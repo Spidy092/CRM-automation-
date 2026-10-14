@@ -63,6 +63,7 @@ export default function AISettingsPage() {
 
   const [formData, setFormData] = useState({
     enabled: false,
+    planner_enabled: false,
     base_url: PROVIDER_PRESETS.xiaomi.base_url,
     api_key: '',
     model: PROVIDER_PRESETS.xiaomi.model,
@@ -84,6 +85,7 @@ export default function AISettingsPage() {
       setProvider(resolvedProvider);
       setFormData({
         enabled: settings.enabled,
+        planner_enabled: settings.planner_enabled ?? false,
         base_url: usePreset ? PROVIDER_PRESETS.xiaomi.base_url : settings.base_url || '',
         api_key: '', // Never populate API key from server
         model: usePreset ? PROVIDER_PRESETS.xiaomi.model : settings.model || 'gpt-4o',
@@ -157,6 +159,23 @@ export default function AISettingsPage() {
             </div>
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="planner_enabled">AI Copilot Planner</Label>
+                <p id="planner-help" className="text-sm text-muted-foreground">
+                  Allow Copilot to prepare multi-step CRM plans. Steps that need approval
+                  still appear in the Copilot panel for review. Save Settings to apply this change.
+                  Disabling stops new plans; existing plans keep their current status.
+                </p>
+              </div>
+              <Switch
+                id="planner_enabled"
+                aria-describedby="planner-help"
+                checked={formData.planner_enabled}
+                disabled={updateMutation.isPending}
+                onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, planner_enabled: checked }))}
+              />
+            </div>
 
             <div className="space-y-2">
               <Label htmlFor="provider">AI Provider</Label>

@@ -14,9 +14,28 @@ import {
   listTasksQuerySchema,
   manualSendSchema,
   quickSendSchema,
+  unsubscribeOutreachSchema,
 } from './outreach.schema';
 import * as outreachService from './outreach.service';
 import { OutreachActor } from './outreach.types';
+
+/** Public token-protected opt-out, executed only after explicit recipient confirmation. */
+export async function unsubscribeOutreachHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { token, reason } = unsubscribeOutreachSchema.parse(req.body);
+    const { unsubscribeOutreachRecipient } = await import('./unsubscribe.service');
+    if (reason) await unsubscribeOutreachRecipient(token, reason);
+    else await unsubscribeOutreachRecipient(token);
+    res.setHeader('Cache-Control', 'no-store');
+    sendSuccess(res, { message: 'You have been unsubscribed from outreach messages.' });
+  } catch (error) {
+    next(error);
+  }
+}
 
 function actorFromReq(req: Request): OutreachActor {
   const user = req.user;
@@ -209,7 +228,7 @@ export async function getTaskHandler(
 ): Promise<void> {
   try {
     const { id } = taskIdParamSchema.parse(req.params);
-    const item = await outreachService.getTask(id);
+    const item = await outreachService.getTask(id, actorFromReq(req));
     sendSuccess(res, item);
   } catch (err) {
     next(err);

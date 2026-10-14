@@ -32,7 +32,7 @@ import { findLeadById } from '../modules/leads/leads.repository';
 import { findUserById } from '../modules/users/users.repository';
 import { proposeAgentAction } from '../modules/agent/agent.service';
 import type { AgentActor } from '../modules/agent/agent.types';
-import { pushToUser } from '../modules/notifications/notifications.emitter';
+import { createNotification } from '../modules/notifications/notifications.service';
 import { enrollWorkflowsForEvent } from '../modules/workflows/workflow.trigger';
 import { workflowAutomationEnabled } from '../modules/workflows/workflow.config';
 
@@ -324,17 +324,25 @@ async function enrollLeadInCampaign(
     aiPersonalizationEnabled: campaign.ai_personalization_enabled,
   });
 
-  // Push SSE notification to the lead's assigned rep (best-effort)
-  const lead = await findLeadById(leadId).catch(() => null);
+  const lead = await findLeadById(leadId);
+  // Persist durable notification; service publishes live signal after persistence.
   if (lead?.assigned_to) {
-    void pushToUser(lead.assigned_to, {
-      id: `enroll:${campaign.id}:${leadId}`,
+    const notifyResult = await createNotification({
+      recipientUserId: lead.assigned_to,
+      occurrenceKey: `enroll:${campaign.id}:${leadId}`,
       type: 'campaign_enrolled',
       title: 'Lead enrolled in campaign',
       message: `${lead.business_name} was auto-enrolled in "${campaign.name}" (${triggerReason}).`,
-      data: { leadId, campaignId: campaign.id },
-      timestamp: new Date().toISOString(),
+      metadata: { leadId, campaignId: campaign.id },
     });
+    if (!notifyResult.ok) {
+      logger.error('Failed to persist campaign_enrolled notification', {
+        leadId,
+        campaignId: campaign.id,
+        error: notifyResult.error.message,
+      });
+      throw notifyResult.error;
+    }
   }
 
   logger.info('lead auto-enrolled in campaign → outreach dispatched', {

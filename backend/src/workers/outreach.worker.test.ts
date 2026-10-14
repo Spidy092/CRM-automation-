@@ -1,3 +1,8 @@
+jest.mock('../modules/outreach/unsubscribe.service', () => ({
+  createOutreachUnsubscribeUrl: jest
+    .fn()
+    .mockResolvedValue('https://example.com/outreach/unsubscribe?token=valid'),
+}));
 /**
  * Outreach worker tests.
  *
@@ -25,7 +30,6 @@ jest.mock('./queue', () => ({
 jest.mock('../shared/utils/db', () => ({
   pool: { query: jest.fn().mockResolvedValue({ rows: [] }) },
 }));
-
 
 jest.mock('../shared/utils/metrics', () => ({
   incJobsProcessed: jest.fn(),
@@ -64,7 +68,10 @@ jest.mock('../modules/outreach/outreach.prompt', () => ({
   personalizeMessage: jest.fn(),
 }));
 
-import { findSequenceByIdIncludingDeleted, findLogsByLead } from '../modules/outreach/outreach.repository';
+import {
+  findSequenceByIdIncludingDeleted,
+  findLogsByLead,
+} from '../modules/outreach/outreach.repository';
 import { createLog, updateLogStatus } from '../modules/outreach/outreach.service';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
@@ -73,6 +80,10 @@ import {
   countSentTodayForCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
+jest.mock('../modules/campaigns/campaigns.service', () => ({
+  getCampaignMessageSettings: jest.fn().mockResolvedValue(null),
+}));
+import { getCampaignMessageSettings } from '../modules/campaigns/campaigns.service';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
 import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from './queue';
 
@@ -87,7 +98,10 @@ describe('startOutreachWorker', () => {
 });
 
 describe('handleDispatch', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getCampaignMessageSettings as jest.Mock).mockResolvedValue(null);
+  });
 
   const baseSeq = {
     id: 'seq1',
@@ -234,11 +248,39 @@ describe('handleDispatch', () => {
     ).rejects.toMatchObject({ statusCode: 502 });
   });
 
+  it('blocks legacy synthetic Google email in sequence dispatch', async () => {
+    (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
+    (createLog as jest.Mock).mockResolvedValue(createdLog);
+    (findLeadById as jest.Mock).mockResolvedValue({
+      id: 'lead1',
+      email: 'no-reply@chain.test',
+      source_platform: 'google_business',
+    });
+    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved' });
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
+    await expect(
+      handleDispatch({
+        leadId: 'lead1',
+        campaignId: 'camp1',
+        sequenceId: 'seq1',
+        stepNumber: 1,
+        channel: 'email',
+        templateId: 't1',
+        mockMode: false,
+      }),
+    ).rejects.toMatchObject({ statusCode: 502 });
+    expect(dispatchOutbound).not.toHaveBeenCalled();
+  });
+
   it('throws with 502 when mockMode=false and lead has no destination', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '' });
-    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      id: 't1',
+      approval_status: 'approved',
+      subject: 'Hi',
+    });
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
 
     await expect(
@@ -254,13 +296,61 @@ describe('handleDispatch', () => {
     ).rejects.toMatchObject({ statusCode: 502 });
   });
 
+  it.each([true, false])(
+    'uses current campaign tone settings when enabled=%s, overriding queued settings',
+    async (enabled) => {
+      (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
+      (createLog as jest.Mock).mockResolvedValue(createdLog);
+      (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com' });
+      (findTemplateById as jest.Mock).mockResolvedValue({
+        id: 't1',
+        approval_status: 'approved',
+        subject: 'Hi',
+      });
+      (getCampaignMessageSettings as jest.Mock).mockResolvedValue({
+        tone: 'conversational',
+        ai_personalization_enabled: enabled,
+      });
+      (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
+      (dispatchOutbound as jest.Mock).mockResolvedValue({
+        ok: true,
+        externalId: 'ext-1',
+        latencyMs: 10,
+      });
+      await handleDispatch({
+        leadId: 'lead1',
+        campaignId: 'camp1',
+        sequenceId: 'seq1',
+        stepNumber: 1,
+        channel: 'email',
+        templateId: 't1',
+        mockMode: false,
+        aiPersonalizationEnabled: !enabled,
+      });
+      expect(getCampaignMessageSettings).toHaveBeenCalledWith('camp1');
+      expect(personalizeMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        enabled ? { enabled: true, tone: 'conversational' } : { enabled: false },
+      );
+    },
+  );
+
   it('updates log to sent and enqueues follow-up when dispatch succeeds', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
-    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      id: 't1',
+      approval_status: 'approved',
+      subject: 'Hi',
+    });
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
-    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: true,
+      externalId: 'ext-1',
+      latencyMs: 10,
+    });
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
 
     await handleDispatch({
@@ -304,7 +394,11 @@ describe('handleDispatch', () => {
       attachments: templateAttachments,
     });
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
-    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: true,
+      externalId: 'ext-1',
+      latencyMs: 10,
+    });
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
 
     await handleDispatch({
@@ -326,9 +420,17 @@ describe('handleDispatch', () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
-    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved', subject: 'Hi' });
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      id: 't1',
+      approval_status: 'approved',
+      subject: 'Hi',
+    });
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
-    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: false, error: 'Provider error', latencyMs: 5 });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: 'Provider error',
+      latencyMs: 5,
+    });
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'failed' });
 
     await expect(
@@ -418,6 +520,23 @@ describe('handleFollowUp', () => {
 });
 
 describe('handleSendAiReply', () => {
+  it.each(['no-reply@chain.test', 'no-reply-id@google-scraped.local'])(
+    'blocks synthetic Google email %s before dispatch',
+    async (email) => {
+      jest.clearAllMocks();
+      (findLeadById as jest.Mock).mockResolvedValue({
+        id: 'lead1',
+        email,
+        source_platform: 'google_business',
+      });
+      await expect(
+        handleSendAiReply({ leadId: 'lead1', campaignId: null, channel: 'email', body: 'Hi' }),
+      ).rejects.toMatchObject({ statusCode: 400 });
+      expect(dispatchOutbound).not.toHaveBeenCalled();
+      expect(createLog).not.toHaveBeenCalled();
+    },
+  );
+
   beforeEach(() => jest.clearAllMocks());
 
   const createdLog = {
@@ -588,11 +707,7 @@ describe('handleStopCheck', () => {
     const result = await handleStopCheck({
       leadId: 'lead1',
       campaignId: 'camp1',
-      rules: [
-        { type: 'max_messages', value: 5 },
-        { type: 'replied' },
-        { type: 'opted_out' },
-      ],
+      rules: [{ type: 'max_messages', value: 5 }, { type: 'replied' }, { type: 'opted_out' }],
     });
 
     expect(result).toEqual({ stopped: false });

@@ -18,11 +18,13 @@ export interface Activity {
 export interface ActivityWithUser extends Activity {
   user_name: string | null;
   user_email: string | null;
+  /** True when the note's `metadata` carries `pinned: true`. Always selected. */
+  is_pinned: boolean;
 }
 
 export interface CreateActivityInput {
   lead_id: string;
-  user_id: string;
+  user_id: string | null;
   type: ActivityType;
   metadata?: Record<string, unknown>;
 }
@@ -38,6 +40,18 @@ export interface ActivityListFilters {
   limit: number;
   offset: number;
   type?: ActivityType;
+  /** Keyset cursor parts — when both are set, `offset` is ignored. */
+  cursorTs?: string;
+  cursorId?: string;
+  /** Matches note body, outcome label, or author name (ILIKE, server-side). */
+  search?: string;
+  /** Only activities created by this user id. */
+  authorId?: string;
+  /** ISO-8601 bounds applied to `created_at`. */
+  dateFrom?: string;
+  dateTo?: string;
+  /** Only pinned notes (the pinned strip above the history). */
+  pinnedOnly?: boolean;
 }
 
 export interface ActivityListResult {
@@ -46,5 +60,9 @@ export interface ActivityListResult {
     total: number;
     limit: number;
     offset: number;
+    /** True when another page exists after this one (cursor paging). */
+    hasMore?: boolean;
+    /** Opaque cursor for the next page; present only when `hasMore` is true. */
+    nextCursor?: string;
   };
 }

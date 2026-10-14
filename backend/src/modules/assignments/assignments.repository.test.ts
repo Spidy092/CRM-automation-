@@ -6,7 +6,6 @@ import {
   insertAssignment,
   findAssignmentByLead,
   findAssignmentsByUser,
-  updateLeadAssignment,
   getNextRoundRobinUser,
 } from './assignments.repository';
 
@@ -68,7 +67,9 @@ describe('assignments.repository', () => {
     it('updates eligible_roles', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([{ id: 'cfg-1' }]))
-        .mockResolvedValueOnce(mockQueryResult([{ id: 'cfg-1', eligible_roles: ['sales', 'manager'] }]));
+        .mockResolvedValueOnce(
+          mockQueryResult([{ id: 'cfg-1', eligible_roles: ['sales', 'manager'] }]),
+        );
       await updateAssignmentConfig({ eligible_roles: ['sales', 'manager'] }, 'admin-1');
       expect(mockPoolQuery).toHaveBeenLastCalledWith(
         expect.stringContaining('eligible_roles = $1'),
@@ -78,13 +79,25 @@ describe('assignments.repository', () => {
   });
 
   describe('findEligibleUsers', () => {
-    it('returns sales users ordered by load', async () => {
-      const rows = [{ id: 'u1', assignment_count: '2' }, { id: 'u2', assignment_count: '5' }];
+    it('returns sales users ordered by load by default', async () => {
+      const rows = [
+        { id: 'u1', assignment_count: 2 },
+        { id: 'u2', assignment_count: 5 },
+      ];
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows));
       await expect(findEligibleUsers()).resolves.toEqual(rows);
       expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining("WHERE u.role = 'sales'"),
+        expect.stringContaining('COUNT(a.id)::int as assignment_count'),
+        [['sales']],
       );
+    });
+
+    it('binds configured roles', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
+      await expect(findEligibleUsers(['sales', 'manager'])).resolves.toEqual([]);
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('u.role = ANY($1)'), [
+        ['sales', 'manager'],
+      ]);
     });
 
     it('returns empty array when none eligible', async () => {
@@ -127,22 +140,20 @@ describe('assignments.repository', () => {
     });
   });
 
-  describe('updateLeadAssignment', () => {
-    it('updates leads.assigned_to', async () => {
-      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
-      await updateLeadAssignment('l1', 'u1');
-      expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE leads SET assigned_to = $1'),
-        ['u1', 'l1'],
-      );
-    });
-  });
-
   describe('getNextRoundRobinUser', () => {
     it('returns first eligible user', async () => {
       const user = { id: 'u1' };
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult([user, { id: 'u2' }]));
       await expect(getNextRoundRobinUser()).resolves.toEqual(user);
+    });
+
+    it('threads configured roles through', async () => {
+      const user = { id: 'u1' };
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([user]));
+      await expect(getNextRoundRobinUser(['manager'])).resolves.toEqual(user);
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('u.role = ANY($1)'), [
+        ['manager'],
+      ]);
     });
 
     it('returns null when no users', async () => {

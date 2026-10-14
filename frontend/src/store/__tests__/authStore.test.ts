@@ -54,7 +54,7 @@ describe('authStore', () => {
   });
 
   it('should login, set tokens, and persist refreshToken in localStorage', () => {
-    const mockUser = { id: '1', name: 'Test', email: 'test@example.com', role: 'sales_rep' as UserRole };
+    const mockUser = { id: '1', name: 'Test', email: 'test@example.com', role: 'sales' as UserRole };
     const accessToken = 'access-123';
     const refreshToken = 'refresh-456';
 
@@ -73,7 +73,7 @@ describe('authStore', () => {
   it('should logout and clear localStorage', () => {
     localStorage.setItem('refreshToken', 'refresh-456');
     useAuthStore.setState({
-      user: { id: '1', name: 'Test', email: 'test@example.com', role: 'sales_rep' as UserRole },
+      user: { id: '1', name: 'Test', email: 'test@example.com', role: 'sales' as UserRole },
       accessToken: 'access-123',
       isAuthenticated: true,
     });

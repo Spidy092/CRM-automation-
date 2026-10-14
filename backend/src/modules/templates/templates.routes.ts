@@ -13,6 +13,12 @@ import {
   addTemplateAttachmentHandler,
   addTemplateAttachmentFromLibraryHandler,
   removeTemplateAttachmentHandler,
+  duplicateTemplateHandler,
+  archiveTemplateHandler,
+  unarchiveTemplateHandler,
+  renameTemplateHandler,
+  previewTemplateHandler,
+  testSendTemplateHandler,
 } from './templates.controller';
 
 const router = Router();
@@ -29,6 +35,17 @@ router.post('/', authorize('admin', 'marketing'), wrap(createTemplateHandler));
 router.put('/:id', authorize('admin', 'marketing'), wrap(updateTemplateHandler));
 router.post('/:id/approve', authorize('admin', 'marketing'), wrap(approveTemplateHandler));
 router.delete('/:id', authorize('admin', 'marketing'), wrap(deleteTemplateHandler));
+
+// Gallery actions — same write RBAC as create/update (no new privilege level).
+router.post('/:id/duplicate', authorize('admin', 'marketing'), wrap(duplicateTemplateHandler));
+router.post('/:id/archive', authorize('admin', 'marketing'), wrap(archiveTemplateHandler));
+router.post('/:id/unarchive', authorize('admin', 'marketing'), wrap(unarchiveTemplateHandler));
+router.patch('/:id/rename', authorize('admin', 'marketing'), wrap(renameTemplateHandler));
+
+// Preview is read-only (any authenticated user); test-send dispatches real
+// email so it requires the same write RBAC and an explicit recipient.
+router.post('/:id/preview', wrap(previewTemplateHandler));
+router.post('/:id/test-send', authorize('admin', 'marketing'), wrap(testSendTemplateHandler));
 
 router.post(
   '/:id/attachments',

@@ -9,6 +9,7 @@ import {
   listWorkflowsHandler,
   pauseWorkflowHandler,
   publishWorkflowHandler,
+  replayWorkflowEnrollmentHandler,
   resumeWorkflowHandler,
   validateWorkflowHandler,
 } from './workflow.controller';
@@ -38,5 +39,10 @@ router.post(
 );
 router.post('/:id/pause', authorize('admin', 'manager', 'marketing'), wrap(pauseWorkflowHandler));
 router.post('/:id/resume', authorize('admin', 'manager', 'marketing'), wrap(resumeWorkflowHandler));
+router.post(
+  '/enrollments/:id/replay',
+  authorize('admin', 'manager'),
+  wrap(replayWorkflowEnrollmentHandler),
+);
 
 export { router as workflowsRoutes };

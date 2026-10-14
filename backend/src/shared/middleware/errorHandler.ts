@@ -3,14 +3,22 @@ import { ZodError } from 'zod';
 import * as Sentry from '@sentry/node';
 import { logger } from '../utils/logger';
 import { sendError } from '../utils/response';
+import type { ApiResponse } from '../types';
 
 export class AppError extends Error {
   statusCode: number;
   readonly isAppError = true;
+  /**
+   * Optional structured context surfaced in the standard envelope's `meta`
+   * (e.g. conflicting references for a 409). Never carries secrets or PII
+   * beyond resource ids/names the caller is already authorized to read.
+   */
+  meta?: ApiResponse['meta'];
 
-  constructor(message: string, statusCode = 400) {
+  constructor(message: string, statusCode = 400, meta?: ApiResponse['meta']) {
     super(message);
     this.statusCode = statusCode;
+    if (meta) this.meta = meta;
     Object.setPrototypeOf(this, AppError.prototype);
   }
 }
@@ -36,7 +44,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       path: req.originalUrl,
     });
     if (appErr.statusCode >= 500) Sentry.captureException(appErr);
-    sendError(res, appErr.message, appErr.statusCode);
+    sendError(res, appErr.message, appErr.statusCode, appErr.meta);
     return;
   }
 

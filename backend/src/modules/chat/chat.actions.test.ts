@@ -1,6 +1,16 @@
 import { AGENT_ACTIONS } from '../agent/agent.actions';
 import { buildChatTools, toolNameToActionName } from './chat.actions';
 
+type FunctionChatTool = Extract<ReturnType<typeof buildChatTools>[number], { type: 'function' }>;
+
+function getFunctionChatTool(tool: ReturnType<typeof buildChatTools>[number]): FunctionChatTool {
+  if (tool.type !== 'function') {
+    throw new Error(`Expected a function tool, received ${tool.type}`);
+  }
+
+  return tool;
+}
+
 jest.mock('../agent/agent.actions', () => {
   const sampleDefinition = (name: string, description: string) => ({
     name,
@@ -53,32 +63,39 @@ describe('chat.actions — buildChatTools', () => {
   it('each tool exposes function.name, function.description, and function.parameters', () => {
     const tools = buildChatTools();
     for (const tool of tools) {
-      expect(typeof tool.function.name).toBe('string');
-      expect(tool.function.name.length).toBeGreaterThan(0);
-      expect(typeof tool.function.description).toBe('string');
-      expect((tool.function.description ?? '').length).toBeGreaterThan(0);
-      expect(tool.function.parameters).toBeDefined();
-      expect(typeof tool.function.parameters).toBe('object');
+      const functionTool = getFunctionChatTool(tool);
+      expect(typeof functionTool.function.name).toBe('string');
+      expect(functionTool.function.name.length).toBeGreaterThan(0);
+      expect(typeof functionTool.function.description).toBe('string');
+      expect((functionTool.function.description ?? '').length).toBeGreaterThan(0);
+      expect(functionTool.function.parameters).toBeDefined();
+      expect(typeof functionTool.function.parameters).toBe('object');
     }
   });
 
   it('each tool name uses "__" separator (not ".")', () => {
     const tools = buildChatTools();
     for (const tool of tools) {
-      expect(tool.function.name).not.toContain('.');
-      expect(tool.function.name.split('__')).toHaveLength(2);
+      const functionTool = getFunctionChatTool(tool);
+      expect(functionTool.function.name).not.toContain('.');
+      expect(functionTool.function.name.split('__')).toHaveLength(2);
     }
   });
 
   it('tool names map back to their source AGENT_ACTIONS names', () => {
     const tools = buildChatTools();
-    const names = tools.map((t) => t.function.name).sort();
+    const names = tools.map((tool) => getFunctionChatTool(tool).function.name).sort();
     expect(names).toEqual(['campaign__pause', 'lead__get', 'lead__list', 'report__dashboard']);
   });
 
   it('copies descriptions verbatim from AGENT_ACTIONS', () => {
     const tools = buildChatTools();
-    const byName = new Map(tools.map((t) => [t.function.name, t.function.description]));
+    const byName = new Map(
+      tools.map((tool) => {
+        const functionTool = getFunctionChatTool(tool);
+        return [functionTool.function.name, functionTool.function.description];
+      }),
+    );
     expect(byName.get('lead__list')).toBe('List leads.');
     expect(byName.get('campaign__pause')).toBe('Pause a campaign.');
     expect(byName.get('report__dashboard')).toBe('Dashboard metrics.');
@@ -87,7 +104,12 @@ describe('chat.actions — buildChatTools', () => {
 
   it('attaches actionParameters for each action', () => {
     const tools = buildChatTools();
-    const byName = new Map(tools.map((t) => [t.function.name, t.function.parameters]));
+    const byName = new Map(
+      tools.map((tool) => {
+        const functionTool = getFunctionChatTool(tool);
+        return [functionTool.function.name, functionTool.function.parameters];
+      }),
+    );
     expect((byName.get('lead__list') as Record<string, unknown>).type).toBe('object');
     expect((byName.get('lead__get') as Record<string, unknown>).type).toBe('object');
     expect((byName.get('campaign__pause') as Record<string, unknown>).type).toBe('object');
@@ -107,7 +129,7 @@ describe('chat.actions — toolNameToActionName', () => {
   it('round-trips with buildChatTools names', () => {
     const tools = buildChatTools();
     for (const tool of tools) {
-      const actionName = toolNameToActionName(tool.function.name);
+      const actionName = toolNameToActionName(getFunctionChatTool(tool).function.name);
       expect(actionName).toContain('.');
       expect(AGENT_ACTIONS[actionName]).toBeDefined();
     }

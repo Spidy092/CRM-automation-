@@ -20,12 +20,19 @@ import {
   deleteForm,
   insertSubmission,
   getFormAnalytics,
+  findFailedSubmissions,
+  findSubmissionById,
+  linkSubmissionLead,
 } from './forms.repository';
-import { insertLead } from '../leads/leads.repository';
+import { captureWebsiteLead } from '../leads/websiteCapture.service';
 import { clampLimit } from '../../shared/utils/pagination';
-import { enqueueLeadEvent } from '../../workers/queue';
+import { submissionDefinitionSchema } from './forms.schema';
+import { err, ok, type Result } from '../../shared/utils/result';
+import { withTransaction, withAdvisoryLocks } from '../../shared/utils/db';
+import { appendDomainEvent, enqueueOutboxDelivery } from '../../shared/events/outbox.service';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
+import type { PoolClient } from 'pg';
 
 function slugify(name: string): string {
   return name
@@ -123,12 +130,15 @@ async function dispatchFormEmails(
 
   // 1. Auto Reply
   if (settings.autoReply?.enabled) {
-    const toEmail = String(data.email || data.contact_email || '');
+    const emailField = form.fields.find((field) => field.leadField === 'email');
+    const toEmail = String(
+      (emailField ? data[emailField.name] : undefined) || data.email || data.contact_email || '',
+    );
     if (toEmail && toEmail.includes('@')) {
       const res = await sendSystemEmail(
         toEmail,
-        renderTemplate(settings.autoReply.subject, data),
-        renderTemplate(settings.autoReply.body, data),
+        renderTemplate(settings.autoReply.subject ?? '', data),
+        renderTemplate(settings.autoReply.body ?? '', data),
         leadId,
         settings.autoReply.fromEmail,
         settings.autoReply.fromName,
@@ -148,15 +158,15 @@ async function dispatchFormEmails(
     for (const to of emails) {
       const res = await sendSystemEmail(
         to,
-        renderTemplate(settings.teamNotification.subject, data),
-        renderTemplate(settings.teamNotification.body, data),
+        renderTemplate(settings.teamNotification.subject ?? '', data),
+        renderTemplate(settings.teamNotification.body ?? '', data),
         leadId,
       );
       if (res.ok) {
         sentCount++;
       } else {
         failedCount++;
-        if (res.error) errors.push(`TeamNotification (${to}): ${res.error}`);
+        if (res.error) errors.push(`TeamNotification: delivery failed`);
       }
     }
   }
@@ -167,15 +177,15 @@ async function dispatchFormEmails(
     for (const to of emails) {
       const res = await sendSystemEmail(
         to,
-        renderTemplate(settings.partnerNotification.subject, data),
-        renderTemplate(settings.partnerNotification.body, data),
+        renderTemplate(settings.partnerNotification.subject ?? '', data),
+        renderTemplate(settings.partnerNotification.body ?? '', data),
         leadId,
       );
       if (res.ok) {
         sentCount++;
       } else {
         failedCount++;
-        if (res.error) errors.push(`PartnerNotification (${to}): ${res.error}`);
+        if (res.error) errors.push(`PartnerNotification: delivery failed`);
       }
     }
   }
@@ -186,6 +196,18 @@ async function dispatchFormEmails(
     failedCount,
     ...(errors.length > 0 ? { errors } : {}),
   };
+}
+
+async function queueOutboxDelivery(outboxId: string): Promise<void> {
+  try {
+    await enqueueOutboxDelivery(outboxId);
+  } catch (error) {
+    // The database outbox row is durable and the recovery scheduler will retry it.
+    logger.warn('Could not enqueue form outbox delivery; durable recovery will retry', {
+      outboxId,
+      error: (error as Error).message,
+    });
+  }
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -305,6 +327,43 @@ export async function deleteFormById(id: string, actor: FormActor): Promise<void
   });
 }
 
+async function captureFormLead(
+  form: FormRow,
+  data: Record<string, unknown>,
+  transactionClient?: PoolClient,
+): ReturnType<typeof captureWebsiteLead> {
+  // Only contact fields are mapped; public capture cannot assign owners.
+  const leadData: Record<string, string> = {};
+  for (const field of form.fields) {
+    if (field.leadField && data[field.name] !== undefined) {
+      leadData[field.leadField] = String(data[field.name]);
+    }
+  }
+
+  const input = {
+    business_name: String(
+      leadData.company ||
+        leadData.business_name ||
+        data.company ||
+        data.business_name ||
+        'Web Form Lead',
+    ),
+    contact_name: String(
+      leadData.contact_name || leadData.name || data.name || data.contact_name || 'Website Visitor',
+    ),
+    phone: String(leadData.phone || data.phone || ''),
+    email: String(leadData.email || data.email || ''),
+    website: leadData.website || (data.website as string) || null,
+    industry: String(leadData.industry || data.industry || 'Unknown'),
+    location: String(leadData.location || data.location || 'Unknown'),
+    source_platform: 'website_form',
+    notes: JSON.stringify(data),
+  };
+  return transactionClient
+    ? captureWebsiteLead(input, transactionClient)
+    : captureWebsiteLead(input);
+}
+
 // ── Public Submission ─────────────────────────────────────────────────────
 
 export async function submitForm(
@@ -322,71 +381,20 @@ export async function submitForm(
   if (!form) throw new AppError('Form not found', 404);
   if (!form.is_active) throw new AppError('Form is not accepting submissions', 400);
 
-  // Validate fields against definition
-  for (const field of form.fields) {
-    const val = data[field.name];
-    if (field.required && !val && val !== 0 && val !== false) {
-      throw new AppError(`Field "${field.label}" is required`, 422);
-    }
-
-    if (val !== undefined && val !== null && val !== '') {
-      if (
-        field.type === 'email' &&
-        typeof val === 'string' &&
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)
-      ) {
-        throw new AppError(`Field "${field.label}" must be a valid email address`, 422);
-      }
-      if (
-        field.type === 'select' &&
-        field.options &&
-        field.options.length > 0 &&
-        typeof val === 'string'
-      ) {
-        if (!field.options.includes(val)) {
-          throw new AppError(`Invalid selection for field "${field.label}"`, 422);
-        }
-      }
-    }
+  const validated = submissionDefinitionSchema(form.fields).safeParse(data);
+  if (!validated.success) {
+    throw new AppError(validated.error.issues[0]?.message ?? 'Invalid form submission', 422);
   }
+  data = validated.data;
 
   let leadId: string | undefined;
 
   // Create lead if submit_action is 'create_lead'
   if (form.submit_action === 'create_lead') {
     try {
-      // Map form fields to lead fields using leadField mapping
-      const leadData: Record<string, string> = {};
-      for (const field of form.fields) {
-        if (field.leadField && data[field.name] !== undefined) {
-          leadData[field.leadField] = String(data[field.name]);
-        }
-      }
-
-      const lead = await insertLead({
-        business_name: String(
-          leadData.company ||
-            leadData.business_name ||
-            data.company ||
-            data.business_name ||
-            'Web Form Lead',
-        ),
-        contact_name: String(
-          leadData.contact_name ||
-            leadData.name ||
-            data.name ||
-            data.contact_name ||
-            'Website Visitor',
-        ),
-        phone: String(leadData.phone || data.phone || ''),
-        email: String(leadData.email || data.email || `form_${Date.now()}@placeholder.local`),
-        website: leadData.website || (data.website as string) || null,
-        industry: String(leadData.industry || data.industry || 'Unknown'),
-        location: String(leadData.location || data.location || 'Unknown'),
-        source_platform: 'website_form',
-        notes: JSON.stringify(data),
-      });
-      leadId = lead.id;
+      const lead = await captureFormLead(form, data);
+      if (!lead.ok) throw lead.error;
+      leadId = lead.value.id;
     } catch (err) {
       logger.warn('Failed to create lead from form submission', {
         formId,
@@ -395,35 +403,41 @@ export async function submitForm(
     }
   }
 
-  // Record the submission
-  const submission = await insertSubmission({
-    form_id: formId,
-    lead_id: leadId ?? null,
-    data,
-    ip_address: meta.ipAddress ?? null,
-    user_agent: meta.userAgent ?? null,
-    referrer: meta.referrer ?? null,
+  // Commit the submission and workflow event together. Redis outages leave a
+  // durable event for the existing outbox recovery scheduler.
+  const { submission, outboxId } = await withTransaction(async (client) => {
+    const submission = await insertSubmission(
+      {
+        form_id: formId,
+        lead_id: leadId ?? null,
+        data,
+        ip_address: meta.ipAddress ?? null,
+        user_agent: meta.userAgent ?? null,
+        referrer: meta.referrer ?? null,
+        status: form.submit_action === 'create_lead' && !leadId ? 'lead_failed' : 'submitted',
+      },
+      client,
+    );
+    let outboxId: string | undefined;
+    if (leadId) {
+      const event = await appendDomainEvent(
+        {
+          eventType: 'form.submitted',
+          aggregateType: 'lead',
+          aggregateId: leadId,
+          idempotencyKey: `form-submission:${submission.id}`,
+          payload: { formId: form.id, submissionId: submission.id },
+        },
+        client,
+      );
+      if (!event.ok) throw event.error;
+      outboxId = event.value.event.id;
+    }
+    return { submission, outboxId };
   });
-
-  if (leadId) {
-    // The submission row is committed before the asynchronous workflow event
-    // is published, so a workflow can safely look up the new lead. Keep this
-    // bridge non-blocking for the public form response; Redis failures are
-    // logged and can be replaced by the transactional outbox path later.
-    void Promise.resolve(
-      enqueueLeadEvent({
-        event: 'form.submitted',
-        eventId: `form-submission:${submission.id}`,
-        leadId,
-        payload: { formId: form.id, submissionId: submission.id },
-      }),
-    ).catch((error: unknown) => {
-      logger.error('Failed to enqueue form.submitted workflow event', {
-        formId: form.id,
-        leadId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+  if (outboxId) {
+    // Delivery failures are retryable from the durable database record.
+    await queueOutboxDelivery(outboxId);
   }
 
   // Dispatch Emails based on form.email_settings
@@ -431,7 +445,10 @@ export async function submitForm(
   try {
     emailStatus = await dispatchFormEmails(form, data, leadId);
     if (!emailStatus.success) {
-      logger.warn('Form submission emails had failures', { formId: form.id, emailStatus });
+      logger.warn('Form submission emails had failures', {
+        formId: form.id,
+        failedCount: emailStatus.failedCount,
+      });
     }
   } catch (err) {
     const errorMsg = (err as Error).message;
@@ -474,17 +491,87 @@ export async function getFormAnalyticsById(
  */
 export function generateEmbedSnippet(form: FormRow, baseUrl: string): string {
   const formUrl = `${baseUrl}/forms/${form.slug}`;
-  return `<!-- ${form.name} - Contact Form -->
+  return `<!-- CRM Contact Form -->
 <iframe
   src="${formUrl}"
   width="100%"
   height="600"
   frameborder="0"
   style="border:none;max-width:600px;"
-  title="${form.name}"
+  title="${escapeHtml(form.name)}"
   loading="lazy"
 ></iframe>
 <p style="font-size:12px;color:#999;margin-top:4px;">
   Powered by <a href="${baseUrl}" target="_blank" rel="noopener">CRM</a>
 </p>`;
+}
+
+export async function listFailedSubmissions(
+  formId: string,
+  limit?: number,
+  offset?: number,
+): Promise<FormSubmissionRow[]> {
+  await getForm(formId);
+  return findFailedSubmissions(formId, clampLimit(limit), Math.max(0, offset ?? 0));
+}
+
+export async function retrySubmissionLead(
+  formId: string,
+  submissionId: string,
+  actor: FormActor,
+): Promise<Result<{ leadId: string }, AppError>> {
+  try {
+    const recovered = await withAdvisoryLocks([`form-recovery:${submissionId}`], async (client) => {
+      if (!client)
+        return err(new AppError('Could not recover the submission. Please try again.', 500));
+      const submission = await findSubmissionById(formId, submissionId, client);
+      if (!submission) return err(new AppError('Submission not found', 404));
+      if (submission.status !== 'lead_failed')
+        return err(new AppError('This submission has already been processed', 409));
+      const form = await findFormById(formId, client);
+      if (!form) return err(new AppError('Form not found', 404));
+      const validated = submissionDefinitionSchema(form.fields).safeParse(submission.data);
+      if (!validated.success)
+        return err(
+          new AppError(
+            'The form fields have changed. Review the saved answers before recovery.',
+            422,
+          ),
+        );
+      // Reuse the lock transaction's client for the lead dedupe and outbox work.
+      // This avoids checking out additional pool connections while holding the lock.
+      const lead = await captureFormLead(form, validated.data, client);
+      if (!lead.ok) return lead;
+      await linkSubmissionLead(formId, submissionId, lead.value.id, client);
+      const event = await appendDomainEvent(
+        {
+          eventType: 'form.submitted',
+          aggregateType: 'lead',
+          aggregateId: lead.value.id,
+          idempotencyKey: `form-submission:${submissionId}`,
+          payload: { formId, submissionId },
+        },
+        client,
+      );
+      if (!event.ok) throw event.error;
+      return ok({ leadId: lead.value.id, outboxId: event.value.event.id });
+    });
+    if (!recovered.ok) return recovered;
+    await queueOutboxDelivery(recovered.value.outboxId);
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'form.submission.recovered',
+      entityType: 'form',
+      entityId: formId,
+      newValue: { submissionId, leadId: recovered.value.leadId },
+      ipAddress: actor.ipAddress ?? null,
+    });
+    return ok({ leadId: recovered.value.leadId });
+  } catch (error) {
+    return err(
+      error instanceof AppError
+        ? error
+        : new AppError('Could not recover the submission. Please try again.', 500),
+    );
+  }
 }

@@ -28,7 +28,14 @@ import { computeDispatchDeferralMs } from '../modules/campaigns/campaigns.sendWi
 import { createLog, updateLogStatus } from '../modules/outreach/outreach.service';
 import { OutreachStatus } from '../shared/types';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
+import { getCampaignMessageSettings } from '../modules/campaigns/campaigns.service';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
+import { createOutreachUnsubscribeUrl } from '../modules/outreach/unsubscribe.service';
+import {
+  leadToVariableValues,
+  resolveEmailPayload,
+  substituteVariables,
+} from '../modules/templates/templateDesign';
 import { isPlaceholderPhone, isPlaceholderEmail } from '../shared/utils/phone';
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
@@ -48,8 +55,18 @@ interface DispatchResult {
  * Dispatching to these burns anti-ban budget and risks the sending
  * account's reputation on numbers/addresses that were never real.
  */
-function isPlaceholderContact(channel: string, destination: string): boolean {
-  if (channel === 'email') return isPlaceholderEmail(destination);
+function isPlaceholderContact(
+  channel: string,
+  destination: string,
+  sourcePlatform?: string,
+): boolean {
+  if (channel === 'email') {
+    // Earlier Google imports invented deliverable-looking no-reply addresses.
+    return (
+      isPlaceholderEmail(destination) ||
+      (sourcePlatform === 'google_business' && /^no-reply@/i.test(destination.trim()))
+    );
+  }
   return isPlaceholderPhone(destination);
 }
 
@@ -461,7 +478,7 @@ export async function handleSendAiReply(data: OutreachSendAiReplyJob): Promise<v
   if (!destination) {
     throw new AppError(`Lead ${leadId} has no ${channel} destination`, 400);
   }
-  if (isPlaceholderContact(channel, destination)) {
+  if (isPlaceholderContact(channel, destination, lead.source_platform)) {
     throw new AppError(
       `Lead ${leadId} has a placeholder ${channel} (scraped without real contact info) — cannot dispatch`,
       400,
@@ -609,10 +626,29 @@ async function sendViaConnector(opts: {
     return { success: false, error: 'Template not approved' };
   }
 
-  // 4. Personalize message
-  const { message } = await personalizeMessage(lead, template, {
-    enabled: opts.aiPersonalizationEnabled === true,
-  });
+  // 4. Personalize message. Visual/custom-HTML email templates use the saved
+  // rendered HTML with deterministic substitution (AI rewriting is intentionally
+  // skipped there to preserve the designed layout); simple templates keep the
+  // existing AI-personalization path.
+  const settings = await getCampaignMessageSettings(opts.campaignId);
+  const enabled = settings?.ai_personalization_enabled ?? opts.aiPersonalizationEnabled === true;
+  const values = leadToVariableValues(lead);
+
+  let message: string;
+  let subject: string | undefined;
+  if (opts.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
+    values.unsubscribe_link = await createOutreachUnsubscribeUrl(lead.id, lead.email);
+    const payload = resolveEmailPayload(template, values);
+    message = payload.html;
+    subject = payload.subject ?? undefined;
+  } else {
+    const personalized = await personalizeMessage(lead, template, {
+      enabled,
+      ...(enabled && settings ? { tone: settings.tone } : {}),
+    });
+    message = personalized.message;
+    subject = template.subject ? substituteVariables(template.subject, values, false) : undefined;
+  }
 
   // 5. Determine destination
   let destination: string;
@@ -632,7 +668,7 @@ async function sendViaConnector(opts: {
   if (!destination) {
     return { success: false, error: `Lead has no ${opts.channel} destination` };
   }
-  if (isPlaceholderContact(opts.channel, destination)) {
+  if (isPlaceholderContact(opts.channel, destination, lead.source_platform)) {
     return {
       success: false,
       error: `Lead has a placeholder ${opts.channel} (scraped without real contact info) — cannot dispatch`,
@@ -647,7 +683,7 @@ async function sendViaConnector(opts: {
     templateId: opts.templateId,
     body: message,
     destination,
-    subject: template.subject ?? undefined,
+    subject: subject ?? template.subject ?? undefined,
     mockMode: opts.mockMode,
     logId: opts.logId,
     attachments: template.attachments,

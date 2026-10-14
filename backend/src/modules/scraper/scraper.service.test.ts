@@ -1,3 +1,4 @@
+import { runConfiguredGoogleAgent } from './google-agent.service';
 import {
   getConfigById,
   createConfig,
@@ -12,14 +13,83 @@ import {
   discoverPages,
   getLeadsForRun,
   retryFailedItems,
+  importSelectedCandidates,
   getStatsSummary,
   isRetryableScrapeError,
+  installBrowserEgressPolicy,
+  assertBrowserLandingUrl,
+  classifyFacebookError,
+  classifyMetaLeadsError,
+  apifyStableId,
 } from './scraper.service';
 import * as repo from './scraper.repository';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
+import dns from 'dns/promises';
+import { EventEmitter } from 'events';
+
+// The guarded page fetch now uses Node's HTTP clients so it can pin the DNS
+// answer. Bridge those requests to the suite's existing fetch fakes.
+jest.mock('http', () => ({
+  request: (url: URL, _options: unknown, onResponse: (response: unknown) => void) => {
+    const request = new EventEmitter() as EventEmitter & {
+      end: () => void;
+      destroy: (error?: Error) => void;
+    };
+    request.end = () => {
+      void Promise.resolve(global.fetch(url.toString(), { redirect: 'manual' }))
+        .then(async (response) => {
+          const incoming = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            statusMessage: string;
+            headers: Record<string, string>;
+            destroy: (error?: Error) => void;
+          };
+          incoming.statusCode = response.status;
+          incoming.statusMessage = response.statusText;
+          const location = response.headers?.get?.('location');
+          const contentLength = response.headers?.get?.('content-length');
+          incoming.headers = {
+            ...(location ? { location } : {}),
+            ...(contentLength ? { 'content-length': contentLength } : {}),
+          };
+          incoming.destroy = (error?: Error) => {
+            if (error) incoming.emit('error', error);
+          };
+          onResponse(incoming);
+          const text = await response.text();
+          if (text) incoming.emit('data', Buffer.from(text));
+          incoming.emit('end');
+          request.emit('close');
+        })
+        .catch((error: unknown) => {
+          request.emit('error', error);
+          request.emit('close');
+        });
+    };
+    request.destroy = (error?: Error) => {
+      if (error) request.emit('error', error);
+      request.emit('close');
+    };
+    return request;
+  },
+}));
+jest.mock('https', () => ({
+  request: (url: URL, options: unknown, onResponse: (response: unknown) => void) =>
+    jest.requireMock('http').request(url, options, onResponse),
+}));
+
+// Keep URL validation active, but isolate unit tests from real DNS latency.
+// Otherwise DNS can settle after runWithFakeTimers drains its timers, leaving
+// a subsequently scheduled crawl delay pending until the test times out.
+jest.mock('dns/promises', () => ({
+  __esModule: true,
+  default: {
+    lookup: jest.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+  },
+}));
 
 jest.mock('../../shared/utils/db', () => ({
   pool: {},
@@ -27,6 +97,7 @@ jest.mock('../../shared/utils/db', () => ({
   queryOne: jest.fn(),
 }));
 jest.mock('./scraper.repository');
+jest.mock('./google-agent.service', () => ({ runConfiguredGoogleAgent: jest.fn() }));
 jest.mock('./scraper.scheduler', () => ({
   syncSchedule: jest.fn(),
   removeSchedule: jest.fn(),
@@ -36,6 +107,9 @@ jest.mock('../../workers/queue', () => ({
 }));
 jest.mock('../notifications/notifications.emitter', () => ({
   pushToUser: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('../notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true }),
 }));
 jest.mock('../ai-settings/ai-settings.service', () => ({
   getAiConfig: jest.fn(),
@@ -47,7 +121,9 @@ jest.mock('../../shared/utils/logger', () => ({
   logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
 jest.mock('../../shared/utils/email', () => ({
+  ...jest.requireActual<typeof import('../../shared/utils/email')>('../../shared/utils/email'),
   verifyEmail: jest.fn().mockResolvedValue({ valid: true, normalized: 'test@example.com' }),
+  isEmailSyntaxValid: jest.fn((e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)),
 }));
 
 // Mock the dynamically-imported leads service so importLeads never touches the DB.
@@ -56,6 +132,7 @@ const getLeadsByScraperLogIdMock = jest.fn();
 const getLeadsByIdsMock = jest.fn();
 jest.mock('../leads/leads.service', () => ({
   createLead: (...args: unknown[]) => createLeadMock(...args),
+  findScrapedLeadDuplicate: jest.fn().mockResolvedValue(null),
   getLeadsByScraperLogId: (...args: unknown[]) => getLeadsByScraperLogIdMock(...args),
   getLeadsByIds: (...args: unknown[]) => getLeadsByIdsMock(...args),
 }));
@@ -65,6 +142,13 @@ const runActorSyncMock = jest.fn();
 jest.mock('../integrations/apify/apify.connector', () => ({
   loadCredentials: (...args: unknown[]) => loadApifyCredentialsMock(...args),
   runActorSync: (...args: unknown[]) => runActorSyncMock(...args),
+}));
+
+// LinkedIn connector is loaded dynamically by the scraper — mock it so API-mode
+// entitlement branches never touch the DB or network.
+const loadLinkedInCredentialsMock = jest.fn();
+jest.mock('../integrations/linkedin/linkedin.connector', () => ({
+  loadCredentials: (...args: unknown[]) => loadLinkedInCredentialsMock(...args),
 }));
 
 // puppeteer-core is mocked wholesale — scrapeBrowser is exercised against a
@@ -83,6 +167,15 @@ const puppeteerBrowserMock = {
 const puppeteerLaunchMock = jest.fn((_opts?: unknown) => Promise.resolve(puppeteerBrowserMock));
 jest.mock('puppeteer-core', () => ({
   launch: (opts: unknown) => puppeteerLaunchMock(opts),
+}));
+
+// OpenAI is mocked so detectSelectors success paths never call a live model.
+const openAiCreateMock = jest.fn();
+jest.mock('openai', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    chat: { completions: { create: (...args: unknown[]) => openAiCreateMock(...args) } },
+  })),
 }));
 
 const mockActor = { id: 'admin-id', role: 'admin' as const, ipAddress: '127.0.0.1' };
@@ -157,6 +250,7 @@ describe('Scraper Service', () => {
     (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-1' });
     (repo.updateScraperLog as jest.Mock).mockResolvedValue({ id: 'log-1' });
     (repo.updateScraperConfigLastRun as jest.Mock).mockResolvedValue(undefined);
+    (repo.findScraperLogById as jest.Mock).mockResolvedValue(null);
     process.env.GOOGLE_PLACES_API_KEY = 'test-key';
     process.env.FB_TOKEN = 'fb-token';
     process.env.YT_KEY = 'yt-key';
@@ -374,6 +468,52 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toBe('Unknown error');
     });
+
+    it('throws error when notification persistence fails so BullMQ retries the run', async () => {
+      const { createNotification } = require('../notifications/notifications.service');
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'dentists' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: [] }),
+      });
+      (createNotification as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        error: new Error('Notification persistence failed'),
+      });
+
+      await expect(runScrape('1', mockActor)).rejects.toThrow('Notification persistence failed');
+    });
+
+    it('skips re-crawling on retry if log row is already completed, retrying notification directly', async () => {
+      const { createNotification } = require('../notifications/notifications.service');
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', { apiKeyRef: 'GOOGLE_PLACES_API_KEY', query: 'dentists' }),
+      );
+      (repo.findScraperLogById as jest.Mock).mockResolvedValueOnce({
+        id: 'log-retry',
+        config_id: '1',
+        status: 'completed',
+        completed_at: '2026-10-10T10:00:00Z',
+        records_found: 10,
+        records_imported: 8,
+        records_duplicate: 2,
+        records_failed: 0,
+      });
+      global.fetch = jest.fn();
+      (createNotification as jest.Mock).mockResolvedValueOnce({ ok: true });
+
+      const result = await runScrapeForJob('1', 'log-retry');
+      expect(result.status).toBe('completed');
+      expect(result.recordsImported).toBe(8);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          occurrenceKey: 'scraper:complete:log-retry',
+        }),
+      );
+    });
   });
 
   // ── Background run (queueScrapeRun / runScrapeForJob) ──────────────────────
@@ -426,6 +566,167 @@ describe('Scraper Service', () => {
       );
       expect(result.logId).toBe('log-9');
       expect(result.status).toBe('failed');
+    });
+  });
+
+  describe('Google Places AI agent integration', () => {
+    const config = (): ReturnType<typeof activeConfig> =>
+      activeConfig('google_places', {
+        query: 'dental clinics',
+        location: '13,77',
+        apiKeyRef: 'GOOGLE_PLACES_API_KEY',
+        agentEnabled: true,
+        // Explicit automatic import: legacy agent configs keep importing.
+        // Without this, agent runs stage for review (see next test).
+        research: { importMode: 'automatic' },
+      });
+    it('imports only candidates returned by a successfully finished agent and preserves provenance', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockResolvedValue({
+        candidates: [
+          {
+            placeId: 'observed-one',
+            name: 'Clinic',
+            address: 'Bangalore',
+            phone: '+919999999999',
+            email: 'hello@clinic.test',
+            emailSource: 'https://clinic.test/contact',
+            website: 'https://clinic.test',
+            rating: 4,
+            reviewCount: 20,
+          },
+        ],
+        summary: 'Matched clinic based on observed website.',
+        rounds: 4,
+        toolCalls: 5,
+        decisions: [{ placeId: 'observed-one', reason: 'Observed booking' }],
+      });
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(createLeadMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          google_place_id: 'observed-one',
+          email: 'hello@clinic.test',
+          google_contact_provenance: { email: 'website', phone: 'google_places' },
+        }),
+        expect.anything(),
+      );
+      expect(repo.updateScraperLog).toHaveBeenCalledWith(
+        'log-1',
+        expect.objectContaining({
+          raw_response: expect.objectContaining({ agent: expect.objectContaining({ rounds: 4 }) }),
+        }),
+      );
+    });
+    it('does not keep a no-MX email because the generated phone is only a placeholder', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockResolvedValue({
+        candidates: [
+          {
+            placeId: 'observed-without-phone',
+            name: 'No Phone Clinic',
+            address: 'Bangalore',
+            email: 'hello@clinic.test',
+            emailSource: 'https://clinic.test/contact',
+            website: 'https://clinic.test',
+            rating: 4,
+            reviewCount: 20,
+          },
+        ],
+        summary: 'Matched clinic.',
+        rounds: 1,
+        toolCalls: 1,
+        decisions: [{ placeId: 'observed-without-phone', reason: 'Observed' }],
+      });
+      const verifyEmailMock = jest.requireMock('../../shared/utils/email').verifyEmail as jest.Mock;
+      verifyEmailMock.mockResolvedValueOnce({ valid: false, reason: 'no_mx_record' });
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.recordsFailed).toBe(1);
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+    it('does not import partial results when the agent fails', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockRejectedValueOnce(
+        new AppError('Agent failed before finish', 502),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+    it('requires AI settings and a geographic boundary before execution', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue(null);
+      expect((await runScrape('1', mockActor)).status).toBe('failed');
+      expect(runConfiguredGoogleAgent).not.toHaveBeenCalled();
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        ...config(),
+        config: { ...config().config, location: '' },
+      });
+      expect((await runScrape('1', mockActor)).errorMessage).toContain('requires a location');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+    it('sanitizes credential-bearing geocoding failures', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue({
+        ...config(),
+        config: { ...config().config, location: 'Bangalore' },
+      });
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      global.fetch = jest.fn().mockRejectedValue(new Error('Failed request key=test-key'));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).not.toContain('test-key');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+    it('stages agent results for review by default instead of importing', async () => {
+      // No explicit research options: agent runs default to review mode.
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_places', {
+          query: 'dental clinics',
+          location: '13,77',
+          apiKeyRef: 'GOOGLE_PLACES_API_KEY',
+          agentEnabled: true,
+        }),
+      );
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockResolvedValue({
+        candidates: [
+          {
+            placeId: 'observed-one',
+            name: 'Clinic',
+            address: 'Bangalore',
+            email: 'hello@clinic.com',
+            rating: 4,
+            reviewCount: 20,
+          },
+        ],
+        summary: 'Matched clinic.',
+        rounds: 2,
+        toolCalls: 3,
+        decisions: [{ placeId: 'observed-one', reason: 'Observed' }],
+      });
+      const result = await runScrape('1', mockActor);
+      expect(result.errorMessage).toBeNull();
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(result.recordsImported).toBe(0);
+      expect(createLeadMock).not.toHaveBeenCalled();
+      const log = (repo.updateScraperLog as jest.Mock).mock.calls[0][1] as {
+        raw_response: {
+          import_mode: string;
+          review_pending: number;
+          candidates: Array<{ provider: { id: string }; eligibility: string; contacts: Array<{ state: string }> }>;
+        };
+      };
+      expect(log.raw_response.import_mode).toBe('review');
+      expect(log.raw_response.review_pending).toBe(1);
+      expect(log.raw_response.candidates[0].provider.id).toBe('observed-one');
+      expect(log.raw_response.candidates[0].contacts[0].state).toBe('dns_supported');
+      expect(log.raw_response.candidates[0].eligibility).toBe('eligible');
     });
   });
 
@@ -492,8 +793,44 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(1);
       expect(createLeadMock).toHaveBeenCalledTimes(1);
-      // website domain used for email
-      expect(createLeadMock.mock.calls[0][0].email).toBe('no-reply@cafeone.com');
+      // A website is not evidence of an email address.
+      const lead = createLeadMock.mock.calls[0][0];
+      expect(lead.email).toMatch(/^no-reply-[a-f0-9]{40}@google-scraped\.local$/);
+      expect(lead.google_place_id).toBe('p1');
+      expect(lead.google_contact_provenance).toEqual({
+        email: 'placeholder',
+        phone: 'google_places',
+      });
+    });
+
+    it('keeps branches sharing a website and phone as distinct identified businesses', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(gpConfig());
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            status: 'OK',
+            results: [
+              { place_id: 'branch-a', name: 'Chain A' },
+              { place_id: 'branch-b', name: 'Chain B' },
+            ],
+          }),
+        )
+        .mockResolvedValue(
+          jsonResponse({
+            result: {
+              formatted_phone_number: '+15551234567',
+              website: 'https://chain.test',
+            },
+          }),
+        );
+      const result = await runScrape('1', mockActor);
+      expect(result.recordsImported).toBe(2);
+      const [first, second] = createLeadMock.mock.calls.map(([lead]) => lead);
+      expect(first.phone).toBe(second.phone);
+      expect(first.email).not.toBe(second.email);
+      expect(first.google_place_id).toBe('branch-a');
+      expect(second.google_place_id).toBe('branch-b');
     });
 
     it('uses placeholders when details call fails / returns no contact info', async () => {
@@ -514,6 +851,10 @@ describe('Scraper Service', () => {
       expect(createLeadMock).toHaveBeenCalledTimes(1);
       const lead = createLeadMock.mock.calls[0][0];
       expect(lead.phone).toMatch(/^\+0\d{10}$/);
+      expect(lead.google_contact_provenance).toEqual({
+        email: 'placeholder',
+        phone: 'placeholder',
+      });
       expect(lead.email).toContain('@google-scraped.local');
     });
 
@@ -831,8 +1172,8 @@ describe('Scraper Service', () => {
 
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(2);
-      expect(fetchMock).toHaveBeenCalledWith('http://a.example.com', expect.anything());
-      expect(fetchMock).toHaveBeenCalledWith('http://b.example.com', expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith('http://a.example.com/', expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith('http://b.example.com/', expect.anything());
     });
 
     it('dedupes the same contact found more than once in one run before importing', async () => {
@@ -885,7 +1226,7 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('completed');
     });
 
-    it('paginates with a present pagination selector and custom headers', async () => {
+    it('paginates through an actual pagination link and custom headers', async () => {
       jest.useFakeTimers();
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         webConfig({
@@ -894,11 +1235,69 @@ describe('Scraper Service', () => {
           headers: { 'User-Agent': 'test' },
         }),
       );
-      const html = `<div><div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div><a class="next">Next</a></div>`;
+      const html = `<div><div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div><a class="next" href="http://example.com/list?page=2">Next</a></div>`;
       global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
       const result = await runWithFakeTimers(() => runScrape('1', mockActor));
       expect(result.status).toBe('completed');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://example.com/list?page=2',
+        expect.anything(),
+      );
       jest.useRealTimers();
+    });
+
+    it('does not invent ?page=N URLs when the pagination selector has no link', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 3, paginationSelector: '.next' }),
+      );
+      const html = `<div><div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div><a class="next">Next</a></div>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      // Seed URL (+ robots.txt) only — no fabricated ?page=N URLs.
+      const fetchedUrls = (global.fetch as jest.Mock).mock.calls.map((c) => String(c[0]));
+      expect(fetchedUrls).not.toContain('http://example.com/list?page=2');
+      expect(fetchedUrls).not.toContain('http://example.com/list?page=3');
+    });
+
+    it('paginates through an explicit paginationUrlPattern', async () => {
+      jest.useFakeTimers();
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 2, paginationUrlPattern: 'http://example.com/list?p={n}' }),
+      );
+      const html = `<div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runWithFakeTimers(() => runScrape('1', mockActor));
+      expect(result.status).toBe('completed');
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://example.com/list?p=2',
+        expect.anything(),
+      );
+      jest.useRealTimers();
+    });
+
+    it('keeps page-one leads when the discovered next page fails SSRF validation', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 2, paginationSelector: '.next' }),
+      );
+      const html = `<div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div><a class="next" href="http://127.0.0.1/private">Next</a>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still fails for a pagination URL pattern without a page placeholder', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 2, paginationUrlPattern: 'https://example.com/list' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue(
+        htmlResponse('<div class="card"><span class="name">P1</span></div>'),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('paginationUrlPattern must contain');
     });
 
     it('stops paginating when pagination selector is absent', async () => {
@@ -960,6 +1359,7 @@ describe('Scraper Service', () => {
       expect(result.recordsFailed).toBe(1);
     });
   });
+
 
   describe('runScrape apify_actor', () => {
     it('runs the actor and imports mapped leads', async () => {
@@ -1221,10 +1621,10 @@ describe('Scraper Service', () => {
       );
     });
 
-    it('gives distinct placeholder phones to multiple emails found on one page', async () => {
-      // Same business_name/location for both (single page) and no tel: link,
-      // so only the email differs — this used to collide on the same
-      // generated placeholder phone and silently drop the second lead.
+    it('produces one business lead from a page with multiple emails, not inflating leads', async () => {
+      // Multiple emails from the same page represent multiple contacts at the same
+      // business, not separate businesses — creating multiple leads would inflate
+      // one business into many records.
       puppeteerPageMock.content.mockResolvedValue(
         '<html><body><a href="mailto:sales@acme.com">Sales</a><a href="mailto:support@acme.com">Support</a></body></html>',
       );
@@ -1232,10 +1632,10 @@ describe('Scraper Service', () => {
 
       const result = await runScrape('1', mockActor);
 
-      expect(result.recordsFound).toBe(2);
-      expect(createLeadMock).toHaveBeenCalledTimes(2);
-      const phones = createLeadMock.mock.calls.map(([input]) => (input as { phone: string }).phone);
-      expect(new Set(phones).size).toBe(2);
+      expect(result.recordsFound).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledTimes(1);
+      const lead = createLeadMock.mock.calls[0][0] as { email: string };
+      expect(lead.email).toBe('sales@acme.com');
     });
 
     it('extracts leads via selectors mode', async () => {
@@ -1323,6 +1723,21 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(1);
       expect(createLeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps rendered page-one leads when a pagination link fails SSRF validation', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({ maxPages: 2, paginationSelector: '.next' }),
+      );
+      puppeteerPageMock.content.mockResolvedValue(
+        '<html><body><a href="mailto:hi@acme.com">Email</a><a class="next" href="http://127.0.0.1/private">Next</a></body></html>',
+      );
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(puppeteerPageMock.goto).toHaveBeenCalledTimes(1);
     });
 
     it('merges duplicate contacts instead of dropping data — keeps the phone from a later page', async () => {
@@ -1470,6 +1885,7 @@ describe('Scraper Service', () => {
         recordsImported: 10,
         recordsDuplicate: 5,
         recordsFailed: 5,
+        reviewPending: 0,
       });
     });
 
@@ -1549,6 +1965,609 @@ describe('Scraper Service', () => {
       puppeteerPageMock.$$eval.mockRejectedValue(new Error('boom'));
       await expect(discoverPages('https://example.com/')).rejects.toThrow('boom');
       expect(puppeteerBrowserMock.close).toHaveBeenCalled();
+    });
+
+    it('excludes hostname-prefix lookalikes from same-origin results', async () => {
+      puppeteerPageMock.$$eval.mockResolvedValue([
+        { href: 'https://example.com/contact', text: 'Contact' },
+        { href: 'https://example.com.evil.com/phish', text: 'Phish' },
+        { href: 'https://notexample.com/', text: 'Other' },
+      ]);
+
+      const result = await discoverPages('https://example.com/');
+
+      expect(result.map((p) => p.url)).toEqual([
+        'https://example.com/',
+        'https://example.com/contact',
+      ]);
+    });
+  });
+
+  // ── Website and browser correctness (§2) ───────────────────────────────────
+
+  describe('contact scoping and footer isolation', () => {
+    function smartConfig(extra: Record<string, unknown> = {}) {
+      return activeConfig('web_scrape', {
+        url: 'http://example.com/team',
+        mode: 'smart',
+        ...extra,
+      });
+    }
+
+    it('keeps contacts within their container across two businesses', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        smartConfig({ containerSelector: '.biz' }),
+      );
+      const html = `<html><head><title>Directory</title></head><body>
+        <div class="biz"><h2>Acme</h2><a href="mailto:sales@acme.com">Sales</a></div>
+        <div class="biz"><h2>Beta</h2><a href="mailto:hi@beta.com">Hi</a></div>
+        <footer><a href="mailto:directory@example.com">Directory</a></footer>
+      </body></html>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(2);
+      const emails = createLeadMock.mock.calls.map((c) => (c[0] as { email: string }).email);
+      expect(emails).toContain('sales@acme.com');
+      expect(emails).toContain('hi@beta.com');
+      expect(emails).not.toContain('directory@example.com');
+    });
+
+    it('does not attach a footer contact to a listing page without containers', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(smartConfig());
+      const html = `<html><head><title>Directory</title></head><body>
+        <h2>Acme</h2><h2>Beta</h2><h2>Gamma</h2>
+        <footer><a href="mailto:directory@example.com">Directory</a></footer>
+      </body></html>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(0);
+    });
+
+    it('uses a footer contact on a single-business page as a last resort', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(smartConfig());
+      const html = `<html><head><title>Acme Plumbing</title></head><body>
+        <main><p>Family-run plumbing since 1998.</p></main>
+        <footer><a href="mailto:office@acmeplumbing.com">Contact</a></footer>
+      </body></html>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect((createLeadMock.mock.calls[0][0] as { email: string }).email).toBe(
+        'office@acmeplumbing.com',
+      );
+    });
+
+    it('prefers JSON-LD business identity and contacts over page chrome', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(smartConfig());
+      const html = `<html><head><title>Acme</title>
+        <script type="application/ld+json">{"@type":"LocalBusiness","name":"Acme Bakery","email":"hello@acmebakery.com"}</script>
+      </head><body><main><p>Welcome</p></main></body></html>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      const lead = createLeadMock.mock.calls[0][0] as { business_name: string; email: string };
+      expect(lead.business_name).toBe('Acme Bakery');
+      expect(lead.email).toBe('hello@acmebakery.com');
+    });
+  });
+
+  describe('safe fetch guards', () => {
+    function redirectResponse(location: string) {
+      return {
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: { get: (name: string) => (name.toLowerCase() === 'location' ? location : null) },
+        text: async () => '',
+        json: async () => ({}),
+      };
+    }
+
+    it('follows safe redirects hop by hop', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('web_scrape', {
+          url: 'http://example.com/old',
+          mode: 'smart',
+        }),
+      );
+      const html = `<html><head><title>New</title></head><body><main><a href="mailto:n@new.com">N</a></main></body></html>`;
+      global.fetch = jest.fn((url: unknown) => {
+        if (String(url).includes('robots.txt')) return Promise.resolve(htmlResponse(''));
+        if (String(url).includes('/old')) return Promise.resolve(redirectResponse('http://example.com/new'));
+        return Promise.resolve(htmlResponse(html));
+      }) as unknown as typeof fetch;
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(global.fetch).toHaveBeenCalledWith('http://example.com/new', expect.anything());
+    });
+
+    it('blocks redirects to private hosts instead of following them', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('web_scrape', {
+          url: 'http://example.com/old',
+          mode: 'smart',
+        }),
+      );
+      global.fetch = jest.fn((url: unknown) => {
+        if (String(url).includes('robots.txt')) return Promise.resolve(htmlResponse(''));
+        return Promise.resolve(redirectResponse('http://127.0.0.1/admin'));
+      }) as unknown as typeof fetch;
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toMatch(/SSRF|forbidden|private/i);
+    });
+
+    it('rejects oversized pages with 413 instead of mining them', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('web_scrape', {
+          url: 'http://example.com/huge',
+          mode: 'smart',
+        }),
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: { get: () => null },
+        text: async () => `x${'y'.repeat(2_000_001)}`,
+        json: async () => ({}),
+      });
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('cap');
+      expect(result.retryable).toBe(false);
+    });
+  });
+
+  describe('detectSelectors evidence', () => {
+    beforeEach(() => {
+      (getAiConfig as jest.Mock).mockResolvedValue({
+        apiKey: 'k',
+        model: 'gpt-4o',
+        baseUrl: null,
+      });
+    });
+
+    it('returns bounded match counts and samples for valid suggestions', async () => {
+      const html = `<html><body>
+        <div class="card"><span class="name">Acme</span></div>
+        <div class="card"><span class="name">Beta</span></div>
+      </body></html>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      openAiCreateMock.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: '{"containerSelector":".card","selectors":{"business_name":".name"}}',
+            },
+          },
+        ],
+        usage: { total_tokens: 10 },
+      });
+      const result = await detectSelectors('http://example.com/list');
+      expect(result.selectors).toEqual({ business_name: '.name' });
+      expect(result.matchCounts).toEqual({ business_name: 1 });
+      expect(result.samples.business_name).toEqual(['Acme']);
+    });
+
+    it('rejects suggestions that match nothing instead of returning empties', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(htmlResponse('<html><body><p>No cards here</p></body></html>'));
+      openAiCreateMock.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: '{"containerSelector":".missing","selectors":{"business_name":".nope"}}',
+            },
+          },
+        ],
+        usage: { total_tokens: 10 },
+      });
+      await expect(detectSelectors('http://example.com/list')).rejects.toThrow(
+        'matched no usable page content',
+      );
+    });
+  });
+
+  describe('browser landing validation', () => {
+    it('accepts same-origin landings without extra DNS work', async () => {
+      const page = { url: () => 'https://example.com/new' };
+      await expect(assertBrowserLandingUrl(page, 'https://example.com/old')).resolves.toBeUndefined();
+    });
+
+    it('blocks cross-origin landings on private hosts', async () => {
+      const page = { url: () => 'http://127.0.0.1/admin' };
+      await expect(assertBrowserLandingUrl(page, 'https://example.com/old')).rejects.toThrow(
+        /SSRF|forbidden/i,
+      );
+    });
+
+    it('skips validation when the page exposes no URL', async () => {
+      await expect(assertBrowserLandingUrl({}, 'https://example.com/old')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('importSelectedCandidates', () => {
+    function stagedLog(candidates: unknown[]) {
+      return {
+        id: 'log-1',
+        config_id: '1',
+        raw_response: { import_mode: 'review', candidates },
+      };
+    }
+
+    function candidate(id: string, email?: string, phone?: string) {
+      return {
+        provider: { kind: 'youtube_channel', id },
+        source: { sourceType: 'youtube', collectedAt: new Date().toISOString() },
+        business: { name: 'Biz', website: null, sourceUrls: [], location: '', industry: '' },
+        contacts: [
+          ...(email
+            ? [{ channel: 'email', value: email, provenance: 'youtube_description', state: 'dns_supported' }]
+            : []),
+          ...(phone
+            ? [{ channel: 'phone', value: phone, provenance: 'youtube_description', state: 'observed' }]
+            : []),
+        ],
+        evidence: [],
+        observedOpportunities: [],
+        modelSuggestions: [],
+        targetFit: 50,
+        contactQuality: 70,
+        eligibility: 'eligible',
+        rejectionReasons: [],
+        suggestedService: 'none',
+      };
+    }
+
+    it('imports a selection and links the import run to the staged run', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(
+        stagedLog([candidate('UC1', 'a@b.com')]),
+      );
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'x' }),
+      );
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-2' });
+      createLeadMock.mockResolvedValue({ id: 'lead-9' });
+
+      const result = await importSelectedCandidates('log-1', ['UC1'], mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsImported).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'a@b.com' }),
+        expect.anything(),
+      );
+      const log = (repo.updateScraperLog as jest.Mock).mock.calls[0][1] as {
+        raw_response: { import_of: string };
+      };
+      expect(log.raw_response.import_of).toBe('log-1');
+    });
+
+    it('preserves Google Place identity through selected import', async () => {
+      const place = {
+        ...candidate('CaseSensitivePlace', undefined, '+14155552671'),
+        provider: { kind: 'google_place', id: 'CaseSensitivePlace' },
+        source: { sourceType: 'google_places', collectedAt: new Date().toISOString() },
+      };
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(stagedLog([place]));
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(activeConfig('google_places', {}));
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-2' });
+      createLeadMock.mockResolvedValue({ id: 'lead-9' });
+
+      await importSelectedCandidates('log-1', ['CaseSensitivePlace'], mockActor);
+
+      expect(createLeadMock).toHaveBeenCalledWith(
+        expect.objectContaining({ google_place_id: 'CaseSensitivePlace' }),
+        expect.anything(),
+      );
+    });
+
+    it('reassesses an unknown-only email despite a stored eligible flag', async () => {
+      const unknownEmail = {
+        ...candidate('UC1', 'hi@acme.com'),
+        contacts: [{ channel: 'email', value: 'hi@acme.com', provenance: 'youtube_description', state: 'unknown' }],
+      };
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(stagedLog([unknownEmail]));
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(activeConfig('youtube', {}));
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-2' });
+
+      const result = await importSelectedCandidates('log-1', ['UC1'], mockActor);
+
+      expect(result.recordsImported).toBe(0);
+      expect(result.recordsFailed).toBe(1);
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+
+    it('matches provider IDs with their original casing', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(stagedLog([candidate('UC1', 'a@b.com')]));
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(activeConfig('youtube', {}));
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-2' });
+
+      await expect(importSelectedCandidates('log-1', ['uc1'], mockActor)).rejects.toThrow('No staged candidates matched');
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent: re-importing the same selection dedupes', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(
+        stagedLog([candidate('UC1', 'a@b.com')]),
+      );
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'x' }),
+      );
+      (repo.insertScraperLog as jest.Mock).mockResolvedValue({ id: 'log-3' });
+      createLeadMock.mockRejectedValueOnce(new AppError('exists', 409));
+
+      const result = await importSelectedCandidates('log-1', ['UC1'], mockActor);
+
+      expect(result.recordsImported).toBe(0);
+      expect(result.recordsDuplicate).toBe(1);
+    });
+
+    it('rejects selections with no match and runs with no staged candidates', async () => {
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(
+        stagedLog([candidate('UC1', 'a@b.com')]),
+      );
+      await expect(importSelectedCandidates('log-1', ['nope'], mockActor)).rejects.toThrow(
+        'No staged candidates matched',
+      );
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue({
+        id: 'log-1',
+        config_id: '1',
+        raw_response: {},
+      });
+      await expect(importSelectedCandidates('log-1', ['UC1'], mockActor)).rejects.toThrow(
+        'no staged candidates',
+      );
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue(null);
+      await expect(importSelectedCandidates('missing', ['UC1'], mockActor)).rejects.toThrow(
+        'Scraper log not found',
+      );
+    });
+  });
+
+  // ── Source adapters (§3) ───────────────────────────────────────────────────
+
+  describe('youtube adapter', () => {
+    function ytConfig(extra: Record<string, unknown> = {}) {
+      return activeConfig('youtube', { apiKeyRef: 'YT_KEY', query: 'marketing', ...extra });
+    }
+
+    it('pins to channelId and skips search', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        ytConfig({ query: undefined, channelId: 'UC123' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({
+          items: [
+            {
+              id: 'UC123',
+              snippet: {
+                title: 'Pinned',
+                description: 'Mail us at pinned@biz.com',
+                country: 'US',
+                customUrl: '@pinned',
+              },
+            },
+          ],
+        }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      const lead = createLeadMock.mock.calls[0][0] as { email: string };
+      expect(lead.email).toBe('pinned@biz.com');
+      // No search call — only channels.list.
+      const urls = (global.fetch as jest.Mock).mock.calls.map((c) => String(c[0]));
+      expect(urls.some((u) => u.includes('/search?'))).toBe(false);
+      expect(urls.some((u) => u.includes('/channels?'))).toBe(true);
+    });
+
+    it('fails when neither query nor channelId is configured', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('youtube', { apiKeyRef: 'YT_KEY' }),
+      );
+      global.fetch = jest.fn();
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('query or channelId');
+    });
+
+    it('keeps stable identity and reports missing contacts honestly', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(ytConfig({ maxResults: 2 }));
+      global.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({
+          items: [
+            { id: { channelId: 'UC1' }, snippet: { channelTitle: 'NoContact' } },
+            { id: { channelId: 'UC2' }, snippet: { channelTitle: 'HasMail', description: 'x@y.com' } },
+          ],
+        }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      const log = (repo.updateScraperLog as jest.Mock).mock.calls[0][1] as {
+        raw_response: { channels_without_observed_contact: number };
+      };
+      expect(log.raw_response.channels_without_observed_contact).toBe(1);
+      // Both leads carry a channel-scoped stable seed (no cross-channel merge).
+      const seeds = createLeadMock.mock.calls.map(
+        (c) => (c[0] as { email: string }).email,
+      );
+      expect(seeds[1]).toBe('x@y.com');
+    });
+  });
+
+  describe('facebook error classification', () => {
+    it('maps token failures to 401 and permission failures to 403', () => {
+      expect(classifyFacebookError({ message: 'expired', code: 190 }).statusCode).toBe(401);
+      expect(classifyFacebookError({ message: 'missing permission', code: 200 }).statusCode).toBe(
+        403,
+      );
+      expect(classifyFacebookError({ message: 'slow down', code: 4 }).statusCode).toBe(429);
+      expect(classifyFacebookError({ message: 'weird' }).statusCode).toBe(400);
+    });
+
+    it('enriches only the configured page (single fetch, stable identity)', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('facebook', { accessTokenRef: 'FB_TOKEN', pageId: '123' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({ name: 'P', website: 'https://p.com', location: { city: 'C' } }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      // Page info only — no speculative posts discovery.
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const log = (repo.updateScraperLog as jest.Mock).mock.calls[0][1] as {
+        raw_response: { capability: string };
+      };
+      expect(log.raw_response.capability).toBe('configured_page_enrichment');
+    });
+  });
+
+  describe('meta leads error classification', () => {
+    it('keeps token, permission, rate-limit, missing-form, and provider failures distinct', () => {
+      expect(classifyMetaLeadsError(401, 'invalid token').statusCode).toBe(401);
+      expect(classifyMetaLeadsError(403, 'permission denied').statusCode).toBe(403);
+      expect(classifyMetaLeadsError(200, 'error #200 requires permission').statusCode).toBe(403);
+      expect(classifyMetaLeadsError(429, 'throttled').statusCode).toBe(429);
+      expect(classifyMetaLeadsError(404, 'no such form').statusCode).toBe(404);
+      expect(classifyMetaLeadsError(500, 'boom').statusCode).toBe(502);
+      // Retryability flows through: 429/5xx retry, 401/403/404 do not.
+      expect(isRetryableScrapeError(classifyMetaLeadsError(429, 'x'))).toBe(true);
+      expect(isRetryableScrapeError(classifyMetaLeadsError(403, 'x'))).toBe(false);
+    });
+  });
+
+  describe('apify adapter', () => {
+    it('prefers explicit fieldMapping over name guessing', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', {
+          actorId: 'a~b',
+          fieldMapping: { businessName: 'company', email: 'contact_email' },
+        }),
+      );
+      loadApifyCredentialsMock.mockResolvedValue({ apiToken: 'token' });
+      runActorSyncMock.mockResolvedValue({
+        ok: true,
+        items: [{ company: 'Mapped Co', contact_email: 'm@mapped.co', title: 'Wrong Title' }],
+        latencyMs: 5,
+      });
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      const lead = createLeadMock.mock.calls[0][0] as { business_name: string; email: string };
+      expect(lead.business_name).toBe('Mapped Co');
+      expect(lead.email).toBe('m@mapped.co');
+    });
+
+    it('isolates invalid items instead of importing Unknown Business', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', { actorId: 'a~b' }),
+      );
+      loadApifyCredentialsMock.mockResolvedValue({ apiToken: 'token' });
+      runActorSyncMock.mockResolvedValue({
+        ok: true,
+        items: [{ title: 'Good', phone: '+15550001111' }, { scrapedAt: 'today', foo: 1 }, 'junk'],
+        latencyMs: 5,
+      });
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('partially_completed');
+      expect(result.recordsFound).toBe(3);
+      expect(result.recordsImported).toBe(1);
+      expect(result.recordsFailed).toBe(2);
+    });
+
+    it('never reruns the paid actor on import retry', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', { actorId: 'a~b' }),
+      );
+      loadApifyCredentialsMock.mockResolvedValue({ apiToken: 'token' });
+      runActorSyncMock.mockResolvedValue({
+        ok: true,
+        items: [{ title: 'Good', phone: '+15550001111' }],
+        latencyMs: 5,
+      });
+      createLeadMock.mockRejectedValueOnce(new Error('db down'));
+      const run = await runScrape('1', mockActor);
+      expect(run.status).toBe('partially_completed');
+      (repo.findScraperLogById as jest.Mock).mockResolvedValue({
+        id: 'log-1',
+        config_id: '1',
+        failed_items: [{ lead: { business_name: 'Good', phone: '+15550001111' }, error: 'db down' }],
+      });
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('apify_actor', { actorId: 'a~b' }),
+      );
+      createLeadMock.mockResolvedValue({ id: 'lead-2' });
+      await retryFailedItems('log-1', mockActor);
+      // Exactly one Actor run across the initial run and the retry.
+      expect(runActorSyncMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('apifyStableId', () => {
+    it('is stable despite cosmetic item changes', () => {
+      const a = apifyStableId({ id: 'p1', title: 'Cafe', scrapedAt: '2026-01-01' });
+      const b = apifyStableId({ id: 'p1', title: 'Cafe (updated)', scrapedAt: '2026-10-13' });
+      expect(a).toBe(b);
+    });
+
+    it('honours an operator-configured idField', () => {
+      expect(apifyStableId({ placeId: 'PX', id: 'other' }, 'placeId')).toBe('PX');
+    });
+  });
+
+  describe('linkedin and google-ads outcomes', () => {
+    it('reports manual import as a capability, not a scrape', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('linkedin_lead_forms', { mode: 'manual_import' }),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      const log = (repo.updateScraperLog as jest.Mock).mock.calls[0][1] as {
+        raw_response: { capability: string };
+      };
+      expect(log.raw_response.capability).toBe('manual_import');
+    });
+
+    it('returns unconfigured (404) when LinkedIn credentials are missing', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('linkedin_lead_forms', { mode: 'api' }),
+      );
+      loadLinkedInCredentialsMock.mockRejectedValue(new AppError('not configured', 404));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('not configured');
+    });
+
+    it('returns unsupported (400) without an entitled organization', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('linkedin_lead_forms', { mode: 'api' }),
+      );
+      loadLinkedInCredentialsMock.mockResolvedValue({ accessToken: 't' });
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('not enabled');
+    });
+
+    it('reports google-ads webhook readiness without fake scraping', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        activeConfig('google_ads_lead_forms', {}),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(0);
+      const log = (repo.updateScraperLog as jest.Mock).mock.calls[0][1] as {
+        raw_response: { capability: string; configured: boolean };
+      };
+      expect(log.raw_response.capability).toBe('webhook_ingestion');
+      expect(log.raw_response.configured).toBe(false);
     });
   });
 
@@ -1839,6 +2858,82 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('failed');
       expect(result.errorMessage).toContain('timed out');
       expect(result.retryable).toBe(true);
+    });
+  });
+
+  // ── Browser Egress Policy & Selector Validation ─────────────────────────────
+
+  describe('installBrowserEgressPolicy', () => {
+    it('intercepts requests and aborts requests to private, loopback, or metadata addresses', async () => {
+      let requestHandler: ((req: any) => void) | undefined;
+      const fakePage = {
+        setRequestInterception: jest.fn().mockResolvedValue(undefined),
+        on: jest.fn((event: string, handler: (req: any) => void) => {
+          if (event === 'request') requestHandler = handler;
+        }),
+      };
+
+      await installBrowserEgressPolicy(fakePage);
+
+      expect(fakePage.setRequestInterception).toHaveBeenCalledWith(true);
+      expect(fakePage.on).toHaveBeenCalledWith('request', expect.any(Function));
+      expect(requestHandler).toBeDefined();
+
+      const blockedUrls = [
+        'http://127.0.0.1/admin',
+        'http://localhost:8080/metrics',
+        'http://169.254.169.254/latest/meta-data',
+        'http://10.0.0.1/internal',
+        'http://internal.service.local/api',
+        'ftp://example.com/file',
+      ];
+
+      for (const url of blockedUrls) {
+        const fakeReq = {
+          url: () => url,
+          abort: jest.fn(),
+          continue: jest.fn(),
+        };
+        requestHandler!(fakeReq);
+        expect(fakeReq.abort).toHaveBeenCalledWith('blockedbyclient');
+        expect(fakeReq.continue).not.toHaveBeenCalled();
+      }
+
+      // Safe external URL should be allowed to continue
+      const safeReq = {
+        url: () => 'https://example.com/assets/logo.png',
+        abort: jest.fn(),
+        continue: jest.fn().mockResolvedValue(undefined),
+      };
+      requestHandler!(safeReq);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(safeReq.continue).toHaveBeenCalled();
+      expect(safeReq.abort).not.toHaveBeenCalled();
+    });
+
+    it('aborts public hostnames whose DNS answers include a private address', async () => {
+      (dns.lookup as jest.Mock).mockResolvedValueOnce([
+        { address: '10.0.0.12', family: 4 },
+      ]);
+      let requestHandler: ((req: any) => void) | undefined;
+      const fakePage = {
+        setRequestInterception: jest.fn().mockResolvedValue(undefined),
+        on: jest.fn((event: string, handler: (req: any) => void) => {
+          if (event === 'request') requestHandler = handler;
+        }),
+      };
+      await installBrowserEgressPolicy(fakePage);
+
+      const fakeReq = {
+        url: () => 'https://attacker.example/pixel.gif',
+        abort: jest.fn().mockResolvedValue(undefined),
+        continue: jest.fn(),
+      };
+      requestHandler!(fakeReq);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(fakeReq.abort).toHaveBeenCalledWith('blockedbyclient');
+      expect(fakeReq.continue).not.toHaveBeenCalled();
     });
   });
 });

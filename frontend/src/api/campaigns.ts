@@ -82,7 +82,7 @@ export interface CreateCampaignInput {
   target_industries?: string[];
   target_countries?: string[];
   sequence_id?: string;
-  pipeline_id?: string;
+  pipeline_id?: string | null;
   trigger_stage_id?: string | null;
   trigger_source?: string[] | null;
   trigger_tags?: string[] | null;
@@ -108,7 +108,7 @@ export interface UpdateCampaignInput {
   target_industries?: string[];
   target_countries?: string[];
   sequence_id?: string;
-  pipeline_id?: string;
+  pipeline_id?: string | null;
   trigger_stage_id?: string | null;
   trigger_source?: string[] | null;
   trigger_tags?: string[] | null;
@@ -327,15 +327,28 @@ export function useAddLeadsToCampaign() {
 
   return useMutation({
     mutationFn: async ({ campaignId, leadIds }: { campaignId: string; leadIds: string[] }) => {
-      const response = await apiClient.post<ApiResponse<{ added: number }>>(
+      const response = await apiClient.post<ApiResponse<{ added: number; enqueued: number }>>(
         `/campaigns/${campaignId}/leads`,
         { lead_ids: leadIds }
       );
       return response.data.data;
     },
     onSuccess: (_, { campaignId }) => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId] });
       queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'stats'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'leads'] });
+    },
+  });
+}
+
+export function useCampaignEnrollmentOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: ['campaign-enrollment-options'],
+    enabled,
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<{ sources: string[]; tags: string[] }>>('/campaigns/enrollment-options');
+      return response.data.data;
     },
   });
 }

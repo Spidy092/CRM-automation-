@@ -321,6 +321,38 @@ export async function sumScraperLogsSince(sinceIso: string): Promise<{
   };
 }
 
+/**
+ * Candidates staged for review (import_mode='review') but not yet imported,
+ * summed since the given timestamp. Run logs hold staged candidates until a
+ * dedicated table exists; completed selection logs record processed candidate
+ * ids so the dashboard does not keep counting already imported selections.
+ */
+export async function sumReviewPendingSince(sinceIso: string): Promise<number> {
+  const row = await queryOne<{ pending: string }>(
+    `SELECT COALESCE(SUM(GREATEST(
+       COALESCE((staged.raw_response->>'review_pending')::int, 0) - COALESCE((
+         SELECT COUNT(DISTINCT processed.value)
+         FROM scraper_logs AS imported
+         CROSS JOIN LATERAL jsonb_array_elements_text(
+           CASE
+             WHEN jsonb_typeof(imported.raw_response->'processed_candidate_ids') = 'array'
+               THEN imported.raw_response->'processed_candidate_ids'
+             ELSE '[]'::jsonb
+           END
+         ) AS processed(value)
+         WHERE imported.raw_response->>'import_of' = staged.id::text
+           AND imported.status IN ('completed', 'partially_completed')
+       ), 0),
+       0
+     )), 0) AS pending
+     FROM scraper_logs AS staged
+     WHERE staged.created_at >= $1
+       AND staged.raw_response->>'import_mode' = 'review'`,
+    [sinceIso],
+  );
+  return row ? parseInt(row.pending, 10) : 0;
+}
+
 export interface ScraperTrendPoint {
   date: string;
   runs: number;

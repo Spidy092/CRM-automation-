@@ -1,3 +1,5 @@
+import { getLeadEnrollmentOptions } from '../leads/leads.service';
+import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 /* eslint-disable @typescript-eslint/no-explicit-any -- TODO: replace with a proper runtime type (legacy debt) */
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -52,6 +54,10 @@ class ValidationError extends AppError {
   }
 }
 
+export async function getCampaignEnrollmentOptions(): Promise<LeadEnrollmentOptions> {
+  return getLeadEnrollmentOptions();
+}
+
 export async function getAllCampaigns(filter?: { pipeline_id?: string }): Promise<Campaign[]> {
   return findCampaigns(filter);
 }
@@ -64,6 +70,16 @@ export async function getCampaignById(id: string): Promise<Campaign> {
   return campaign;
 }
 
+/** Read current campaign message settings through the campaign service boundary. */
+export async function getCampaignMessageSettings(
+  id: string,
+): Promise<Pick<Campaign, 'tone' | 'ai_personalization_enabled'> | null> {
+  const campaign = await findCampaignById(id);
+  return campaign
+    ? { tone: campaign.tone, ai_personalization_enabled: campaign.ai_personalization_enabled }
+    : null;
+}
+
 export async function createCampaign(input: CreateCampaignInput, actor: Actor): Promise<Campaign> {
   const campaign = await insertCampaign(
     {
@@ -74,6 +90,8 @@ export async function createCampaign(input: CreateCampaignInput, actor: Actor): 
       sequence_id: input.sequence_id,
       pipeline_id: input.pipeline_id,
       trigger_stage_id: input.trigger_stage_id ?? null,
+      trigger_source: input.trigger_source ?? null,
+      trigger_tags: input.trigger_tags ?? null,
       ai_personalization_enabled: input.ai_personalization_enabled ?? false,
       ab_test_enabled: input.ab_test_enabled ?? false,
       ab_test_metric: input.ab_test_metric ?? 'open_rate',
@@ -128,6 +146,8 @@ export async function updateCampaignById(
     sequence_id: input.sequence_id,
     pipeline_id: input.pipeline_id,
     ...('trigger_stage_id' in input ? { trigger_stage_id: input.trigger_stage_id } : {}),
+    ...('trigger_source' in input ? { trigger_source: input.trigger_source } : {}),
+    ...('trigger_tags' in input ? { trigger_tags: input.trigger_tags } : {}),
     ai_personalization_enabled: input.ai_personalization_enabled,
     ab_test_enabled: input.ab_test_enabled,
     ab_test_metric: input.ab_test_metric,
@@ -250,7 +270,7 @@ async function buildAutomationPreview(campaign: Campaign, mockMode = false): Pro
           if (names.length === 0) continue;
           const integrations = await Promise.all(names.map((name) => findIntegrationByName(name)));
           const ready = integrations.some(
-            (integration) => integration?.is_enabled && integration.last_test_status !== 'failed',
+            (integration) => integration?.is_enabled && integration.last_test_status === 'ok',
           );
           if (!ready) {
             connectorIssues.push(`No ready connector configured for ${channel}.`);
@@ -333,6 +353,11 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   }
 
   const preview = await buildAutomationPreview(existing, false);
+  const readinessIssues = [...preview.templateIssues, ...preview.connectorIssues];
+  if (readinessIssues.length > 0) {
+    throw new ValidationError(`Campaign is not ready to launch. ${readinessIssues.join(' ')}`);
+  }
+
   const launched = await launchCampaign(id);
   let enqueued = 0;
 
@@ -441,24 +466,70 @@ export async function addLeads(
   campaignId: string,
   leadIds: string[],
   actor: Actor,
-): Promise<{ added: number }> {
+): Promise<{ added: number; enqueued: number }> {
   const campaign = await findCampaignById(campaignId);
   if (!campaign) {
     throw new AppError('Campaign not found', 404);
   }
 
+  if (campaign.status === 'active') {
+    const readiness = await buildAutomationPreview(campaign, false);
+    const readinessIssues = [...readiness.templateIssues, ...readiness.connectorIssues];
+    if (readinessIssues.length > 0) {
+      throw new ValidationError(
+        `Campaign is not ready to contact leads. ${readinessIssues.join(' ')}`,
+      );
+    }
+  }
+
   const added = await addLeadsToCampaign(campaignId, leadIds);
+  let enqueued = 0;
+
+  if (campaign.status === 'active' && campaign.sequence_id) {
+    const enrolledWithoutOutreach = await findCampaignLeadsWithProgress(campaignId);
+    const requestedLeadIds = new Set(leadIds);
+    const pendingLeadIds = new Set(
+      enrolledWithoutOutreach
+        .filter((row) => requestedLeadIds.has(row.lead_id) && row.latest_step === null)
+        .map((row) => row.lead_id),
+    );
+    const preview = await buildAutomationPreview(campaign, false);
+    if (preview.firstStep) {
+      for (const lead of preview.eligibleLeads) {
+        if (!pendingLeadIds.has(lead.leadId)) continue;
+        try {
+          await enqueueOutreachDispatch({
+            leadId: lead.leadId,
+            campaignId: campaign.id,
+            sequenceId: campaign.sequence_id,
+            stepNumber: preview.firstStep.stepNumber,
+            channel: preview.firstStep.channel,
+            templateId: preview.firstStep.templateId,
+            mockMode: preview.mockMode,
+            aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+          });
+          enqueued += 1;
+        } catch (enqueueErr) {
+          logger.error('Failed to enqueue outreach dispatch for newly added lead', {
+            campaignId: campaign.id,
+            leadId: lead.leadId,
+            error: enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
+          });
+        }
+      }
+    }
+  }
 
   await writeAuditLog({
     userId: actor.id,
     action: 'campaign.leads_added',
     entityType: 'campaign',
     entityId: campaignId,
-    newValue: { lead_ids: leadIds, count: added.length },
+    newValue: { lead_ids: leadIds, count: added.length, enqueued },
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return { added: added.length };
+  return { added: added.length, enqueued };
 }
 
 export async function removeLead(campaignId: string, leadId: string, actor: Actor): Promise<void> {

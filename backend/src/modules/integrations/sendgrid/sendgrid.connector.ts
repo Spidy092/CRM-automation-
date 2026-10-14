@@ -6,6 +6,7 @@ import { findByName } from '../integrations.repository';
 import { findCredentialsById } from '../integrations.repository';
 import { loggedFetch, type ConnectorResult } from '../connector.base';
 import { logger } from '../../../shared/utils/logger';
+import { emailHtmlToText } from '../emailContent';
 
 /**
  * SendGrid v3 Mail Send connector.
@@ -92,40 +93,48 @@ export async function sendEmail(input: SendEmailInput): Promise<ConnectorResult<
   const url = 'https://api.sendgrid.com/v3/mail/send';
 
   // SendGrid attachments are sent as base64 content, not a URL — read each
-  // file from local disk. A file that fails to read is skipped (logged) so
-  // one bad attachment doesn't block the whole send.
+  // file from local disk;
+  // a missing file blocks the send so selected attachments are never silently omitted.
   const attachments = input.attachments
-    ? (
-        await Promise.all(
-          input.attachments.map(async (a) => {
-            try {
-              const content = await readFile(a.storagePath);
-              return {
-                content: content.toString('base64'),
-                filename: a.filename,
-                type: a.mimeType,
-                disposition: 'attachment',
-              };
-            } catch (err) {
-              logger.warn('SendGrid: failed to read attachment, skipping', {
-                lead_id: input.leadId,
-                campaign_id: input.campaignId,
-                filename: a.filename,
-                error: (err as Error).message,
-              });
-              return null;
-            }
-          }),
-        )
-      ).filter((a): a is NonNullable<typeof a> => a !== null)
+    ? await Promise.all(
+        input.attachments.map(async (a) => {
+          try {
+            const content = await readFile(a.storagePath);
+            return {
+              content: content.toString('base64'),
+              filename: a.filename,
+              type: a.mimeType,
+              disposition: 'attachment',
+            };
+          } catch (err) {
+            logger.warn('SendGrid: failed to read attachment, blocking send', {
+              lead_id: input.leadId,
+              campaign_id: input.campaignId,
+              filename: a.filename,
+              error: (err as Error).message,
+            });
+            return null;
+          }
+        }),
+      )
     : undefined;
+
+  if (attachments?.some((attachment) => attachment === null)) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'Email not sent: an attachment could not be read. Re-upload the file and retry.',
+      latencyMs: 0,
+      retryable: false,
+    };
+  }
 
   const body = {
     personalizations: [{ to: [{ email: input.to }] }],
     from: { email: input.fromEmail ?? creds.fromEmail, name: input.fromName ?? creds.fromName },
     subject: input.subject,
     content: [
-      { type: 'text/plain', value: input.textBody ?? stripHtml(input.htmlBody) },
+      { type: 'text/plain', value: input.textBody ?? emailHtmlToText(input.htmlBody) },
       { type: 'text/html', value: input.htmlBody },
     ],
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
@@ -157,10 +166,6 @@ export async function sendEmail(input: SendEmailInput): Promise<ConnectorResult<
     externalId: res.externalId,
     latencyMs: res.latencyMs,
   };
-}
-
-function stripHtml(s: string): string {
-  return s.replace(/<[^>]*>/g, '');
 }
 
 export async function testConnection(

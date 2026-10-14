@@ -115,4 +115,79 @@ describe('facebook fetchFormLeads', () => {
     expect(res.ok).toBe(true);
     expect(mockLoggedFetch).toHaveBeenCalledTimes(1);
   });
+
+  it('follows cursor pagination until pages run out', async () => {
+    primeValidCreds();
+    mockLoggedFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          data: [{ id: 's1', created_time: 't1', field_data: [] }],
+          paging: {
+            next: 'https://graph.facebook.com/v20.0/form-1/leads?after=AAA',
+            cursors: { after: 'AAA' },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { data: [{ id: 's2', created_time: 't2', field_data: [] }] },
+      });
+
+    const res = await fetchFormLeads('int-1', 'form-1', new Date('2026-06-01T00:00:00Z'));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.data.map((l) => l.id)).toEqual(['s1', 's2']);
+      expect(res.data.pages_fetched).toBe(2);
+    }
+    expect(mockLoggedFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops on a repeated cursor instead of looping', async () => {
+    primeValidCreds();
+    const page = {
+      ok: true,
+      data: {
+        data: [{ id: 's1', created_time: 't1', field_data: [] }],
+        paging: {
+          next: 'https://graph.facebook.com/v20.0/form-1/leads?after=AAA',
+          cursors: { after: 'AAA' },
+        },
+      },
+    };
+    mockLoggedFetch.mockResolvedValue(page);
+
+    const res = await fetchFormLeads('int-1', 'form-1', new Date('2026-06-01T00:00:00Z'));
+
+    expect(res.ok).toBe(true);
+    // Page 1 + page 2 (repeat detected after fetching it) — never a third.
+    expect(mockLoggedFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses off-host paging URLs and keeps collected leads', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        data: [{ id: 's1', created_time: 't1', field_data: [] }],
+        paging: { next: 'https://evil.example.com/steal' },
+      },
+    });
+
+    const res = await fetchFormLeads('int-1', 'form-1', new Date('2026-06-01T00:00:00Z'));
+
+    expect(res.ok).toBe(true);
+    expect(mockLoggedFetch).toHaveBeenCalledTimes(1);
+    if (res.ok) expect(res.data.data.map((l) => l.id)).toEqual(['s1']);
+  });
+
+  it('surfaces provider failures without collapsing into empty', async () => {
+    primeValidCreds();
+    mockLoggedFetch.mockResolvedValue({ ok: false, status: 403, error: 'permission denied' });
+
+    const res = await fetchFormLeads('int-1', 'form-1', new Date('2026-06-01T00:00:00Z'));
+
+    expect(res.ok).toBe(false);
+  });
 });

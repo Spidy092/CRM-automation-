@@ -114,3 +114,13 @@ describe('Campaigns Schema Validation', () => {
     });
   });
 });
+
+describe('automatic enrollment validation', () => {
+  it('deduplicates trigger labels while preserving exact stored values', () => {
+    expect(createCampaignSchema.parse({ name: 'Rules', trigger_source: ['facebook', 'facebook'], trigger_tags: [' vip ', ' vip '] })).toMatchObject({ trigger_source: ['facebook'], trigger_tags: [' vip '] });
+  });
+  it('rejects blank rules and accepts clearing the pipeline', () => {
+    expect(createCampaignSchema.safeParse({ name: 'Rules', trigger_source: [' '] }).success).toBe(false);
+    expect(updateCampaignSchema.parse({ pipeline_id: null, trigger_source: null, trigger_tags: null })).toMatchObject({ pipeline_id: null, trigger_source: null, trigger_tags: null });
+  });
+});

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  useCampaignEnrollmentOptions,
   useCreateCampaign,
   useUpdateCampaign,
   useCampaign,
@@ -33,8 +34,6 @@ import { SequencePresetPicker } from '@/components/SequencePresetPicker';
 import { SequenceMessagePreview } from '@/components/SequenceMessagePreview';
 import {
   Clock,
-  GitBranch,
-  Info,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -44,10 +43,20 @@ import {
   AlertTriangle,
   CheckCircle2,
   Users,
-  Tag,
 } from 'lucide-react';
 
 // ── Wizard steps ─────────────────────────────────────────────────────────────
+
+const LEAD_SOURCE_LABELS: Record<string, string> = {
+  google_business: 'Google Business / Places',
+  facebook: 'Facebook',
+  youtube: 'YouTube',
+  google_ads: 'Google Ads lead forms',
+  website_form: 'Website contact forms',
+  web_scrape: 'Web scraping',
+  manual: 'Manual entry / file import',
+};
+const sourceLabel = (source: string): string => LEAD_SOURCE_LABELS[source] ?? source.replace(/_/g, ' ');
 
 const WEEKDAYS = [
   { iso: 1, label: 'Mon' },
@@ -66,8 +75,7 @@ const TIMEZONE_OPTIONS: string[] =
 
 const WIZARD_STEPS = [
   { title: 'Basics', description: 'Name, tone, and targeting' },
-  { title: 'Pipeline', description: 'When leads auto-enroll' },
-  { title: 'Sequence', description: 'What messages go out' },
+  { title: 'Messages', description: 'Email and follow-up messages' },
   { title: 'Leads', description: 'Who gets contacted' },
   { title: 'Review & Launch', description: 'Readiness check' },
 ] as const;
@@ -79,10 +87,12 @@ function StepIndicator({
   current,
   onSelect,
   maxReached,
+  disabled,
 }: {
   current: number;
   onSelect: (step: number) => void;
   maxReached: number;
+  disabled: boolean;
 }) {
   return (
     <ol className="flex flex-wrap items-center gap-2">
@@ -93,7 +103,7 @@ function StepIndicator({
           <li key={step.title} className="flex items-center gap-2">
             <button
               type="button"
-              disabled={!reachable}
+              disabled={!reachable || disabled}
               onClick={() => onSelect(i)}
               className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
                 state === 'active'
@@ -378,11 +388,16 @@ export function CampaignFormPage() {
   const [targetCountries, setTargetCountries] = useState('');
   const [pipelineId, setPipelineId] = useState('');
   const [triggerStageId, setTriggerStageId] = useState<string>('');
-  const [triggerSource, setTriggerSource] = useState('');
-  const [triggerTags, setTriggerTags] = useState('');
+  const [automaticEnrollmentEnabled, setAutomaticEnrollmentEnabled] = useState(false);
+  const [triggerSource, setTriggerSource] = useState<string[]>([]);
+  const [triggerTags, setTriggerTags] = useState<string[]>([]);
+  const { data: enrollmentOptions, isLoading: isEnrollmentOptionsLoading, isError: enrollmentOptionsError, refetch: reloadEnrollmentOptions } = useCampaignEnrollmentOptions(automaticEnrollmentEnabled);
+  const sourceOptions = [...new Set([...Object.keys(LEAD_SOURCE_LABELS), ...(enrollmentOptions?.sources ?? []), ...triggerSource])];
+  const tagOptions = [...new Set([...(enrollmentOptions?.tags ?? []), ...triggerTags])];
   const [sequenceId, setSequenceId] = useState('');
   const [aiPersonalizationEnabled, setAiPersonalizationEnabled] = useState(false);
   const [showNewSequence, setShowNewSequence] = useState(false);
+  const [showSequencePresets, setShowSequencePresets] = useState(false);
   const [sendWindowEnabled, setSendWindowEnabled] = useState(false);
   const [sendWindowStartHour, setSendWindowStartHour] = useState(9);
   const [sendWindowEndHour, setSendWindowEndHour] = useState(18);
@@ -415,8 +430,9 @@ export function CampaignFormPage() {
       setTargetCountries(existingCampaign.target_countries.join(', '));
       setPipelineId(existingCampaign.pipeline_id || '');
       setTriggerStageId(existingCampaign.trigger_stage_id || '');
-      setTriggerSource((existingCampaign.trigger_source ?? []).join(', '));
-      setTriggerTags((existingCampaign.trigger_tags ?? []).join(', '));
+      setTriggerSource(existingCampaign.trigger_source ?? []);
+      setAutomaticEnrollmentEnabled(!!(existingCampaign.pipeline_id || existingCampaign.trigger_source?.length || existingCampaign.trigger_tags?.length));
+      setTriggerTags(existingCampaign.trigger_tags ?? []);
       setSequenceId(existingCampaign.sequence_id || '');
       setAiPersonalizationEnabled(existingCampaign.ai_personalization_enabled);
       setSendWindowEnabled(existingCampaign.send_window_enabled ?? false);
@@ -442,12 +458,7 @@ export function CampaignFormPage() {
    * the user do it — this is the same save `handleLaunch` already performs.
    */
   const handleNext = async () => {
-    const next = step + 1;
-    if (next === LEADS_STEP && !savedCampaignId) {
-      const saved = await handleSave();
-      if (!saved) return;
-    }
-    goTo(next);
+    await handleStepChange(step + 1);
   };
 
   // When pipeline changes, clear trigger stage if it no longer belongs to the new pipeline
@@ -465,14 +476,10 @@ export function CampaignFormPage() {
     target_countries: targetCountries
       ? targetCountries.split(',').map((s) => s.trim()).filter(Boolean)
       : [],
-    pipeline_id: pipelineId || undefined,
-    trigger_stage_id: triggerStageId || null,
-    trigger_source: triggerSource
-      ? triggerSource.split(',').map((s) => s.trim()).filter(Boolean)
-      : null,
-    trigger_tags: triggerTags
-      ? triggerTags.split(',').map((s) => s.trim()).filter(Boolean)
-      : null,
+    pipeline_id: automaticEnrollmentEnabled ? pipelineId || null : null,
+    trigger_stage_id: automaticEnrollmentEnabled ? triggerStageId || null : null,
+    trigger_source: automaticEnrollmentEnabled && triggerSource.length ? triggerSource : null,
+    trigger_tags: automaticEnrollmentEnabled && triggerTags.length ? triggerTags : null,
     sequence_id: sequenceId || undefined,
     ai_personalization_enabled: aiPersonalizationEnabled,
     send_window_enabled: sendWindowEnabled,
@@ -486,6 +493,10 @@ export function CampaignFormPage() {
   const isSaving = createCampaign.isPending || updateCampaign.isPending;
 
   const handleSave = async (): Promise<string | null> => {
+    if (automaticEnrollmentEnabled && !pipelineId && !triggerSource.length && !triggerTags.length) {
+      showToast('Choose a source, tag, or pipeline rule, or turn off automatic enrollment.', 'error');
+      return null;
+    }
     try {
       if (savedCampaignId) {
         await updateCampaign.mutateAsync({ id: savedCampaignId, input: buildPayload() });
@@ -500,6 +511,14 @@ export function CampaignFormPage() {
       showToast(getApiErrorMessage(error, 'Failed to save campaign.'), 'error');
       return null;
     }
+  };
+
+  const handleStepChange = async (next: number): Promise<void> => {
+    if (next >= LEADS_STEP) {
+      const campaignId = await handleSave();
+      if (!campaignId) return;
+    }
+    goTo(next);
   };
 
   const handleLaunch = async () => {
@@ -560,12 +579,13 @@ export function CampaignFormPage() {
     <div className="space-y-6">
       <PageHeader
         title={isEditMode ? 'Edit Campaign' : 'Create Campaign'}
-        eyebrow="Campaigns"
+        description="Choose messages, select your leads, then review and send. Pipeline setup is optional."
       />
-      <StepIndicator current={step} onSelect={goTo} maxReached={maxReached} />
+      <StepIndicator current={step} onSelect={(next) => void handleStepChange(next)} maxReached={maxReached} disabled={isSaving} />
 
       {/* ── Step 1: Basics ─────────────────────────────────────────────────── */}
       {step === 0 && (
+        <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Campaign Basics</CardTitle>
@@ -578,24 +598,11 @@ export function CampaignFormPage() {
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g., Q1 Restaurant Outreach"
+                placeholder="e.g., School portfolio email"
                 required
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="tone">Message Tone</Label>
-              <select
-                id="tone"
-                value={tone}
-                onChange={(e) => setTone(e.target.value as 'formal' | 'professional' | 'conversational')}
-                className={inputClass}
-              >
-                <option value="formal">Formal</option>
-                <option value="professional">Professional</option>
-                <option value="conversational">Conversational</option>
-              </select>
-            </div>
 
             <div className="space-y-2">
               <Label htmlFor="target_industries">Target Industries (comma-separated)</Label>
@@ -621,7 +628,7 @@ export function CampaignFormPage() {
               <div className="space-y-0.5">
                 <Label htmlFor="ai_personalization_enabled" className="text-base">AI Personalization</Label>
                 <div className="text-sm text-muted-foreground">
-                  Use OpenAI to personalize outreach messages for each lead based on their details.
+                  Use OpenAI to personalize each message and apply the selected tone. Turn off to use the template wording with lead details filled in.
                 </div>
               </div>
               <Switch
@@ -631,120 +638,94 @@ export function CampaignFormPage() {
                 className="data-[state=checked]:bg-indigo-600"
               />
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Step 2: Pipeline trigger ───────────────────────────────────────── */}
-      {step === 1 && (
-        <div className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <GitBranch className="h-5 w-5 text-slate-500" />
-              Pipeline Auto-Enrollment
-            </CardTitle>
-            <CardDescription>
-              Optional — connect this campaign to a pipeline so leads enroll automatically when
-              they move stages. Skip this if you will add leads manually from the Leads page.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="pipeline">Pipeline</Label>
-              <select
-                id="pipeline"
-                value={pipelineId}
-                onChange={(e) => handlePipelineChange(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">No pipeline trigger — add leads manually</option>
-                {pipelines?.map((pipeline) => (
-                  <option key={pipeline.id} value={pipeline.id}>
-                    {pipeline.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {pipelineId && (
+            {aiPersonalizationEnabled && (
               <div className="space-y-2">
-                <Label htmlFor="trigger_stage">
-                  Trigger Stage
-                  <span className="ml-1 text-xs font-normal text-slate-500">(optional)</span>
-                </Label>
+                <Label htmlFor="tone">Message Tone</Label>
                 <select
-                  id="trigger_stage"
-                  value={triggerStageId}
-                  onChange={(e) => setTriggerStageId(e.target.value)}
+                  id="tone"
+                  value={tone}
+                  onChange={(e) => setTone(e.target.value as 'formal' | 'professional' | 'conversational')}
                   className={inputClass}
                 >
-                  <option value="">Any stage move (catch-all)</option>
-                  {stages
-                    .slice()
-                    .sort((a, b) => a.position - b.position)
-                    .map((stage) => (
-                      <option key={stage.id} value={stage.id}>
-                        {stage.name}
-                        {stage.is_terminal_won ? ' ✓ Won' : stage.is_terminal_lost ? ' ✗ Lost' : ''}
-                      </option>
-                    ))}
+                  <option value="formal">Formal</option>
+                  <option value="professional">Professional</option>
+                  <option value="conversational">Conversational</option>
                 </select>
-                <p className="flex items-center gap-1 text-xs text-slate-500">
-                  <Info className="h-3 w-3 shrink-0" />
-                  {triggerStageId
-                    ? 'Leads will be auto-enrolled only when they reach this exact stage.'
-                    : 'Leads will be auto-enrolled on any stage move within this pipeline.'}
-                </p>
               </div>
-            )}
-
-            {!pipelineId && (
-              <p className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <Info className="h-3.5 w-3.5 shrink-0" />
-                Without a pipeline trigger, this campaign only reaches leads you add to it
-                explicitly (from the Leads page or the campaign detail page).
-              </p>
             )}
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Tag className="h-5 w-5 text-slate-500" />
-              Source &amp; Tag Triggers
-            </CardTitle>
-            <CardDescription>
-              Optional — auto-enroll a lead the moment it's created, if its source or tags match.
-              Independent of the pipeline trigger above; a lead can match either.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="trigger_source">Lead Source (comma-separated)</Label>
-              <Input
-                id="trigger_source"
-                value={triggerSource}
-                onChange={(e) => setTriggerSource(e.target.value)}
-                placeholder="e.g., google_business, facebook"
-              />
+          <CardContent className="space-y-5 pt-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="automatic_enrollment" className="text-base">Automatically add future leads</Label>
+                <p className="text-sm text-muted-foreground">
+                  {automaticEnrollmentEnabled
+                    ? 'While this campaign is active, matching leads join it and start its message sequence.'
+                    : 'Choose the leads yourself in the Leads step. No leads are added automatically.'}
+                </p>
+              </div>
+              <Switch id="automatic_enrollment" checked={automaticEnrollmentEnabled} onCheckedChange={setAutomaticEnrollmentEnabled} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="trigger_tags">Lead Tags (comma-separated, any match)</Label>
-              <Input
-                id="trigger_tags"
-                value={triggerTags}
-                onChange={(e) => setTriggerTags(e.target.value)}
-                placeholder="e.g., vip, hot-lead"
-              />
-            </div>
-            {!triggerSource && !triggerTags && (
-              <p className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <Info className="h-3.5 w-3.5 shrink-0" />
-                Without a source or tag trigger, new leads only reach this campaign via the
-                pipeline trigger above or manual addition.
-              </p>
+            {automaticEnrollmentEnabled && (
+              <div className="space-y-6 border-t pt-5">
+                <p className="text-sm text-slate-600">Choose at least one rule. A lead only needs to match one source, tag, or pipeline rule.</p>
+                {isEnrollmentOptionsLoading && <p role="status" className="text-sm text-slate-600">Loading your lead sources and tags…</p>}
+                {enrollmentOptionsError && (
+                  <div role="alert" className="space-y-2 text-sm">
+                    <p>Could not load your custom sources and tags. Standard sources and saved selections are still available.</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void reloadEnrollmentOptions()}>Retry</Button>
+                  </div>
+                )}
+                <fieldset className="space-y-3">
+                  <legend className="text-sm font-medium">Where new leads come from</legend>
+                  <p className="text-sm text-slate-600">Source means where a lead entered your CRM. Select the sources to enroll automatically.</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {sourceOptions.map((source) => (
+                      <label key={source} className="flex items-center gap-3 text-sm">
+                        <input type="checkbox" checked={triggerSource.includes(source)}
+                          onChange={(event) => setTriggerSource((selected) => event.target.checked ? [...selected, source] : selected.filter((value) => value !== source))}
+                          className="h-4 w-4 accent-indigo-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" />
+                        {sourceLabel(source)}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <fieldset className="space-y-3">
+                  <legend className="text-sm font-medium">Tags on new leads (optional)</legend>
+                  <p className="text-sm text-slate-600">Enroll a new lead if it already has any selected tag when created. Adding a tag later does not trigger this campaign.</p>
+                  {tagOptions.length ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {tagOptions.map((tag) => (
+                        <label key={tag} className="flex items-center gap-3 text-sm">
+                          <input type="checkbox" checked={triggerTags.includes(tag)}
+                            onChange={(event) => setTriggerTags((selected) => event.target.checked ? [...selected, tag] : selected.filter((value) => value !== tag))}
+                            className="h-4 w-4 accent-indigo-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" />
+                          {tag}
+                        </label>
+                      ))}
+                    </div>
+                  ) : !isEnrollmentOptionsLoading && !enrollmentOptionsError && <p className="text-sm text-slate-600">No lead tags yet. Add tags to leads to make them available here.</p>}
+                </fieldset>
+                <div className="space-y-3">
+                  <Label htmlFor="pipeline">When a lead moves in a pipeline (optional)</Label>
+                  <select id="pipeline" value={pipelineId} onChange={(event) => handlePipelineChange(event.target.value)} className={inputClass}>
+                    <option value="">No pipeline rule</option>
+                    {pipelines?.map((pipeline) => <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>)}
+                  </select>
+                  {pipelineId && (
+                    <div className="space-y-2">
+                      <Label htmlFor="trigger_stage">Enroll when the lead reaches</Label>
+                      <select id="trigger_stage" value={triggerStageId} onChange={(event) => setTriggerStageId(event.target.value)} className={inputClass}>
+                        <option value="">Any stage in this pipeline</option>
+                        {stages.slice().sort((a, b) => a.position - b.position).map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <p className="text-sm text-slate-600">Source and tag rules apply to newly created leads. Select existing leads in the Leads step.</p>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -752,14 +733,14 @@ export function CampaignFormPage() {
       )}
 
       {/* ── Step 3: Sequence ───────────────────────────────────────────────── */}
-      {step === 2 && (
+      {step === 1 && (
         <div className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>Outreach Sequence</CardTitle>
+            <CardTitle>Messages and follow-ups</CardTitle>
             <CardDescription>
-              The sequence defines which messages go out, on which channels, and how far apart.
-              Each step uses an approved template.
+              Choose a saved set of messages, or create one. Use one email step for a single email; add more steps only if you need follow-ups.
+              Each step uses an approved template. Attach your portfolio PDF and images to that template; they are included when the email is sent.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -789,14 +770,37 @@ export function CampaignFormPage() {
 
             {!showNewSequence ? (
               <div className="space-y-4">
-                <SequencePresetPicker
-                  className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4"
-                  onApplied={(sequence) => setSequenceId(sequence.id)}
-                />
-                <Button type="button" variant="outline" onClick={() => setShowNewSequence(true)}>
-                  <Plus className="mr-1 h-3.5 w-3.5" />
-                  Build one from scratch
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={() => {
+                    setShowSequencePresets(false);
+                    setShowNewSequence(true);
+                  }}>
+                    <Plus className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                    Create new
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-expanded={showSequencePresets}
+                    aria-controls="campaign-sequence-presets"
+                    onClick={() => setShowSequencePresets((visible) => !visible)}
+                  >
+                    <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                    Use a preset
+                  </Button>
+                </div>
+                {showSequencePresets && (
+                  <div id="campaign-sequence-presets">
+                    <SequencePresetPicker
+                      className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4"
+                      onApplied={(sequence) => {
+                        setSequenceId(sequence.id);
+                        setShowSequencePresets(false);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4">
@@ -955,7 +959,10 @@ export function CampaignFormPage() {
       {/* ── Step 4: Review & Launch ────────────────────────────────────────── */}
       {/* ── Step 4: Leads ───────────────────────────────────────────────────── */}
       {step === LEADS_STEP && savedCampaignId && (
-        <CampaignLeadPicker campaignId={savedCampaignId} hasTrigger={!!pipelineId} />
+        <CampaignLeadPicker
+          campaignId={savedCampaignId}
+          hasTrigger={automaticEnrollmentEnabled && (!!pipelineId || triggerSource.length > 0 || triggerTags.length > 0)}
+        />
       )}
 
       {step === REVIEW_STEP && (
@@ -973,7 +980,7 @@ export function CampaignFormPage() {
                 </div>
                 <div>
                   <dt className="text-slate-500">Tone</dt>
-                  <dd className="font-medium text-slate-900 capitalize">{tone}</dd>
+                  <dd className="font-medium text-slate-900 capitalize">{aiPersonalizationEnabled ? tone : 'Use template wording'}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Targeting</dt>
@@ -984,9 +991,17 @@ export function CampaignFormPage() {
                 <div>
                   <dt className="text-slate-500">Pipeline trigger</dt>
                   <dd className="font-medium text-slate-900">
-                    {pipelineId
+                    {automaticEnrollmentEnabled && pipelineId
                       ? `${selectedPipeline?.name ?? 'Pipeline'} → ${selectedStageName ?? 'any stage move'}`
-                      : 'None (manual lead adds only)'}
+                      : 'No pipeline rule'}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-slate-500">Automatic enrollment</dt>
+                  <dd className="font-medium text-slate-900">
+                    {automaticEnrollmentEnabled
+                      ? [triggerSource.length ? `Sources: ${triggerSource.map(sourceLabel).join(', ')}` : '', triggerTags.length ? `Tags: ${triggerTags.join(', ')}` : '', pipelineId ? 'Pipeline rule enabled' : ''].filter(Boolean).join(' · ')
+                      : 'Off — only leads you select'}
                   </dd>
                 </div>
                 <div className="sm:col-span-2">
@@ -1093,8 +1108,8 @@ export function CampaignFormPage() {
                             <AlertTriangle className="h-4 w-4 shrink-0" />
                             {issue}
                           </span>
-                          <Button type="button" variant="outline" size="sm" onClick={() => goTo(2)}>
-                            Fix sequence
+                          <Button type="button" variant="outline" size="sm" onClick={() => goTo(1)}>
+                            Choose messages
                           </Button>
                         </div>
                       ))}
@@ -1171,7 +1186,9 @@ export function CampaignFormPage() {
                       <Link to="/leads" className="font-medium underline">
                         Leads page
                       </Link>
-                      {pipelineId ? ', or let the pipeline trigger enroll them automatically.' : '.'}
+                      {automaticEnrollmentEnabled && pipelineId
+                        ? ', or let the pipeline trigger enroll them automatically.'
+                        : '.'}
                     </p>
                   )}
                 </>

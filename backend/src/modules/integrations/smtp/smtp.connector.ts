@@ -14,6 +14,7 @@ import { decryptJson } from '../../../shared/utils/encryption';
 import { AppError } from '../../../shared/middleware/errorHandler';
 import { findByName, findCredentialsById } from '../integrations.repository';
 import { logger } from '../../../shared/utils/logger';
+import { emailHtmlToText } from '../emailContent';
 
 export const SMTP_PROVIDER_NAME = 'smtp';
 
@@ -127,7 +128,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SmtpResult> {
         : effectiveFromEmail,
       to: input.to,
       subject: input.subject,
-      text: input.textBody ?? input.htmlBody.replace(/<[^>]*>/g, ''),
+      text: input.textBody ?? emailHtmlToText(input.htmlBody),
       html: input.htmlBody,
       attachments: input.attachments?.map((a) => ({
         filename: a.filename,

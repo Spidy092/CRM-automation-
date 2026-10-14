@@ -127,6 +127,14 @@ describe('smtp sendEmail', () => {
     expect(mockSendMail).toHaveBeenCalledTimes(1);
   });
 
+  it('sends the portfolio button in HTML and its URL in plain text', async () => {
+    primeValidCreds();
+    mockSendMail.mockResolvedValue({ messageId: 'id@host' });
+    const html = 'Hello <a data-crm-portfolio="true" href="https://files.example.com/p.pdf?a=1&amp;b=2">View portfolio</a>';
+    await sendEmail({ leadId: 'l1', to: 'dest@example.com', subject: 'Portfolio', htmlBody: html });
+    expect(mockSendMail).toHaveBeenCalledWith(expect.objectContaining({ html, text: 'Hello View portfolio (https://files.example.com/p.pdf?a=1&b=2)' }));
+  });
+
   it('returns a retryable failure when sendMail rejects', async () => {
     primeValidCreds();
     mockSendMail.mockRejectedValue(new Error('smtp down'));

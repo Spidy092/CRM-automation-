@@ -6,6 +6,7 @@ import { clampLimit, decodeCursor } from '../../shared/utils/pagination';
 import {
   createLeadSchema,
   listLeadsQuerySchema,
+  leadTimelineQuerySchema,
   pauseLeadSchema,
   updateLeadSchema,
   bulkClassifySchema,
@@ -168,6 +169,39 @@ export async function getLeadActivityHandler(
   }
 }
 
+export async function getLeadTimelineHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const parsed = leadTimelineQuerySchema.parse(req.query);
+    let cursorTs: string | undefined;
+    let cursorId: string | undefined;
+    if (parsed.cursor) {
+      const decoded = decodeCursor(parsed.cursor);
+      if (!decoded) throw new AppError('Invalid cursor', 400);
+      cursorTs = decoded.ts;
+      cursorId = decoded.id;
+    }
+    const result = await leadsService.getLeadTimeline(req.params.id, actorFromReq(req), {
+      limit: clampLimit(parsed.limit),
+      cursorTs,
+      cursorId,
+      kind: parsed.kind,
+      search: parsed.search,
+      channel: parsed.channel,
+      authorId: parsed.author,
+      dateFrom: parsed.date_from,
+      dateTo: parsed.date_to,
+      pinnedOnly: parsed.pinned_only || undefined,
+    });
+    sendSuccess(res, result.items, 200, result.meta);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function importLeadsHandler(
   req: Request,
   res: Response,
@@ -235,11 +269,27 @@ export async function bulkUpdateHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { ids, patch } = bulkUpdateSchema.parse(req.body);
+    const { ids, patch, tag_mode } = bulkUpdateSchema.parse(req.body);
     const actor = actorFromReq(req);
-    const updated = await leadsService.bulkUpdateLeads(ids, patch, actor);
+    const updated =
+      tag_mode === 'append'
+        ? await leadsService.bulkUpdateLeads(ids, patch, actor, tag_mode)
+        : await leadsService.bulkUpdateLeads(ids, patch, actor);
     sendSuccess(res, { updated });
   } catch (err) {
+    if (
+      err instanceof AppError &&
+      'code' in err &&
+      err.code === 'ownership_via_assignment_endpoints'
+    ) {
+      const ownershipError = err as AppError & { code: string; leadIds: string[] };
+      res.status(422).json({
+        success: false,
+        error: err.message,
+        meta: { code: ownershipError.code, lead_ids: ownershipError.leadIds },
+      });
+      return;
+    }
     next(err);
   }
 }

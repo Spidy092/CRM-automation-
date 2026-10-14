@@ -10,6 +10,9 @@ import {
   approveTemplateSchema,
   attachFromLibrarySchema,
   attachmentIdParamSchema,
+  duplicateTemplateSchema,
+  previewTemplateSchema,
+  testSendTemplateSchema,
 } from './templates.schema';
 import * as templatesService from './templates.service';
 import { TemplateActor } from './templates.types';
@@ -43,6 +46,9 @@ export async function listTemplatesHandler(
       channel: parsed.channel,
       approval_status: parsed.approval_status,
       search: parsed.search,
+      includeArchived: parsed.include_archived,
+      archivedOnly: parsed.archived_only,
+      createdBy: parsed.mine ? actorFromReq(req).id : undefined,
     });
     sendSuccess(res, result.items, 200, result.meta);
   } catch (err) {
@@ -117,6 +123,104 @@ export async function deleteTemplateHandler(
     const { id } = templateIdParamSchema.parse(req.params);
     await templatesService.removeTemplate(id, actorFromReq(req));
     sendSuccess(res, { deleted: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function duplicateTemplateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const { name } = duplicateTemplateSchema.parse(req.body ?? {});
+    const created = await templatesService.duplicateTemplate(id, name, actorFromReq(req));
+    sendSuccess(res, created, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function archiveTemplateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const updated = await templatesService.setTemplateArchived(id, true, actorFromReq(req));
+    sendSuccess(res, updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function unarchiveTemplateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const updated = await templatesService.setTemplateArchived(id, false, actorFromReq(req));
+    sendSuccess(res, updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function renameTemplateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const parsed = updateTemplateSchema.parse(req.body);
+    if (parsed.name === undefined) throw new AppError('name is required', 400);
+    const updated = await templatesService.updateTemplate(
+      id,
+      { name: parsed.name },
+      actorFromReq(req),
+    );
+    sendSuccess(res, updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function previewTemplateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const { sample_values } = previewTemplateSchema.parse(req.body ?? {});
+    const preview = await templatesService.previewTemplate(id, sample_values);
+    sendSuccess(res, preview);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function testSendTemplateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = templateIdParamSchema.parse(req.params);
+    const { to, sample_values } = testSendTemplateSchema.parse(req.body);
+    const result = await templatesService.testSendTemplate(
+      id,
+      to,
+      sample_values,
+      actorFromReq(req),
+    );
+    sendSuccess(res, result);
   } catch (err) {
     next(err);
   }

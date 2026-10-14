@@ -1,3 +1,8 @@
+jest.mock('./unsubscribe.service', () => ({
+  createOutreachUnsubscribeUrl: jest
+    .fn()
+    .mockResolvedValue('https://example.com/outreach/unsubscribe?token=valid'),
+}));
 import {
   createSequence,
   getSequence,
@@ -7,6 +12,7 @@ import {
   createLog,
   updateLogStatus,
   getLeadLogs,
+  listTasks,
   createTask,
   getTask,
   updateTask,
@@ -28,6 +34,8 @@ jest.mock('./outreach.repository', () => ({
   findLogsByLead: jest.fn(),
   insertTask: jest.fn(),
   findTaskById: jest.fn(),
+  findTasks: jest.fn(),
+  findTasksVisibleToUser: jest.fn(),
   updateTask: jest.fn(),
   findTimelineByLead: jest.fn(),
   findOpenSystemTaskByLead: jest.fn(),
@@ -36,6 +44,11 @@ jest.mock('./outreach.repository', () => ({
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('../leads/leads.repository', () => ({ findLeadById: jest.fn() }));
+jest.mock('../leads/leads.service', () => ({
+  assertAccess: jest.fn(),
+  getLeadById: jest.fn().mockResolvedValue({ assigned_to: 'u1' }),
+  getLeadIdsOwnedBy: jest.fn().mockResolvedValue([]),
+}));
 jest.mock('../templates/templates.repository', () => ({ findTemplateById: jest.fn() }));
 jest.mock('./outreach.prompt', () => ({ personalizeMessage: jest.fn() }));
 jest.mock('../integrations/dispatch', () => ({ dispatchOutbound: jest.fn() }));
@@ -51,6 +64,8 @@ import {
   findLogsByLead,
   insertTask,
   findTaskById,
+  findTasks,
+  findTasksVisibleToUser,
   updateTask as updateTaskRepo,
   findTimelineByLead,
   findOpenSystemTaskByLead,
@@ -58,7 +73,13 @@ import {
 } from './outreach.repository';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { findLeadById } from '../leads/leads.repository';
+import {
+  assertAccess,
+  getLeadById as getLeadByIdService,
+  getLeadIdsOwnedBy,
+} from '../leads/leads.service';
 import { findTemplateById } from '../templates/templates.repository';
+import { AppError } from '../../shared/middleware/errorHandler';
 import { personalizeMessage } from './outreach.prompt';
 import { dispatchOutbound } from '../integrations/dispatch';
 
@@ -143,10 +164,7 @@ describe('createSequence', () => {
 
   it('creates and audits', async () => {
     (insertSequence as jest.Mock).mockResolvedValue(baseSeq);
-    const result = await createSequence(
-      { name: 'Welcome', steps: baseSeq.steps },
-      actor,
-    );
+    const result = await createSequence({ name: 'Welcome', steps: baseSeq.steps }, actor);
     expect(result.id).toBe('s1');
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'sequence.created' }),
@@ -231,13 +249,39 @@ describe('getTask', () => {
 
   it('throws 404 when missing', async () => {
     (findTaskById as jest.Mock).mockResolvedValue(null);
-    await expect(getTask('x')).rejects.toMatchObject({ statusCode: 404 });
+    await expect(getTask('x', actor)).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('returns task when found', async () => {
     (findTaskById as jest.Mock).mockResolvedValue(baseTask);
-    const result = await getTask('task1');
+    const result = await getTask('task1', actor);
     expect(result.id).toBe('task1');
+  });
+
+  it('hides a task from an unrelated sales rep', async () => {
+    (findTaskById as jest.Mock).mockResolvedValue({
+      ...baseTask,
+      assigned_to: 'other-rep',
+      created_by: 'another-user',
+    });
+    (getLeadByIdService as jest.Mock).mockRejectedValueOnce(new AppError('Forbidden', 403));
+    await expect(getTask('task1', { id: 'rep-1', role: 'sales' })).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+});
+
+describe('listTasks', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('uses the restricted query for sales representatives', async () => {
+    (findTasksVisibleToUser as jest.Mock).mockResolvedValue([baseTask]);
+    (getLeadIdsOwnedBy as jest.Mock).mockResolvedValue(['lead-owned']);
+    await expect(listTasks({}, { id: 'rep-1', role: 'sales' })).resolves.toEqual([baseTask]);
+    expect(findTasksVisibleToUser).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'rep-1', ownedLeadIds: ['lead-owned'] }),
+    );
+    expect(findTasks).not.toHaveBeenCalled();
   });
 });
 
@@ -246,14 +290,23 @@ describe('createTask', () => {
 
   it('creates and audits', async () => {
     (insertTask as jest.Mock).mockResolvedValue(baseTask);
+    (getLeadByIdService as jest.Mock).mockResolvedValue({ assigned_to: 'u1' });
     const result = await createTask(
       { leadId: 'lead1', type: 'phone_call', title: 'Call lead' },
       actor,
     );
     expect(result.id).toBe('task1');
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'task.created' }),
+    expect(assertAccess).toHaveBeenCalledWith('u1', expect.objectContaining({ id: 'u1' }), true);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'task.created' }));
+  });
+
+  it('stores worker-created tasks without a non-user system FK', async () => {
+    (insertTask as jest.Mock).mockResolvedValue({ ...baseTask, created_by: null });
+    await createTask(
+      { leadId: 'lead1', type: 'phone_call', title: 'Call lead' },
+      { id: 'system', role: 'system' },
     );
+    expect(insertTask).toHaveBeenCalledWith(expect.objectContaining({ created_by: null }));
   });
 });
 
@@ -265,9 +318,41 @@ describe('updateTask', () => {
     (updateTaskRepo as jest.Mock).mockResolvedValue({ ...baseTask, status: 'completed' });
     const result = await updateTask('task1', { status: 'completed' }, actor);
     expect(result.status).toBe('completed');
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'task.updated' }),
-    );
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'task.updated' }));
+  });
+
+  it('lets a delegated assignee complete a task but not reassign it', async () => {
+    (findTaskById as jest.Mock).mockResolvedValue({
+      ...baseTask,
+      assigned_to: 'rep-1',
+      created_by: 'owner-1',
+    });
+    (getLeadByIdService as jest.Mock).mockRejectedValue(new AppError('Forbidden', 403));
+    (updateTaskRepo as jest.Mock).mockResolvedValue({ ...baseTask, status: 'completed' });
+
+    await expect(
+      updateTask('task1', { status: 'completed' }, { id: 'rep-1', role: 'sales' }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    await expect(
+      updateTask('task1', { assignedTo: 'rep-2' }, { id: 'rep-1', role: 'sales' }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects mixed updates before any write when one field is forbidden', async () => {
+    (findTaskById as jest.Mock).mockResolvedValue({
+      ...baseTask,
+      assigned_to: 'rep-1',
+      created_by: 'owner-1',
+    });
+    (getLeadByIdService as jest.Mock).mockRejectedValue(new AppError('Forbidden', 403));
+    await expect(
+      updateTask(
+        'task1',
+        { status: 'completed', assignedTo: 'rep-2' },
+        { id: 'rep-1', role: 'sales' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(updateTaskRepo).not.toHaveBeenCalled();
   });
 });
 
@@ -360,7 +445,16 @@ describe('getLeadTimeline', () => {
 
   it('returns unified timeline entries', async () => {
     (findTimelineByLead as jest.Mock).mockResolvedValue([
-      { id: 'l1', type: 'outreach_log', lead_id: 'lead1', campaign_id: null, status: 'sent', channel: 'email', body: 'Hello', created_at: '2026-06-19T00:00:00Z' },
+      {
+        id: 'l1',
+        type: 'outreach_log',
+        lead_id: 'lead1',
+        campaign_id: null,
+        status: 'sent',
+        channel: 'email',
+        body: 'Hello',
+        created_at: '2026-06-19T00:00:00Z',
+      },
     ]);
     const result = await getLeadTimeline('lead1');
     expect(result).toHaveLength(1);
@@ -389,6 +483,30 @@ describe('sendQuickMessage', () => {
     attachments: [],
   };
 
+  it('injects a recipient unsubscribe link into designed emails before dispatch', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseLead);
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      ...baseTemplate,
+      editor_mode: 'visual',
+      html_body: '<a href="{{unsubscribe_link}}">Unsubscribe</a>',
+      text_body: 'Unsubscribe {{unsubscribe_link}}',
+    });
+    (insertOutreachLog as jest.Mock).mockResolvedValue(baseLog);
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: true,
+      externalId: 'ext',
+      latencyMs: 1,
+      retryable: false,
+    });
+    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({ ...baseLog, status: 'sent' });
+    await sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor);
+    expect(dispatchOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining('https://example.com/outreach/unsubscribe?token=valid'),
+      }),
+    );
+  });
+
   it('rejects a lead that does not exist', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(null);
     await expect(
@@ -413,7 +531,10 @@ describe('sendQuickMessage', () => {
 
   it('rejects an unapproved template', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(baseLead);
-    (findTemplateById as jest.Mock).mockResolvedValue({ ...baseTemplate, approval_status: 'pending' });
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      ...baseTemplate,
+      approval_status: 'pending',
+    });
     await expect(
       sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
     ).rejects.toThrow('not approved');
@@ -424,8 +545,17 @@ describe('sendQuickMessage', () => {
     (findTemplateById as jest.Mock).mockResolvedValue(baseTemplate);
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello Acme' });
     (insertOutreachLog as jest.Mock).mockResolvedValue({ ...baseLog, status: 'queued' });
-    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext1', latencyMs: 10, retryable: false });
-    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({ ...baseLog, status: 'sent', external_msg_id: 'ext1' });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: true,
+      externalId: 'ext1',
+      latencyMs: 10,
+      retryable: false,
+    });
+    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({
+      ...baseLog,
+      status: 'sent',
+      external_msg_id: 'ext1',
+    });
 
     const result = await sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor);
 
@@ -446,13 +576,26 @@ describe('sendQuickMessage', () => {
     (findTemplateById as jest.Mock).mockResolvedValue(baseTemplate);
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello Acme' });
     (insertOutreachLog as jest.Mock).mockResolvedValue({ ...baseLog, status: 'queued' });
-    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: false, error: 'boom', latencyMs: 10, retryable: false });
-    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({ ...baseLog, status: 'failed', error_message: 'boom' });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: 'boom',
+      latencyMs: 10,
+      retryable: false,
+    });
+    (updateOutreachLogStatus as jest.Mock).mockResolvedValue({
+      ...baseLog,
+      status: 'failed',
+      error_message: 'boom',
+    });
 
     await expect(
       sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor),
     ).rejects.toThrow('Quick send failed');
-    expect(updateOutreachLogStatus).toHaveBeenCalledWith('l1', 'failed', expect.objectContaining({ errorMessage: 'boom' }));
+    expect(updateOutreachLogStatus).toHaveBeenCalledWith(
+      'l1',
+      'failed',
+      expect.objectContaining({ errorMessage: 'boom' }),
+    );
     expect(writeAuditLog).not.toHaveBeenCalled();
   });
 });

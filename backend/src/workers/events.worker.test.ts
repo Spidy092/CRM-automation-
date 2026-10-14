@@ -64,8 +64,8 @@ jest.mock('../modules/agent/agent.service', () => ({
   proposeAgentAction: jest.fn(),
 }));
 
-jest.mock('../modules/notifications/notifications.emitter', () => ({
-  pushToUser: jest.fn(),
+jest.mock('../modules/notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 jest.mock('../modules/workflows/workflow.trigger', () => ({
@@ -97,7 +97,8 @@ import { findSequenceById, findNextBestActionByLeadId } from '../modules/outreac
 import { findLeadById } from '../modules/leads/leads.repository';
 import { findUserById } from '../modules/users/users.repository';
 import { proposeAgentAction } from '../modules/agent/agent.service';
-import { pushToUser } from '../modules/notifications/notifications.emitter';
+import { createNotification } from '../modules/notifications/notifications.service';
+import { AppError } from '../shared/middleware/errorHandler';
 import {
   enqueueOutreachDispatch,
   enqueueAiResearch,
@@ -119,7 +120,7 @@ const mockFindNextBestActionByLeadId = findNextBestActionByLeadId as jest.Mock;
 const mockFindLeadById = findLeadById as jest.Mock;
 const mockFindUserById = findUserById as jest.Mock;
 const mockProposeAgentAction = proposeAgentAction as jest.Mock;
-const mockPushToUser = pushToUser as jest.Mock;
+const mockCreateNotification = createNotification as jest.Mock;
 const mockEnqueueOutreachDispatch = enqueueOutreachDispatch as jest.Mock;
 const mockEnqueueAiResearch = enqueueAiResearch as jest.Mock;
 const mockEnqueueAiDecision = enqueueAiDecision as jest.Mock;
@@ -231,13 +232,25 @@ describe('handleStageMoved', () => {
   it('pushes notification when lead has assigned rep and default outreach is dispatched', async () => {
     mockFindLeadById.mockResolvedValue({ id: 'lead1', assigned_to: 'rep1', business_name: 'Acme' });
     await handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' });
-    expect(mockPushToUser).toHaveBeenCalledWith(
-      'rep1',
+    expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({
+        recipientUserId: 'rep1',
         type: 'campaign_enrolled',
-        data: { leadId: 'lead1', campaignId: 'camp1' },
+        metadata: { leadId: 'lead1', campaignId: 'camp1' },
       }),
     );
+  });
+
+  it('rethrows when createNotification fails so BullMQ retries the job', async () => {
+    mockFindLeadById.mockResolvedValue({ id: 'lead1', assigned_to: 'rep1', business_name: 'Acme' });
+    mockCreateNotification.mockResolvedValueOnce({
+      ok: false,
+      error: new AppError('Notification DB down', 500),
+    });
+
+    await expect(
+      handleStageMoved('lead1', { fromStageId: 's0', toStageId: 's1', pipelineId: 'pipe1' }),
+    ).rejects.toThrow('Notification DB down');
   });
 
   describe('channel switch actions', () => {
@@ -410,9 +423,11 @@ describe('handleLeadCreatedTrigger', () => {
     expect(mockEnqueueOutreachDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ leadId: 'lead1', campaignId: 'camp1', stepNumber: 1 }),
     );
-    expect(mockPushToUser).toHaveBeenCalledWith(
-      'rep1',
-      expect.objectContaining({ type: 'campaign_enrolled' }),
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientUserId: 'rep1',
+        type: 'campaign_enrolled',
+      }),
     );
   });
 });

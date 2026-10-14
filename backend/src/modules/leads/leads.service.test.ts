@@ -1,15 +1,25 @@
+import { createHash } from 'crypto';
 import { LeadRow } from './leads.types';
+import { bulkUpdateSchema } from './leads.schema';
 
 jest.mock('../../workers/queue');
+jest.mock('../../shared/utils/db', () => ({
+  withTransaction: jest.fn(async (cb: (client: unknown) => Promise<unknown>) => cb({})),
+}));
 jest.mock('./leads.repository', () => ({
+  optOutLeadByEmail: jest.fn(),
   findLeads: jest.fn(),
   countLeads: jest.fn(),
   findLeadById: jest.fn(),
+  findLeadByIdForUpdate: jest.fn(),
+  findDueFollowUpLeads: jest.fn(),
+  findLeadTimeline: jest.fn(),
   findExistingForDedup: jest.fn(),
   findLeadsByScraperLogId: jest.fn(),
   findLeadsByIds: jest.fn(),
   insertLead: jest.fn(),
   updateLead: jest.fn(),
+  updateLeadAssignment: jest.fn(),
   updateLeadOutcome: jest.fn(),
   softDeleteLead: jest.fn(),
   updateLeadStatus: jest.fn(),
@@ -33,14 +43,22 @@ jest.mock('../custom-fields/customFields.service', () => ({
   validateCustomFieldValues: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+jest.mock('../notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true, value: { created: true } }),
+}));
 
-import { enqueueLeadEvent, enqueueScoringCalculate } from '../../workers/queue';
+import {
+  enqueueLeadEvent,
+  enqueueScoringCalculate,
+  cancelPendingOutreachJobs,
+} from '../../workers/queue';
 import {
   bulkClassifyLeads,
   bulkPauseLeads,
   bulkUpdateLeads,
   createLead,
   getLeadById,
+  getLeadTimeline,
   getLeadsByScraperLogId,
   getLeadsByIds,
   listLeads,
@@ -48,15 +66,22 @@ import {
   setLeadPaused,
   softDeleteLeadById,
   updateLeadFields,
+  optOutLeadByEmail,
+  registerOwnershipApplier,
+  notifyDueFollowUps,
 } from './leads.service';
 import {
   createOutboundActivityAndUpdateLead,
   insertActivity,
 } from '../activities/activities.repository';
 import {
+  optOutLeadByEmail as optOutRepo,
   countLeads,
   findExistingForDedup,
   findLeadById,
+  findLeadTimeline as repoFindLeadTimeline,
+  findLeadByIdForUpdate,
+  findDueFollowUpLeads,
   findLeads,
   findLeadsByScraperLogId,
   findLeadsByIds,
@@ -72,6 +97,8 @@ import {
 import { findStageById } from '../pipeline/pipeline.repository';
 import { validateCustomFieldValues } from '../custom-fields/customFields.service';
 import { writeAuditLog } from '../../shared/utils/audit';
+import { createNotification } from '../notifications/notifications.service';
+import type { OwnershipChangeInput } from './leads.service';
 
 const baseRow: LeadRow = {
   id: 'lead-1',
@@ -124,8 +151,23 @@ const mockActivity = {
   created_at: '2026-06-19T00:00:00.000Z',
 };
 
+const mockOwnershipApplier = jest.fn(async (input: OwnershipChangeInput) => {
+  const lastUpdate = (updateLead as jest.Mock).mock.results.at(-1)?.value;
+  const fieldUpdated = lastUpdate ? await Promise.resolve(lastUpdate) : baseRow;
+  return {
+    assignmentId: 'assignment-1',
+    previousOwnerId: baseRow.assigned_to,
+    lead: { ...fieldUpdated, assigned_to: input.newOwnerId },
+    postCommit: [],
+  };
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
+  (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+  (findLeadByIdForUpdate as jest.Mock).mockImplementation((id: string) => findLeadById(id));
+  mockOwnershipApplier.mockClear();
+  registerOwnershipApplier(mockOwnershipApplier);
   (validateCustomFieldValues as jest.Mock).mockReturnValue({
     valid: true,
     sanitized: {},
@@ -163,6 +205,43 @@ describe('logOutboundActivity', () => {
 });
 
 describe('createLead', () => {
+  it('finds an existing Google business even when its contact details changed', async () => {
+    (findExistingForDedup as jest.Mock).mockResolvedValue(baseRow);
+    await expect(
+      createLead(
+        {
+          ...validInput,
+          source_platform: 'google_business',
+          google_place_id: 'place-one',
+          email: 'changed@business.test',
+          phone: '+15550009999',
+        },
+        { id: 'admin-1', role: 'admin' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(findExistingForDedup).toHaveBeenCalledWith(
+      'changed@business.test',
+      '+15550009999',
+      'google_business',
+      'place-one',
+    );
+    expect(insertLead).not.toHaveBeenCalled();
+  });
+
+  it('maps concurrent place-ID uniqueness violations to duplicates', async () => {
+    (findExistingForDedup as jest.Mock).mockResolvedValue(null);
+    (insertLead as jest.Mock).mockRejectedValue({
+      code: '23505',
+      constraint: 'idx_leads_google_place_id',
+    });
+    await expect(
+      createLead(
+        { ...validInput, source_platform: 'google_business', google_place_id: 'place-one' },
+        { id: 'admin-1', role: 'admin' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
   it('throws 409 on duplicate', async () => {
     (findExistingForDedup as jest.Mock).mockResolvedValue(baseRow);
     await expect(createLead(validInput, { id: 'admin-1', role: 'admin' })).rejects.toMatchObject({
@@ -310,6 +389,19 @@ describe('listLeads', () => {
 });
 
 describe('updateLeadFields', () => {
+  it('returns 422 before persisting a source change on an identified Google business', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      source_platform: 'google_business',
+      google_place_id: 'place-one',
+    });
+    await expect(
+      updateLeadFields('lead-1', { source_platform: 'manual' }, { id: 'admin-1', role: 'admin' }),
+    ).rejects.toMatchObject({ statusCode: 422 });
+    expect(updateLead).not.toHaveBeenCalled();
+  });
+
+
   it('throws 404 when not found', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(null);
     await expect(
@@ -351,23 +443,54 @@ describe('updateLeadFields', () => {
           to: 'stage-2',
         }),
       }),
+      expect.anything(),
     );
   });
 
-  it('logs assignment_change activity when assigned_to changes', async () => {
+  it('allows sales to resend the current owner while updating other fields', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (findLeadByIdForUpdate as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, notes: 'updated' });
+
+    const result = await updateLeadFields(
+      'lead-1',
+      { assigned_to: 'rep-1', notes: 'updated' },
+      { id: 'rep-1', role: 'sales' },
+    );
+
+    expect(result.notes).toBe('updated');
+    expect(mockOwnershipApplier).not.toHaveBeenCalled();
+    expect(updateLead).toHaveBeenCalledWith(
+      'lead-1',
+      expect.not.objectContaining({ assigned_to: 'rep-1' }),
+      expect.anything(),
+    );
+  });
+
+  it('still forbids sales from changing lead ownership', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+    (findLeadByIdForUpdate as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
+
+    await expect(
+      updateLeadFields(
+        'lead-1',
+        { assigned_to: 'rep-2' },
+        { id: 'rep-1', role: 'sales' },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+
+    expect(updateLead).not.toHaveBeenCalled();
+    expect(mockOwnershipApplier).not.toHaveBeenCalled();
+  });
+
+  it('routes assigned_to changes through the ownership applier', async () => {
     (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-1' });
     (updateLead as jest.Mock).mockResolvedValue({ ...baseRow, assigned_to: 'rep-2' });
     await updateLeadFields('lead-1', { assigned_to: 'rep-2' }, { id: 'admin-1', role: 'admin' });
-    expect(insertActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lead_id: 'lead-1',
-        user_id: 'admin-1',
-        type: 'assignment_change',
-        metadata: expect.objectContaining({
-          from: 'rep-1',
-          to: 'rep-2',
-        }),
-      }),
+    expect(mockOwnershipApplier).toHaveBeenCalledWith(
+      expect.objectContaining({ leadId: 'lead-1', newOwnerId: 'rep-2', type: 'override' }),
+      expect.objectContaining({ id: 'admin-1' }),
+      expect.anything(),
     );
   });
 
@@ -379,6 +502,7 @@ describe('updateLeadFields', () => {
       { pipeline_stage_id: 'stage-1' },
       { id: 'admin-1', role: 'admin' },
     );
+
     expect(insertActivity).not.toHaveBeenCalled();
   });
 
@@ -396,6 +520,7 @@ describe('updateLeadFields', () => {
       { notes: 'hi', assigned_to: 'rep-2', tags: ['priority'] },
       { id: 'admin-1', role: 'admin' },
     );
+    expect(mockOwnershipApplier).toHaveBeenCalled();
 
     expect(enqueueLeadEvent).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'lead.updated', leadId: 'lead-1' }),
@@ -440,7 +565,7 @@ describe('updateLeadFields', () => {
       { id: 'admin-1', role: 'admin' },
     );
 
-    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'won');
+    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'won', expect.anything());
     expect(res.status).toBe('won');
     expect(res.won_at).toBe('2026-07-20T00:00:00.000Z');
     expect(insertActivity).toHaveBeenCalledWith(
@@ -448,6 +573,7 @@ describe('updateLeadFields', () => {
         type: 'status_change',
         metadata: expect.objectContaining({ field: 'status', from: 'active', to: 'won' }),
       }),
+      expect.anything(),
     );
   });
 
@@ -474,7 +600,7 @@ describe('updateLeadFields', () => {
       { id: 'admin-1', role: 'admin' },
     );
 
-    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'active');
+    expect(updateLeadOutcome).toHaveBeenCalledWith('lead-1', 'active', expect.anything());
     expect(res.status).toBe('active');
   });
 
@@ -578,6 +704,73 @@ describe('bulkClassifyLeads', () => {
 });
 
 describe('bulkUpdateLeads', () => {
+  it('rejects source changes for identified Google businesses before a bulk write', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([
+      { ...baseRow, source_platform: 'google_business', google_place_id: 'place-one' },
+    ]);
+    await expect(
+      bulkUpdateLeads(['lead-1'], { source_platform: 'manual' }, { id: 'admin-1', role: 'admin' }),
+    ).rejects.toMatchObject({ statusCode: 422 });
+    expect(repoBulkUpdate).not.toHaveBeenCalled();
+  });
+
+
+  it('appends trimmed tags without replacing old tags and emits events only for new tags', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([
+      { ...baseRow, id: 'lead-1', tags: ['vip'] },
+      { ...baseRow, id: 'lead-2', tags: ['school'] },
+    ]);
+    (repoBulkUpdate as jest.Mock).mockResolvedValue(2);
+    const result = await bulkUpdateLeads(
+      ['lead-1', 'lead-2'],
+      { tags: [' school ', 'school'] },
+      { id: 'admin-1', role: 'admin' },
+      'append',
+    );
+    expect(result).toBe(2);
+    expect(repoBulkUpdate).toHaveBeenCalledWith(['lead-1', 'lead-2'], { tags: ['school'] }, true);
+    expect(enqueueLeadEvent).toHaveBeenCalledWith({
+      event: 'lead.tag_added',
+      leadId: 'lead-1',
+      payload: { tag: 'school' },
+    });
+    expect(enqueueLeadEvent).not.toHaveBeenCalledWith({
+      event: 'lead.tag_added',
+      leadId: 'lead-2',
+      payload: { tag: 'school' },
+    });
+  });
+
+  it('rejects the whole tag operation if sales selects a lead owned by another rep', async () => {
+    (findLeadsByIds as jest.Mock).mockResolvedValue([
+      { ...baseRow, id: 'lead-1', assigned_to: 'sales-1' },
+      { ...baseRow, id: 'lead-2', assigned_to: 'sales-2' },
+    ]);
+    await expect(
+      bulkUpdateLeads(
+        ['lead-1', 'lead-2'],
+        { tags: ['school'] },
+        { id: 'sales-1', role: 'sales' },
+        'append',
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(repoBulkUpdate).not.toHaveBeenCalled();
+  });
+
+  it('validates append-only tag requests at the API boundary', () => {
+    const ids = ['11111111-1111-4111-8111-111111111111'];
+    expect(
+      bulkUpdateSchema.safeParse({ ids, patch: { tags: ['school'] }, tag_mode: 'append' }).success,
+    ).toBe(true);
+    for (const patch of [
+      { tags: [' '] },
+      { tags: ['school, vip'] },
+      { tags: ['school'], notes: 'unexpected' },
+    ]) {
+      expect(bulkUpdateSchema.safeParse({ ids, patch, tag_mode: 'append' }).success).toBe(false);
+    }
+  });
+
   it('updates leads in bulk and audits', async () => {
     (repoBulkUpdate as jest.Mock).mockResolvedValue(3);
     const actor = { id: 'admin-1', role: 'admin' as const };
@@ -593,6 +786,18 @@ describe('bulkUpdateLeads', () => {
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'lead.bulk_updated', entityId: 'bulk' }),
     );
+  });
+
+  it('rejects bulk ownership changes with a machine-readable assignment pointer', async () => {
+    const ids = ['lead-1', 'lead-2'];
+    await expect(
+      bulkUpdateLeads(ids, { assigned_to: 'rep-2' }, { id: 'admin-1', role: 'admin' }),
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'ownership_via_assignment_endpoints',
+      leadIds: ids,
+    });
+    expect(repoBulkUpdate).not.toHaveBeenCalled();
   });
 
   it('resolves stage outcome during bulk pipeline stage update (H2)', async () => {
@@ -655,5 +860,111 @@ describe('bulkPauseLeads', () => {
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'lead.bulk_paused', entityId: 'bulk' }),
     );
+  });
+});
+
+describe('recipient email opt-out', () => {
+  beforeEach(() => jest.clearAllMocks());
+  const hash = createHash('sha256').update('john@acme.com').digest('hex');
+  it('marks a matching recipient opted out and cancels queued outreach', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+    (optOutRepo as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
+    await optOutLeadByEmail('lead-1', hash);
+    expect(optOutRepo).toHaveBeenCalledWith('lead-1', 'john@acme.com');
+    expect(cancelPendingOutreachJobs).toHaveBeenCalledWith({ leadId: 'lead-1' });
+  });
+  it('rejects a token after the recipient address changes', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({
+      ...baseRow,
+      email: 'someone-else@example.com',
+    });
+    await expect(optOutLeadByEmail('lead-1', hash)).rejects.toMatchObject({ statusCode: 404 });
+    expect(optOutRepo).not.toHaveBeenCalled();
+  });
+  it('retries cancellation safely for an already opted-out recipient', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
+    (optOutRepo as jest.Mock).mockResolvedValue({ ...baseRow, status: 'opted_out' });
+    await optOutLeadByEmail('lead-1', hash);
+    expect(cancelPendingOutreachJobs).toHaveBeenCalledWith({ leadId: 'lead-1' });
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe('notifyDueFollowUps', () => {
+  it('continues across stable cursor pages so later due leads are notified', async () => {
+    const firstPage = [
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        business_name: 'First lead',
+        assigned_to: 'rep-1',
+        next_follow_up_at: '2026-10-01T09:00:00.000Z',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000002',
+        business_name: 'Second lead',
+        assigned_to: 'rep-1',
+        next_follow_up_at: '2026-10-01T09:00:00.000Z',
+      },
+    ];
+    const secondPage = [
+      {
+        id: '00000000-0000-4000-8000-000000000003',
+        business_name: 'Later lead',
+        assigned_to: 'rep-2',
+        next_follow_up_at: '2026-10-02T09:00:00.000Z',
+      },
+    ];
+    (findDueFollowUpLeads as jest.Mock)
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(secondPage);
+
+    const notified = await notifyDueFollowUps(2);
+
+    expect(notified).toBe(3);
+    expect(findDueFollowUpLeads).toHaveBeenNthCalledWith(1, 2, undefined);
+    expect(findDueFollowUpLeads).toHaveBeenNthCalledWith(2, 2, {
+      nextFollowUpAt: firstPage[1].next_follow_up_at,
+      id: firstPage[1].id,
+    });
+    expect(createNotification).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('getLeadTimeline', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('throws 404 when the lead is missing', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(null);
+    await expect(
+      getLeadTimeline('missing', { id: 'admin-1', role: 'admin' }, { limit: 25, kind: 'all' }),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(repoFindLeadTimeline).not.toHaveBeenCalled();
+  });
+
+  it('delegates to the repository with the lead scope and clamped limit', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseRow);
+    (repoFindLeadTimeline as jest.Mock).mockResolvedValue({
+      items: [],
+      meta: { limit: 25, hasMore: false },
+    });
+    const res = await getLeadTimeline(
+      'lead-1',
+      { id: 'rep-1', role: 'sales' },
+      { limit: 25, kind: 'messages', search: 'pricing', channel: 'email' },
+    );
+    expect(res.meta.hasMore).toBe(false);
+    expect(repoFindLeadTimeline).toHaveBeenCalledWith({
+      leadId: 'lead-1',
+      limit: 25,
+      cursorTs: undefined,
+      cursorId: undefined,
+      kind: 'messages',
+      search: 'pricing',
+      channel: 'email',
+      authorId: undefined,
+      dateFrom: undefined,
+      dateTo: undefined,
+      pinnedOnly: undefined,
+    });
   });
 });

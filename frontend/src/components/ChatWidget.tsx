@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import type { FormEvent, ReactNode } from 'react';
-import { Bot, Check, Loader2, MessageSquare, Send, X, XCircle } from 'lucide-react';
+import { AlertCircle, Bot, Brain, Check, Loader2, MessageSquare, Send, X, XCircle } from 'lucide-react';
 import {
   useChatHistory,
   useSendChatMessage,
@@ -13,6 +13,7 @@ import {
 } from '@/api/chat';
 import { usePlan, useApprovePlan, useCancelPlan } from '@/api/agentPlans';
 import { useInbox, useActionInboxItem } from '@/api/aiInbox';
+import { useDecisionLog } from '@/api/aiDecisions';
 import { PlanPreview } from './PlanPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +27,7 @@ import type { Integration } from '@/api/integrations';
 import type { ScoringConfig, ScoringRule } from '@/api/scoring';
 import type { AssignmentConfig, EligibleUser } from '@/api/assignments';
 import type { DashboardMetrics, Lead, ScraperConfig, Template, User, CustomFieldDefinition } from '@/types';
+import { useAuthStore } from '@/store/authStore';
 
 type QueryClient = ReturnType<typeof useQueryClient>;
 type LeadsPageData = { items?: Lead[]; pages?: Array<{ items?: Lead[] }> };
@@ -215,9 +217,10 @@ function addAssignmentUser(records: ChatVisibleRecord[], user: EligibleUser): vo
   addVisibleRecord(records, {
     type: 'assignment_user',
     id: user.id,
-    name: `${user.first_name} ${user.last_name}`.trim() || user.email,
-    status: user.role,
+    name: user.name?.trim() ? user.name : user.email,
+    status: user.is_available ? 'available' : 'unavailable',
     subtitle: user.email,
+    meta: { role: user.role },
   });
 }
 
@@ -782,7 +785,12 @@ function PendingApprovalItem({ item }: { item: AiInboxItem }) {
 
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-      <p className="font-medium">{item.title}</p>
+      <div className="flex items-start justify-between gap-3">
+        <p className="font-medium">{item.title}</p>
+        {item.urgency_score > 0 && (
+          <span className="shrink-0 text-xs font-medium text-amber-700">Urgency {item.urgency_score}</span>
+        )}
+      </div>
       {item.summary && <p className="mt-0.5 text-xs text-amber-700">{item.summary}</p>}
       <div className="mt-2 flex gap-2">
         <Button
@@ -818,16 +826,38 @@ function PendingApprovalItem({ item }: { item: AiInboxItem }) {
   );
 }
 
-/** Surfaces pending AI Inbox items directly in Copilot chat, on every page —
- * there is no dedicated AI Inbox nav page, so this is the only place a rep
- * sees and actions them. */
-function PendingApprovalsPanel({ items }: { items: AiInboxItem[] }) {
-  if (items.length === 0) return null;
+function PendingApprovalsPanel({
+  items,
+  isLoading,
+  isError,
+  onRetry,
+}: {
+  items: AiInboxItem[];
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+}) {
+  if (isLoading) {
+    return <p className="px-1 py-4 text-sm text-slate-500">Loading approvals...</p>;
+  }
+
+  if (isError) {
+    return (
+      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+        <p>Approvals could not be refreshed.</p>
+        <Button type="button" variant="outline" size="sm" className="mt-2 h-8" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return <p className="px-1 py-4 text-sm text-slate-500">No approvals waiting for you.</p>;
+  }
+
   return (
     <div className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-        Pending approvals ({items.length})
-      </p>
       {items.map((item) => (
         <PendingApprovalItem key={item.id} item={item} />
       ))}
@@ -835,12 +865,72 @@ function PendingApprovalsPanel({ items }: { items: AiInboxItem[] }) {
   );
 }
 
+function ActivityFeed({
+  items,
+  isLoading,
+  isError,
+  onRetry,
+}: {
+  items: AiDecisionLogEntry[];
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+}) {
+  if (isLoading) {
+    return <p className="px-1 py-4 text-sm text-slate-500">Loading recent activity...</p>;
+  }
+
+  if (isError) {
+    return (
+      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+        <p>Recent AI activity could not be refreshed.</p>
+        <Button type="button" variant="outline" size="sm" className="mt-2 h-8" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return <p className="px-1 py-4 text-sm text-slate-500">No recent AI activity.</p>;
+  }
+
+  return (
+    <div className="divide-y divide-slate-200 rounded-md border border-slate-200 bg-white">
+      {items.map((item) => {
+        const failed = item.decision.toLowerCase() === 'failed';
+        return (
+          <div key={item.id} className="px-3 py-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-medium capitalize text-slate-900">{item.decision_type.replace('_', ' ')}</p>
+              <span className={cn('text-xs font-medium', failed ? 'text-red-700' : 'text-slate-600')}>
+                {item.decision}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {item.model_used ?? 'Fallback'} · {new Date(item.created_at).toLocaleString()}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type CopilotTab = 'chat' | 'approvals' | 'activity';
+
+const INBOX_REFRESH_MS = 15_000;
+const ACTIVITY_REFRESH_MS = 30_000;
+
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<CopilotTab>('chat');
+  const [approvalOffset, setApprovalOffset] = useState(0);
   const [message, setMessage] = useState('');
   const [lastResponse, setLastResponse] = useState<ChatResponse | null>(null);
   const location = useLocation();
   const queryClient = useQueryClient();
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const conversationId = useMemo(getConversationId, []);
   const history = useChatHistory(conversationId);
   const sendMessage = useSendChatMessage();
@@ -848,8 +938,20 @@ export function ChatWidget() {
 
   // Polled regardless of route — this is the only surface for AI Inbox
   // approvals now that there's no dedicated nav page for it.
-  const pendingInbox = useInbox({ status: 'pending', limit: 5 });
+  const pendingInbox = useInbox(
+    { status: 'pending', limit: 100, offset: approvalOffset },
+    { refetchInterval: INBOX_REFRESH_MS, refetchOnWindowFocus: true },
+  );
   const pendingItems = pendingInbox.data?.items ?? [];
+  const pendingTotal = pendingInbox.data?.total ?? 0;
+  const activity = useDecisionLog(
+    { limit: 10, offset: 0 },
+    {
+      enabled: isAdmin && open,
+      refetchInterval: ACTIVITY_REFRESH_MS,
+      refetchOnWindowFocus: true,
+    },
+  );
 
   const responsePlanId = (lastResponse?.action?.result as { planId?: string } | undefined)?.planId;
   const historyPlanId = extractLastPlanId(turns);
@@ -861,6 +963,28 @@ export function ChatWidget() {
   const visibleContent = (content: string): string => {
     const match = content.match(/^plan:[0-9a-f-]{36}:(.*)$/s);
     return match ? match[1] : content;
+  };
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('copilot') === 'approvals') {
+      setOpen(true);
+      setActiveTab('approvals');
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!isAdmin && activeTab === 'activity') setActiveTab('chat');
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (pendingInbox.data && approvalOffset > 0 && approvalOffset >= pendingTotal) {
+      setApprovalOffset(Math.max(0, approvalOffset - 100));
+    }
+  }, [pendingInbox.data, approvalOffset, pendingTotal]);
+
+  const openWorkspace = () => {
+    setActiveTab(pendingTotal > 0 ? 'approvals' : 'chat');
+    setOpen(true);
   };
 
   const submit = async (event: FormEvent) => {
@@ -879,7 +1003,7 @@ export function ChatWidget() {
   return (
     <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
       {open && (
-        <section className="flex h-[32rem] w-[min(calc(100vw-2rem),25rem)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl" aria-label="Copilot chat">
+        <section className="flex h-[min(32rem,calc(100dvh-6rem))] w-[min(calc(100vw-2rem),25rem)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl" aria-label="Copilot workspace">
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 px-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <span className="grid h-8 w-8 place-items-center rounded-md bg-slate-950 text-white">
@@ -897,71 +1021,128 @@ export function ChatWidget() {
               </button>
             </div>
 
-            <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3">
-              {turns.length === 0 && !lastResponse && (
-                <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-                  Ask about leads, templates, campaigns, pipelines, reports, or A/B tests. Pending
-                  AI approvals show up right here for you to approve or reject.
-                </div>
-              )}
-              <PendingApprovalsPanel
-                items={pendingItems.filter((item) => item.id !== lastResponse?.action?.inboxItemId)}
-              />
-              {turns.map((turn, index) => (
-                <div
-                  key={`${turn.createdAt}-${index}`}
+            <div role="tablist" aria-label="Copilot workspace sections" className="flex shrink-0 gap-1 border-b border-slate-200 bg-slate-50 px-3 py-2">
+              {([
+                ['chat', 'Chat'],
+                ['approvals', `Approvals (${pendingTotal})`],
+                ...(isAdmin ? [['activity', 'Activity']] : []),
+              ] as Array<[CopilotTab, string]>).map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab}
                   className={cn(
-                    'max-w-[85%] rounded-md px-3 py-2 text-sm',
-                    turn.role === 'user'
-                      ? 'ml-auto bg-slate-950 text-white'
-                      : 'mr-auto border border-slate-200 bg-white text-slate-700 shadow-sm',
+                    'min-h-8 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500',
+                    activeTab === tab ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-200 hover:text-slate-900',
                   )}
+                  onClick={() => setActiveTab(tab)}
                 >
-                  {turn.role === 'assistant' ? renderCopilotText(visibleContent(turn.content)) : turn.content}
-                </div>
+                  {label}
+                </button>
               ))}
-              {lastResponse?.action?.policy.outcome === 'require_approval' && !planId && (
-                <ChatApprovalCard
-                  key={
-                    lastResponse.action.inboxItemId ??
-                    lastResponse.action.agentAction?.id ??
-                    lastResponse.action.name
-                  }
-                  actionName={lastResponse.action.name}
-                  inboxItemId={lastResponse.action.inboxItemId ?? null}
-                  onResolved={() => invalidateQueriesForAction(queryClient, lastResponse.action!.name)}
-                />
-              )}
-              {planId && planQuery.data && (
-                <PlanPreview
-                  preview={planQuery.data}
-                  onApprove={async () => { await approvePlan.mutateAsync(planId); }}
-                  onCancel={async () => { await cancelPlan.mutateAsync(planId); }}
-                />
-              )}
-              {sendMessage.isPending && (
-                <div className="mr-auto flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-sm">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Working...
-                </div>
-              )}
-              {sendMessage.isError && (
-                <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  Copilot request failed.
-                </p>
-              )}
             </div>
 
-            <form onSubmit={submit} className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-3">
-              <Input
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder="Ask Copilot or approve an action"
-                disabled={sendMessage.isPending}
-              />
-              <Button type="submit" size="icon" disabled={sendMessage.isPending || !message.trim()}>
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
+            {activeTab === 'chat' && (
+              <>
+                <div role="tabpanel" className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3">
+                  {turns.length === 0 && !lastResponse && (
+                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                      Ask about leads, templates, campaigns, pipelines, reports, or A/B tests. Use Approvals for work waiting on you.
+                    </div>
+                  )}
+                  {turns.map((turn, index) => (
+                    <div
+                      key={`${turn.createdAt}-${index}`}
+                      className={cn(
+                        'max-w-[85%] rounded-md px-3 py-2 text-sm',
+                        turn.role === 'user'
+                          ? 'ml-auto bg-slate-950 text-white'
+                          : 'mr-auto border border-slate-200 bg-white text-slate-700 shadow-sm',
+                      )}
+                    >
+                      {turn.role === 'assistant' ? renderCopilotText(visibleContent(turn.content)) : turn.content}
+                    </div>
+                  ))}
+                  {lastResponse?.action?.policy.outcome === 'require_approval' && !planId && (
+                    <ChatApprovalCard
+                      key={
+                        lastResponse.action.inboxItemId ??
+                        lastResponse.action.agentAction?.id ??
+                        lastResponse.action.name
+                      }
+                      actionName={lastResponse.action.name}
+                      inboxItemId={lastResponse.action.inboxItemId ?? null}
+                      onResolved={() => invalidateQueriesForAction(queryClient, lastResponse.action!.name)}
+                    />
+                  )}
+                  {planId && planQuery.data && (
+                    <PlanPreview
+                      preview={planQuery.data}
+                      onApprove={async () => { await approvePlan.mutateAsync(planId); }}
+                      onCancel={async () => { await cancelPlan.mutateAsync(planId); }}
+                    />
+                  )}
+                  {sendMessage.isPending && (
+                    <div className="mr-auto flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-sm">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Working...
+                    </div>
+                  )}
+                  {sendMessage.isError && (
+                    <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      Copilot request failed.
+                    </p>
+                  )}
+                </div>
+
+                <form onSubmit={submit} className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-3">
+                  <Input
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    placeholder="Ask Copilot or approve an action"
+                    disabled={sendMessage.isPending}
+                  />
+                  <Button type="submit" size="icon" disabled={sendMessage.isPending || !message.trim()}>
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </form>
+              </>
+            )}
+
+            {activeTab === 'approvals' && (
+              <div role="tabpanel" className="flex-1 overflow-y-auto bg-slate-50 px-4 py-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <AlertCircle className="h-4 w-4 text-amber-600" /> Needs approval
+                </div>
+                <PendingApprovalsPanel
+                  items={pendingItems}
+                  isLoading={pendingInbox.isLoading}
+                  isError={pendingInbox.isError}
+                  onRetry={() => void pendingInbox.refetch()}
+                />
+                {(approvalOffset > 0 || pendingTotal > 100) && (
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <Button type="button" variant="outline" size="sm" disabled={approvalOffset === 0} onClick={() => setApprovalOffset(Math.max(0, approvalOffset - 100))}>Previous</Button>
+                    <span className="text-xs text-slate-500">Page {Math.floor(approvalOffset / 100) + 1}</span>
+                    <Button type="button" variant="outline" size="sm" disabled={approvalOffset + 100 >= pendingTotal} onClick={() => setApprovalOffset(approvalOffset + 100)}>Next</Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'activity' && isAdmin && (
+              <div role="tabpanel" className="flex-1 overflow-y-auto bg-slate-50 px-4 py-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Brain className="h-4 w-4 text-blue-600" /> Recent activity
+                </div>
+                <ActivityFeed
+                  items={activity.data?.items ?? []}
+                  isLoading={activity.isLoading}
+                  isError={activity.isError}
+                  onRetry={() => void activity.refetch()}
+                />
+              </div>
+            )}
         </section>
       )}
 
@@ -970,18 +1151,18 @@ export function ChatWidget() {
           type="button"
           className="h-12 w-12 rounded-full bg-slate-950 shadow-lg hover:bg-slate-800"
           size="icon"
-          onClick={() => setOpen((value) => !value)}
+          onClick={() => (open ? setOpen(false) : openWorkspace())}
           aria-label={
-            pendingItems.length > 0
-              ? `Open copilot (${pendingItems.length} pending approval${pendingItems.length === 1 ? '' : 's'})`
+            pendingTotal > 0
+              ? `Open copilot (${pendingTotal} pending approval${pendingTotal === 1 ? '' : 's'})`
               : 'Open copilot'
           }
         >
           <MessageSquare className="h-5 w-5" />
         </Button>
-        {!open && pendingItems.length > 0 && (
+        {!open && pendingTotal > 0 && (
           <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white shadow">
-            {pendingItems.length}
+            {pendingTotal > 99 ? '99+' : pendingTotal}
           </span>
         )}
       </div>

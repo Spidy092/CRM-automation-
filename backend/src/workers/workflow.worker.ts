@@ -25,8 +25,12 @@ import { logger } from '../shared/utils/logger';
 import { incJobsFailed, incJobsProcessed, observeJobDuration } from '../shared/utils/metrics';
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
+import { createNotification } from '../modules/notifications/notifications.service';
 
 const MAX_NODES_PER_JOB = 20;
+const MAX_STEP_ATTEMPTS = 3;
+const WORKFLOW_RETRY_BASE_DELAY_MS = 2_000;
+const WORKFLOW_RETRY_MAX_DELAY_MS = 5 * 60_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
 
 function recoveryJobSuffix(): string {
@@ -48,13 +52,59 @@ function nextRunAt(minutes: number, now = new Date()): string {
   return new Date(now.getTime() + minutes * 60_000).toISOString();
 }
 
+function retryRunAt(attempt: number, now = new Date()): string {
+  const exponent = Math.max(0, attempt - 1);
+  const delayMs = Math.min(
+    WORKFLOW_RETRY_MAX_DELAY_MS,
+    WORKFLOW_RETRY_BASE_DELAY_MS * 2 ** exponent,
+  );
+  return new Date(now.getTime() + delayMs).toISOString();
+}
+
+function isRetryableWorkflowError(error: unknown): boolean {
+  if (error instanceof WorkflowActionError) return false;
+  if (error && typeof error === 'object' && 'isAppError' in error) {
+    const statusCode = (error as { statusCode?: unknown }).statusCode;
+    return (
+      statusCode === 409 ||
+      statusCode === 429 ||
+      (typeof statusCode === 'number' && statusCode >= 500)
+    );
+  }
+  return true;
+}
+
+async function notifyWorkflowFailure(input: {
+  enrollmentId: string;
+  workflowOwnerId: string;
+  leadId: string | null;
+}): Promise<void> {
+  const notice = await createNotification({
+    recipientUserId: input.workflowOwnerId,
+    occurrenceKey: `workflow-failed:${input.enrollmentId}`,
+    type: 'automation_failed',
+    title: 'Automation failed',
+    message: 'A workflow stopped after an error. Open Workflows to review the run.',
+    metadata: {
+      ...(input.leadId ? { leadId: input.leadId } : {}),
+      deepLink: '/automation/workflows',
+    },
+  });
+  if (!notice.ok) {
+    logger.error('failed to notify workflow owner about terminal failure', {
+      enrollmentId: input.enrollmentId,
+      error: notice.error.message,
+    });
+  }
+}
+
 async function markFailure(
   enrollment: ClaimedEnrollment | null,
   workerId: string,
   message: string,
 ): Promise<void> {
   if (!enrollment) return;
-  await advanceEnrollment({
+  const failed = await advanceEnrollment({
     id: enrollment.id,
     lockVersion: enrollment.lock_version,
     workerId,
@@ -62,6 +112,14 @@ async function markFailure(
     status: 'failed',
     lastError: message,
     finishedAt: new Date().toISOString(),
+  });
+  if (!failed) return;
+  const execution = await findEnrollmentExecutionById(enrollment.id);
+  if (!execution) return;
+  await notifyWorkflowFailure({
+    enrollmentId: enrollment.id,
+    workflowOwnerId: execution.workflow_created_by,
+    leadId: enrollment.lead_id,
   });
 }
 
@@ -180,6 +238,9 @@ export async function executeWorkflowEnrollment(
       enrollmentId: enrollment.id,
       nodeId: node.id,
       nodeType: node.type,
+      // This is a logical step key, not an attempt key. It stays stable when
+      // a transient failure is retried so providers can deduplicate side
+      // effects; the repository records each attempt separately.
       idempotencyKey: `${enrollment.id}:${node.id}`,
       jobId: jobId ?? null,
       input: node.type === 'action' ? { actionType: node.action?.type ?? null } : null,
@@ -216,14 +277,37 @@ export async function executeWorkflowEnrollment(
           },
           idempotencyKey: step.idempotency_key,
         });
+        const stepResult = {
+          actionType: actionResult.actionType,
+          changed: actionResult.changed,
+          details: actionResult.details ?? null,
+        };
         const nextNodeId = resolveWorkflowNextNode(node, enrollment.context);
         if (!nextNodeId) {
-          await markFailure(
-            enrollment,
+          const failed = await finishStepAndAdvance({
+            stepId: step.id,
+            enrollmentId: enrollment.id,
+            lockVersion: enrollment.lock_version,
             workerId,
-            `Node '${node.id}' has no executable continuation`,
-          );
-          return { status: 'failed', processedNodes: processedNodes + 1 };
+            stepStatus: 'succeeded',
+            stepResult,
+            currentNodeId: node.id,
+            enrollmentStatus: 'failed',
+            lastError: `Node '${node.id}' has no executable continuation`,
+            finishedAt: new Date().toISOString(),
+            releaseLock: true,
+          });
+          if (failed) {
+            await notifyWorkflowFailure({
+              enrollmentId: enrollment.id,
+              workflowOwnerId: execution.workflow_created_by,
+              leadId: enrollment.lead_id,
+            });
+          }
+          return {
+            status: failed ? 'failed' : 'lease_lost',
+            processedNodes: processedNodes + 1,
+          };
         }
 
         const transition = await finishStepAndAdvance({
@@ -232,11 +316,7 @@ export async function executeWorkflowEnrollment(
           lockVersion: enrollment.lock_version,
           workerId,
           stepStatus: 'succeeded',
-          stepResult: {
-            actionType: actionResult.actionType,
-            changed: actionResult.changed,
-            details: actionResult.details ?? null,
-          },
+          stepResult,
           currentNodeId: nextNodeId,
           enrollmentStatus: 'active',
           nextRunAt: null,
@@ -249,6 +329,8 @@ export async function executeWorkflowEnrollment(
       } catch (error) {
         const code = error instanceof WorkflowActionError ? error.code : 'ACTION_EXECUTION_FAILED';
         const message = error instanceof Error ? error.message : 'Workflow action failed';
+        const retryable = isRetryableWorkflowError(error);
+        const shouldRetry = retryable && step.attempt < MAX_STEP_ATTEMPTS;
         const failed = await finishStepAndAdvance({
           stepId: step.id,
           enrollmentId: enrollment.id,
@@ -258,17 +340,30 @@ export async function executeWorkflowEnrollment(
           errorCode: code,
           errorMessage: message,
           currentNodeId: node.id,
-          enrollmentStatus: 'failed',
-          lastError: code,
-          finishedAt: new Date().toISOString(),
+          enrollmentStatus: shouldRetry ? 'active' : 'failed',
+          nextRunAt: shouldRetry ? retryRunAt(step.attempt) : null,
+          lastError: `${code}: ${message}`,
+          finishedAt: shouldRetry ? null : new Date().toISOString(),
           releaseLock: true,
         });
+        if (!failed) return { status: 'lease_lost', processedNodes: processedNodes + 1 };
+        if (shouldRetry) {
+          logger.warn('workflow action failed; retry scheduled', {
+            enrollmentId: enrollment.id,
+            nodeId: node.id,
+            attempt: step.attempt,
+            nextRunAt: failed.enrollment.next_run_at,
+            errorCode: code,
+          });
+          return { status: 'retry_scheduled', processedNodes: processedNodes + 1 };
+        }
+        await notifyWorkflowFailure({
+          enrollmentId: enrollment.id,
+          workflowOwnerId: execution.workflow_created_by,
+          leadId: enrollment.lead_id,
+        });
         return {
-          status: failed
-            ? code === 'ACTION_EXECUTION_DISABLED'
-              ? 'action_blocked'
-              : 'action_failed'
-            : 'lease_lost',
+          status: code === 'ACTION_EXECUTION_DISABLED' ? 'action_blocked' : 'action_failed',
           processedNodes: processedNodes + 1,
         };
       }
@@ -332,8 +427,29 @@ export async function executeWorkflowEnrollment(
 
     const nextNodeId = resolveWorkflowNextNode(node, enrollment.context);
     if (!nextNodeId) {
-      await markFailure(enrollment, workerId, `Node '${node.id}' has no executable continuation`);
-      return { status: 'failed', processedNodes: processedNodes + 1 };
+      const failed = await finishStepAndAdvance({
+        stepId: step.id,
+        enrollmentId: enrollment.id,
+        lockVersion: enrollment.lock_version,
+        workerId,
+        stepStatus: 'succeeded',
+        currentNodeId: node.id,
+        enrollmentStatus: 'failed',
+        lastError: `Node '${node.id}' has no executable continuation`,
+        finishedAt: new Date().toISOString(),
+        releaseLock: true,
+      });
+      if (failed) {
+        await notifyWorkflowFailure({
+          enrollmentId: enrollment.id,
+          workflowOwnerId: execution.workflow_created_by,
+          leadId: enrollment.lead_id,
+        });
+      }
+      return {
+        status: failed ? 'failed' : 'lease_lost',
+        processedNodes: processedNodes + 1,
+      };
     }
     const transition = await finishStepAndAdvance({
       stepId: step.id,
@@ -351,12 +467,20 @@ export async function executeWorkflowEnrollment(
     processedNodes += 1;
   }
 
-  await markFailure(
-    enrollment,
+  const continued = await advanceEnrollment({
+    id: enrollment.id,
+    lockVersion: enrollment.lock_version,
     workerId,
-    `Workflow exceeded ${MAX_NODES_PER_JOB} nodes in one job`,
-  );
-  return { status: 'step_limit_exceeded', processedNodes };
+    currentNodeId: enrollment.current_node_id,
+    status: 'active',
+    nextRunAt: null,
+    lastError: null,
+    releaseLock: true,
+  });
+  return {
+    status: continued ? 'continued' : 'lease_lost',
+    processedNodes,
+  };
 }
 
 let workflowScheduler: NodeJS.Timeout | null = null;

@@ -111,9 +111,14 @@ export function AssignmentsPage() {
                     <UserCheck className="h-5 w-5 text-indigo-500" />
                     <div>
                       <p className="font-medium text-slate-800">
-                        {user.first_name} {user.last_name}
+                        {user.name}
                       </p>
-                      <p className="text-xs text-slate-500">{user.email}</p>
+                      <p className="text-xs text-slate-500">
+                        {user.email} · {user.role}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {user.is_available ? 'Available' : 'Unavailable'} · {user.assignment_count} assigned
+                      </p>
                     </div>
                   </div>
                 ))

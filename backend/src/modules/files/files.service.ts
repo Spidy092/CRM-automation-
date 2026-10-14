@@ -11,6 +11,7 @@ import {
   softDeleteFile,
   updateFile as updateFileRepo,
 } from './files.repository';
+import { advisoryLockKey, withAdvisoryLock } from '../../shared/utils/db';
 import { FileActor, FileResponse, FileRow, UpdateFileInput } from './files.types';
 
 const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads/files');
@@ -35,6 +36,21 @@ const ALLOWED_EXTENSIONS_BY_MIME: Record<string, string[]> = {
 
 function publicBaseUrl(): string {
   return process.env.APP_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
+}
+
+/**
+ * Stored file URLs bake in the public base URL at upload time. When neither
+ * APP_BASE_URL nor BASE_URL is set, uploads get `http://localhost:3000/...`
+ * URLs that break for any browser client not running on the server itself
+ * (the reported broken-thumbnail source). Warn once per upload so the
+ * misconfiguration is visible in logs instead of surfacing only as dead images.
+ */
+function warnIfLocalUploadBase(): void {
+  if (!process.env.APP_BASE_URL && !process.env.BASE_URL) {
+    logger.warn(
+      'APP_BASE_URL is not set — stored file URLs will use http://localhost:3000 and may not load for browser clients on other hosts. Set APP_BASE_URL to the public backend origin.',
+    );
+  }
 }
 
 function toResponse(row: FileRow): FileResponse {
@@ -98,10 +114,10 @@ export async function uploadFile(
 
   const fileId = randomUUID();
   const diskFilename = `${fileId}${ext}`;
+  warnIfLocalUploadBase();
   await mkdir(UPLOAD_DIR, { recursive: true });
   const storagePath = path.join(UPLOAD_DIR, diskFilename);
   await writeFile(storagePath, file.buffer);
-
   const row = await insertFile({
     filename: file.originalname,
     mime_type: file.mimetype,
@@ -146,13 +162,83 @@ export async function updateFile(
   return toResponse(row);
 }
 
+/**
+ * Reference reads for the file-lifecycle protocol, owned by the modules that
+ * own the data — never their repositories. Importing the templates/pages
+ * repositories here would break the module boundary rule, and importing their
+ * services would cycle back through this module (both consume
+ * getFileRow/getFile). Implementations are injected once at the composition
+ * root (files.controller, next to the only production caller of removeFile);
+ * tests inject fakes directly.
+ */
+export interface FileReferenceCheckers {
+  findTemplatesUsingFile: (fileId: string) => Promise<Array<{ id: string; name: string }>>;
+  findPagesUsingFile: (fileId: string) => Promise<Array<{ id: string; title: string }>>;
+}
+
+let referenceCheckers: FileReferenceCheckers | null = null;
+
+export function setFileReferenceCheckers(checkers: FileReferenceCheckers): void {
+  referenceCheckers = checkers;
+}
+
+function getFileReferenceCheckers(): FileReferenceCheckers {
+  if (!referenceCheckers) {
+    logger.error('file reference checkers are not configured — refusing to delete');
+    throw new AppError('File reference validation is not configured', 500);
+  }
+  return referenceCheckers;
+}
+
 export async function removeFile(id: string, actor: FileActor): Promise<void> {
-  const before = await findFileById(id);
-  if (!before) throw new AppError('File not found', 404);
+  const checkers = getFileReferenceCheckers();
 
-  await softDeleteFile(id);
+  // File-lifecycle protocol: deletion and "attach from library" serialize on
+  // the same advisory lock for this file id. The reference re-check, the live
+  // row re-read, and the soft-delete all run inside the lock, so a concurrent
+  // attach either completes first (and is then seen by the re-check → 409) or
+  // runs after the soft-delete commits (and sees the row as gone → 404).
+  // Without this, check-then-act interleavings orphan template attachments
+  // pointing at an unlinked disk file, failing future sends.
+  const deleted = await withAdvisoryLock(advisoryLockKey('file-lifecycle', id), async () => {
+    const before = await findFileById(id);
+    if (!before) throw new AppError('File not found', 404);
+    const [templates, pages] = await Promise.all([
+      checkers.findTemplatesUsingFile(id),
+      checkers.findPagesUsingFile(id),
+    ]);
+    if (templates.length > 0 || pages.length > 0) {
+      const parts: string[] = [];
+      if (templates.length > 0) {
+        parts.push(
+          `${templates.length} template${templates.length === 1 ? '' : 's'} (${templates
+            .slice(0, 5)
+            .map((t) => `"${t.name}"`)
+            .join(', ')}${templates.length > 5 ? ', …' : ''})`,
+        );
+      }
+      if (pages.length > 0) {
+        parts.push(
+          `${pages.length} landing page${pages.length === 1 ? '' : 's'} (${pages
+            .slice(0, 5)
+            .map((p) => `"${p.title}"`)
+            .join(', ')}${pages.length > 5 ? ', …' : ''})`,
+        );
+      }
+      throw new AppError(
+        `Cannot delete "${before.filename}" — it is still used by ${parts.join(' and ')}. Remove it from those items first, then delete.`,
+        409,
+        { references: { templates, pages } },
+      );
+    }
 
-  await unlink(before.storage_path).catch((err) =>
+    await softDeleteFile(id);
+    return { storagePath: before.storage_path, filename: before.filename };
+  });
+
+  // Filesystem work cannot roll back, so it runs after the lock commits.
+  // A concurrent attach landing here sees the soft-deleted row as gone.
+  await unlink(deleted.storagePath).catch((err) =>
     logger.warn('failed to delete library file from disk', {
       fileId: id,
       error: (err as Error).message,
@@ -164,7 +250,7 @@ export async function removeFile(id: string, actor: FileActor): Promise<void> {
     action: 'file.deleted',
     entityType: 'file',
     entityId: id,
-    oldValue: { filename: before.filename },
+    oldValue: { filename: deleted.filename },
     ipAddress: actor.ipAddress ?? null,
   });
 }

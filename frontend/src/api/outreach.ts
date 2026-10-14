@@ -2,6 +2,20 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from './client';
 import type { ApiResponse, PaginatedResponse } from './client';
 
+/** Confirm outreach opt-out with the opaque token from the recipient's email. */
+export function useUnsubscribeOutreach() {
+  return useMutation({ mutationFn: async (token: string): Promise<void> => {
+    await apiClient.post('/outreach/unsubscribe', { token });
+  } });
+}
+
+/** Save optional feedback after the recipient has already unsubscribed. */
+export function useUnsubscribeFeedback() {
+  return useMutation({ mutationFn: async (input: { token: string; reason: string }): Promise<void> => {
+    await apiClient.post('/outreach/unsubscribe', input);
+  } });
+}
+
 // ── Sequence types ─────────────────────────────────────────────────────────
 
 export interface SequenceStep {

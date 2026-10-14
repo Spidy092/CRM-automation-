@@ -7,9 +7,12 @@ jest.mock('../../shared/utils/db', () => ({
 
 import { pool, query, queryOne, withTransaction } from '../../shared/utils/db';
 import {
+  bulkUpdateLeads,
+  findLeadEnrollmentOptions,
   findLeads,
   countLeads,
   findLeadById,
+  findDueFollowUpLeads,
   findExistingForDedup,
   findLeadsByScraperLogId,
   findLeadsByIds,
@@ -20,6 +23,7 @@ import {
   updateLeadOutcome,
   runInTransaction,
   findActivityForLead,
+  findLeadTimeline,
 } from './leads.repository';
 import { LeadInput, LeadListFilters, LeadRow } from './leads.types';
 
@@ -164,7 +168,10 @@ describe('findLeadById', () => {
     mockQueryOne.mockResolvedValue(sampleRow);
     const result = await findLeadById('lead-1');
     expect(result).toEqual(sampleRow);
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('WHERE id = $1 AND deleted_at IS NULL'), ['lead-1']);
+    expect(mockQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE id = $1 AND deleted_at IS NULL'),
+      ['lead-1'],
+    );
   });
 
   it('returns null when not found', async () => {
@@ -173,15 +180,54 @@ describe('findLeadById', () => {
   });
 });
 
+describe('findDueFollowUpLeads', () => {
+  it('uses a stable timestamp and id cursor for later pages', async () => {
+    mockPoolQuery.mockResolvedValue({ rows: [] });
+    const cursor = {
+      nextFollowUpAt: '2026-10-01T09:00:00.000Z',
+      id: '00000000-0000-4000-8000-000000000001',
+    };
+
+    await findDueFollowUpLeads(25, cursor);
+
+    const [sql, params] = mockPoolQuery.mock.calls[0];
+    expect(sql).toContain('(next_follow_up_at, id) > ($2::timestamptz, $3::uuid)');
+    expect(sql).toContain('ORDER BY next_follow_up_at ASC, id ASC');
+    expect(params).toEqual([25, cursor.nextFollowUpAt, cursor.id]);
+  });
+});
+
 describe('findExistingForDedup', () => {
+  it('uses Google place identity rather than a shared contact', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await findExistingForDedup(
+      'no-reply@chain.test',
+      '+15551234567',
+      'google_business',
+      'branch-a',
+    );
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('google_place_id = $2'), [
+      'google_business',
+      'branch-a',
+    ]);
+    expect(mockQueryOne.mock.calls[0][0]).not.toContain('lower(email) =');
+  });
+
+  it('keeps contact deduplication for leads without provider identity', async () => {
+    mockQueryOne.mockResolvedValue(null);
+    await findExistingForDedup('a@chain.test', '+15551234567', 'google_business');
+    expect(mockQueryOne.mock.calls[0][0]).toContain('google_place_id IS NULL');
+  });
+
   it('queries with source, email and phone', async () => {
     mockQueryOne.mockResolvedValue(sampleRow);
     const result = await findExistingForDedup('jane@acme.test', '+15551234567', 'manual');
     expect(result).toEqual(sampleRow);
-    expect(mockQueryOne).toHaveBeenCalledWith(
-      expect.stringContaining('source_platform = $1'),
-      ['manual', 'jane@acme.test', '+15551234567'],
-    );
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('source_platform = $1'), [
+      'manual',
+      'jane@acme.test',
+      '+15551234567',
+    ]);
   });
 
   it('returns null when no duplicate', async () => {
@@ -253,10 +299,9 @@ describe('findLeadsByScraperLogId', () => {
     mockQuery.mockResolvedValue([sampleRow]);
     const result = await findLeadsByScraperLogId('log-1');
     expect(result).toEqual([sampleRow]);
-    expect(mockQuery).toHaveBeenCalledWith(
-      expect.stringContaining('scraper_log_id = $1'),
-      ['log-1'],
-    );
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('scraper_log_id = $1'), [
+      'log-1',
+    ]);
   });
 
   it('returns an empty array when the run created no leads', async () => {
@@ -351,7 +396,7 @@ describe('insertLead', () => {
 
 describe('updateLead', () => {
   it('updates scalar + json + tags fields with correct SQL', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     const result = await updateLead('lead-1', {
       business_name: 'New Name',
       email: 'NEW@ACME.TEST',
@@ -361,7 +406,7 @@ describe('updateLead', () => {
     });
     expect(result).toEqual(sampleRow);
 
-    const [sql, params] = mockQueryOne.mock.calls[0];
+    const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('business_name = $1');
     expect(sql).toContain('email = lower($2)'); // lower-cased branch
     expect(sql).toContain('social_links = $3::jsonb');
@@ -373,38 +418,38 @@ describe('updateLead', () => {
   });
 
   it('handles null scalar value and empty tags / null json', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', {
       website: null, // val ?? null branch
       social_links: null, // jsonArray(null) -> null
       custom_fields: null, // jsonArray(null) ?? '{}' -> '{}'
       tags: undefined as unknown as string[], // not present; skip — use explicit below
     });
-    const [, params] = mockQueryOne.mock.calls[0];
+    const [, params] = mockPoolQuery.mock.calls[0];
     // website null, social_links null, custom_fields '{}'
     expect(params).toContain(null);
     expect(params).toContain('{}');
   });
 
   it('passes empty array when tags set to null-ish', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', { tags: null as unknown as string[] });
-    const [sql, params] = mockQueryOne.mock.calls[0];
+    const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('tags = $1');
     expect(params[0]).toEqual([]); // input.tags ?? []
   });
 
   it('updates next_follow_up_at, including clearing it with null', async () => {
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', { next_follow_up_at: '2026-08-01T09:00:00Z' });
-    const [sql, params] = mockQueryOne.mock.calls[0];
+    const [sql, params] = mockPoolQuery.mock.calls[0];
     expect(sql).toContain('next_follow_up_at = $1');
     expect(params[0]).toBe('2026-08-01T09:00:00Z');
 
-    mockQueryOne.mockClear();
-    mockQueryOne.mockResolvedValue(sampleRow);
+    mockPoolQuery.mockClear();
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     await updateLead('lead-1', { next_follow_up_at: null });
-    const [, clearParams] = mockQueryOne.mock.calls[0];
+    const [, clearParams] = mockPoolQuery.mock.calls[0];
     expect(clearParams[0]).toBeNull();
   });
 
@@ -425,8 +470,10 @@ describe('updateLead', () => {
   });
 
   it('throws when update returns null', async () => {
-    mockQueryOne.mockResolvedValue(null);
-    await expect(updateLead('lead-1', { business_name: 'X' })).rejects.toThrow('Lead not found or deleted');
+    mockPoolQuery.mockResolvedValue({ rows: [] });
+    await expect(updateLead('lead-1', { business_name: 'X' })).rejects.toThrow(
+      'Lead not found or deleted',
+    );
   });
 });
 
@@ -434,10 +481,9 @@ describe('softDeleteLead', () => {
   it('issues update setting deleted_at', async () => {
     mockPoolQuery.mockResolvedValue({ rowCount: 1 });
     await softDeleteLead('lead-1');
-    expect(mockPoolQuery).toHaveBeenCalledWith(
-      expect.stringContaining('SET deleted_at = NOW()'),
-      ['lead-1'],
-    );
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('SET deleted_at = NOW()'), [
+      'lead-1',
+    ]);
   });
 });
 
@@ -446,7 +492,10 @@ describe('updateLeadStatus', () => {
     mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'paused' });
     const result = await updateLeadStatus('lead-1', 'paused');
     expect(result.status).toBe('paused');
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), ['paused', 'lead-1']);
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
+      'paused',
+      'lead-1',
+    ]);
   });
 
   it('throws when not found', async () => {
@@ -457,23 +506,27 @@ describe('updateLeadStatus', () => {
 
 describe('updateLeadOutcome', () => {
   it('stamps won_at and clears lost_at when outcome is won', async () => {
-    mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'won', won_at: '2026-07-20T00:00:00Z' });
+    mockPoolQuery.mockResolvedValue({
+      rows: [{ ...sampleRow, status: 'won', won_at: '2026-07-20T00:00:00Z' }],
+    });
     const result = await updateLeadOutcome('lead-1', 'won');
     expect(result.status).toBe('won');
-    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('SET status = $1'), [
       'won',
       'lead-1',
     ]);
   });
 
   it('reopens the deal (clears both timestamps) when outcome is active', async () => {
-    mockQueryOne.mockResolvedValue({ ...sampleRow, status: 'active', won_at: null, lost_at: null });
+    mockPoolQuery.mockResolvedValue({
+      rows: [{ ...sampleRow, status: 'active', won_at: null, lost_at: null }],
+    });
     const result = await updateLeadOutcome('lead-1', 'active');
     expect(result.status).toBe('active');
   });
 
   it('throws when not found', async () => {
-    mockQueryOne.mockResolvedValue(null);
+    mockPoolQuery.mockResolvedValue({ rows: [] });
     await expect(updateLeadOutcome('x', 'lost')).rejects.toThrow('Lead not found or deleted');
   });
 });
@@ -495,5 +548,97 @@ describe('findActivityForLead', () => {
     const result = await findActivityForLead('lead-1', 50);
     expect(result).toEqual(entries);
     expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('UNION ALL'), ['lead-1', 50]);
+  });
+});
+
+describe('findLeadTimeline', () => {
+  it('merges activities and logs newest-first with a single cursor', async () => {
+    mockQuery.mockResolvedValue([
+      { id: 'act-1', source: 'activity', created_at: '2026-06-19T02:00:00.000Z' },
+      { id: 'log-1', source: 'message', created_at: '2026-06-19T01:00:00.000Z' },
+    ]);
+    const result = await findLeadTimeline({ leadId: 'lead-1', limit: 25, kind: 'all' });
+    expect(result.items).toHaveLength(2);
+    expect(result.meta.hasMore).toBe(false);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('UNION ALL');
+    expect(sql).toContain('ORDER BY t.created_at DESC, t.id DESC');
+    expect((params as unknown[])[0]).toBe('lead-1');
+    expect((params as unknown[]).at(-1)).toBe(26);
+  });
+
+  it('restricts branches for the notes kind and supports pinned_only', async () => {
+    mockQuery.mockResolvedValue([]);
+    const result = await findLeadTimeline({
+      leadId: 'lead-1',
+      limit: 10,
+      kind: 'notes',
+      pinnedOnly: true,
+    });
+    expect(result.items).toEqual([]);
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain(`a.type IN ($2)`);
+    expect(sql).toContain(`COALESCE((a.metadata->>'pinned')::boolean, false) = true`);
+    expect(sql).not.toContain('outreach_logs');
+  });
+
+  it('maps call and phone_call to the same channel across sources', async () => {
+    mockQuery.mockResolvedValue([]);
+    await findLeadTimeline({ leadId: 'lead-1', limit: 25, kind: 'messages', channel: 'call' });
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('outreach_logs');
+    expect(params).toContain('call');
+    expect(params).toContain('phone_call');
+  });
+
+  it('excludes message rows when filtering by author', async () => {
+    mockQuery.mockResolvedValue([]);
+    await findLeadTimeline({ leadId: 'lead-1', limit: 25, kind: 'all', authorId: 'user-1' });
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).not.toContain('outreach_logs');
+    expect(params).toContain('user-1');
+  });
+
+  it('returns nextCursor when more pages exist', async () => {
+    mockQuery.mockResolvedValue([
+      { id: 'act-1', source: 'activity', created_at: '2026-06-19T02:00:00.000Z' },
+      { id: 'act-2', source: 'activity', created_at: '2026-06-19T01:00:00.000Z' },
+    ]);
+    const result = await findLeadTimeline({
+      leadId: 'lead-1',
+      limit: 1,
+      kind: 'all',
+      cursorTs: '2026-06-20T00:00:00.000Z',
+      cursorId: 'act-9',
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.meta.hasMore).toBe(true);
+    expect(result.meta.nextCursor).toBeDefined();
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain('(t.created_at, t.id) < (');
+  });
+});
+
+describe('findLeadEnrollmentOptions', () => {
+  it('returns sources and tags without exposing lead records', async () => {
+    mockPoolQuery.mockResolvedValue({ rows: [{ sources: ['custom_source'], tags: ['vip'] }] });
+    expect(await findLeadEnrollmentOptions()).toEqual({
+      sources: ['custom_source'],
+      tags: ['vip'],
+    });
+    expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('deleted_at IS NULL');
+  });
+});
+
+describe('bulk tag append', () => {
+  it('merges tags atomically in the database and deduplicates without overwriting existing tags', async () => {
+    mockPoolQuery.mockResolvedValue({ rowCount: 2 });
+    expect(await bulkUpdateLeads(['lead-1', 'lead-2'], { tags: ['school'] }, true)).toBe(2);
+    expect(mockPoolQuery).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(tags, '{}'::text[]) || $1::text[]"),
+      [['school'], ['lead-1', 'lead-2']],
+    );
+    expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('SELECT DISTINCT tag');
+    expect(mockPoolQuery.mock.calls.at(-1)[0]).toContain('deleted_at IS NULL');
   });
 });

@@ -14,6 +14,12 @@ jest.mock('./pages.repository', () => ({
 
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('../files/files.service', () => ({ getFile: jest.fn() }));
+// Advisory-lock passthrough (same rationale as files.service.test.ts).
+jest.mock('../../shared/utils/db', () => ({
+  advisoryLockKey: jest.fn((namespace: string, id: string) => `${namespace}:${id}`),
+  withAdvisoryLock: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+  withAdvisoryLocks: jest.fn((_keys: string[], fn: () => Promise<unknown>) => fn()),
+}));
 
 import {
   listPages,
@@ -191,6 +197,48 @@ describe('createPage', () => {
     expect(result).toEqual(baseRow);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'page.created' }));
   });
+
+  it('locks referenced files in sorted order and re-reads each while locked', async () => {
+    (findPageBySlug as jest.Mock).mockResolvedValue(null);
+    (insertPage as jest.Mock).mockResolvedValue(baseRow);
+    (getFile as jest.Mock).mockResolvedValue({ id: 'f1' });
+    const { withAdvisoryLocks } = await import('../../shared/utils/db');
+
+    await createPage(
+      {
+        title: 'Gallery',
+        slug: 'gallery',
+        description: null,
+        blocks: [
+          { type: 'gallery', fileIds: ['f-b', 'f-a'] },
+          { type: 'attachment', fileId: 'f-c', label: 'Doc' },
+        ],
+      },
+      actor,
+    );
+
+    expect(withAdvisoryLocks).toHaveBeenCalledWith(
+      ['file-lifecycle:f-a', 'file-lifecycle:f-b', 'file-lifecycle:f-c'],
+      expect.any(Function),
+    );
+    const lockOrder = (withAdvisoryLocks as jest.Mock).mock.invocationCallOrder[0];
+    for (const callOrder of (getFile as jest.Mock).mock.invocationCallOrder) {
+      expect(callOrder).toBeGreaterThan(lockOrder);
+    }
+    expect(insertPage).toHaveBeenCalled();
+  });
+
+  it('rejects with 404 naming the file when a referenced file is gone', async () => {
+    (findPageBySlug as jest.Mock).mockResolvedValue(null);
+    (getFile as jest.Mock).mockRejectedValue({ statusCode: 404, isAppError: true });
+    await expect(
+      createPage(
+        { title: 'Gallery', slug: 'gallery', description: null, blocks: [{ type: 'gallery', fileIds: ['gone'] }] },
+        actor,
+      ),
+    ).rejects.toMatchObject({ statusCode: 404, message: expect.stringContaining('gone') });
+    expect(insertPage).not.toHaveBeenCalled();
+  });
 });
 
 describe('updatePage', () => {
@@ -215,6 +263,37 @@ describe('updatePage', () => {
     const result = await updatePage('p1', { title: 'Renamed' }, actor);
     expect(result.title).toBe('Renamed');
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'page.updated' }));
+  });
+
+  it('takes no lifecycle locks for block-free edits', async () => {
+    (findPageById as jest.Mock).mockResolvedValue(baseRow);
+    (updatePageRepo as jest.Mock).mockResolvedValue(baseRow);
+    const { withAdvisoryLocks } = await import('../../shared/utils/db');
+    await updatePage('p1', { title: 'Renamed' }, actor);
+    expect(withAdvisoryLocks).toHaveBeenCalledWith([], expect.any(Function));
+    expect(getFile).not.toHaveBeenCalled();
+  });
+
+  it('validates rewritten blocks against live files inside the lock', async () => {
+    (findPageById as jest.Mock).mockResolvedValue(baseRow);
+    (updatePageRepo as jest.Mock).mockResolvedValue(baseRow);
+    (getFile as jest.Mock).mockResolvedValue({ id: 'f1' });
+    const { withAdvisoryLocks } = await import('../../shared/utils/db');
+
+    await updatePage('p1', { blocks: [{ type: 'attachment', fileId: 'f1', label: 'Doc' }] }, actor);
+
+    expect(withAdvisoryLocks).toHaveBeenCalledWith(['file-lifecycle:f1'], expect.any(Function));
+    expect(getFile).toHaveBeenCalledWith('f1');
+    expect(updatePageRepo).toHaveBeenCalled();
+  });
+
+  it('rejects block rewrites referencing a deleted file', async () => {
+    (findPageById as jest.Mock).mockResolvedValue(baseRow);
+    (getFile as jest.Mock).mockRejectedValue({ statusCode: 404, isAppError: true });
+    await expect(
+      updatePage('p1', { blocks: [{ type: 'attachment', fileId: 'gone', label: 'Doc' }] }, actor),
+    ).rejects.toMatchObject({ statusCode: 404, message: expect.stringContaining('gone') });
+    expect(updatePageRepo).not.toHaveBeenCalled();
   });
 });
 

@@ -42,12 +42,10 @@ const LeadDetailPage = lazy(() => import('@/pages/LeadDetailPage').then(m => ({ 
 const TemplatesPage = lazy(() => import('@/pages/TemplatesPage').then(m => ({ default: m.TemplatesPage })));
 const TemplateFormPage = lazy(() => import('@/pages/TemplateFormPage').then(m => ({ default: m.TemplateFormPage })));
 const FilesLibraryPage = lazy(() => import('@/pages/FilesLibraryPage').then(m => ({ default: m.FilesLibraryPage })));
-const MessagesLibraryPage = lazy(() => import('@/pages/MessagesLibraryPage').then(m => ({ default: m.MessagesLibraryPage })));
 const PagesLibraryPage = lazy(() => import('@/pages/PagesLibraryPage').then(m => ({ default: m.PagesLibraryPage })));
 const PageEditorPage = lazy(() => import('@/pages/PageEditorPage').then(m => ({ default: m.PageEditorPage })));
 const PublicLandingPage = lazy(() => import('@/pages/PublicLandingPage').then(m => ({ default: m.PublicLandingPage })));
 const CustomFieldsPage = lazy(() => import('@/pages/CustomFieldsPage').then(m => ({ default: m.CustomFieldsPage })));
-const AIInboxPage = lazy(() => import('@/pages/AIInboxPage').then(m => ({ default: m.AIInboxPage })));
 const LeadAIProfilePage = lazy(() => import('@/pages/LeadAIProfilePage').then(m => ({ default: m.LeadAIProfilePage })));
 const CampaignBriefPage = lazy(() => import('@/pages/CampaignBriefPage').then(m => ({ default: m.CampaignBriefPage })));
 const AIDecisionLogPage = lazy(() => import('@/pages/AIDecisionLogPage').then(m => ({ default: m.AIDecisionLogPage })));
@@ -63,6 +61,7 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then(m => ({ defa
 const NewsletterPage = lazy(() => import('@/pages/NewsletterPage').then(m => ({ default: m.NewsletterPage })));
 const PublicSubscribePage = lazy(() => import('@/pages/PublicSubscribePage').then(m => ({ default: m.PublicSubscribePage })));
 const PublicNewsletterActionPage = lazy(() => import('@/pages/PublicNewsletterActionPage').then(m => ({ default: m.PublicNewsletterActionPage })));
+const PublicOutreachUnsubscribePage = lazy(() => import('@/pages/PublicOutreachUnsubscribePage').then(m => ({ default: m.PublicOutreachUnsubscribePage })));
 const AccountPage = lazy(() => import('@/pages/AccountPage').then(m => ({ default: m.AccountPage })));
 
 const queryClient = new QueryClient({
@@ -197,7 +196,7 @@ function App() {
                 }
               >
                 <Route index element={<LazyPage><DashboardPage /></LazyPage>} />
-                <Route path="ai-inbox" element={<LazyPage><AIInboxPage /></LazyPage>} />
+                <Route path="ai-inbox" element={<Navigate to="/?copilot=approvals" replace />} />
                 <Route path="leads" element={<LazyPage><LeadsPage /></LazyPage>} />
                 <Route path="leads/new" element={<LazyPage><LeadFormPage /></LazyPage>} />
                 <Route path="leads/import" element={<LazyPage><ImportLeadsPage /></LazyPage>} />
@@ -251,7 +250,7 @@ function App() {
                 <Route path="templates/new" element={<LazyPage><TemplateFormPage /></LazyPage>} />
                 <Route path="templates/:id/edit" element={<LazyPage><TemplateFormPage /></LazyPage>} />
                 <Route path="files" element={<LazyPage><FilesLibraryPage /></LazyPage>} />
-                <Route path="messages" element={<LazyPage><MessagesLibraryPage /></LazyPage>} />
+                <Route path="messages/*" element={<Navigate to="/templates" replace />} />
                 <Route path="pages" element={<LazyPage><PagesLibraryPage /></LazyPage>} />
                 <Route path="pages/new" element={<LazyPage><PageEditorPage /></LazyPage>} />
                 <Route path="pages/:id/edit" element={<LazyPage><PageEditorPage /></LazyPage>} />
@@ -270,6 +269,8 @@ function App() {
               <Route path="/p/:slug" element={<LazyPage><PublicLandingPage /></LazyPage>} />
               <Route path="/subscribe" element={<LazyPage><PublicSubscribePage /></LazyPage>} />
               <Route path="/newsletter/:action" element={<LazyPage><PublicNewsletterActionPage /></LazyPage>} />
+              <Route path="/outreach/unsubscribe" element={<LazyPage><PublicOutreachUnsubscribePage /></LazyPage>} />
+              <Route path="/unsubscribe" element={<LazyPage><PublicOutreachUnsubscribePage /></LazyPage>} />
               <Route path="*" element={<LazyPage><NotFoundPage /></LazyPage>} />
             </Routes>
           </AppInitializer>

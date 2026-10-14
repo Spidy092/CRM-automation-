@@ -1,10 +1,24 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import type { Request, Response } from 'express';
-import { sseHandler } from './notifications.controller';
+import {
+  sseHandler,
+  mintSseTicketHandler,
+  consumeSseTicket,
+  revokeUserSseStreams,
+  SSE_STREAM_MAX_DURATION_MS,
+} from './notifications.controller';
 import * as emitter from './notifications.emitter';
 
 jest.mock('./notifications.emitter', () => ({
   subscribeUser: jest.fn(),
+  pushToUser: jest.fn(async () => undefined),
+}));
+jest.mock('../../shared/utils/redis', () => ({
+  redis: {
+    get: jest.fn(async () => null),
+    set: jest.fn(async () => 'OK'),
+    getdel: jest.fn(async () => null),
+  },
 }));
 jest.mock('../../shared/utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -29,6 +43,7 @@ interface MockRes extends Partial<Response> {
   _writes: string[];
   _headers: Record<string, string>;
   _clearedIntervals: number[];
+  end: jest.Mock<any>;
 }
 
 function buildRes(): MockRes {
@@ -46,6 +61,7 @@ function buildRes(): MockRes {
     write: jest.fn(),
     status: jest.fn(),
     json: jest.fn(),
+    end: jest.fn(),
   } as unknown as MockRes;
 
   (res.setHeader as jest.Mock<any>).mockImplementation((name: string, value: string) => {
@@ -177,5 +193,95 @@ describe('sseHandler', () => {
     expect(res.write).toHaveBeenCalledWith(
       expect.stringContaining('"id":"n-9"'),
     );
+  });
+
+  it('expires stream after max duration, emitting stream_expired and closing', () => {
+    mockedEmitter.subscribeUser.mockReturnValue(jest.fn());
+    const req = buildReq();
+    const res = buildRes();
+
+    sseHandler(req as unknown as Request, res as unknown as Response);
+
+    jest.advanceTimersByTime(SSE_STREAM_MAX_DURATION_MS);
+    (res as unknown as { _restore: () => void })._restore();
+
+    expect(res.write).toHaveBeenCalledWith(
+      expect.stringContaining('event: stream_expired'),
+    );
+    expect(res.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes active user streams when revokeUserSseStreams is called', async () => {
+    mockedEmitter.subscribeUser.mockReturnValue(jest.fn());
+    const req = buildReq({ user: { id: 'u-revoked', role: 'sales', name: 'Revoked', email: 'revoked@test.com' } });
+    const res = buildRes();
+
+    sseHandler(req as unknown as Request, res as unknown as Response);
+
+    const closed = await revokeUserSseStreams('u-revoked', 'Security policy');
+    (res as unknown as { _restore: () => void })._restore();
+
+    expect(closed).toBe(1);
+    expect(res.write).toHaveBeenCalledWith(
+      expect.stringContaining('event: stream_revoked'),
+    );
+    expect(res.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes stream when stream_revoked notification is received via pubsub', () => {
+    let registeredHandler: ((n: unknown) => void) | undefined;
+    mockedEmitter.subscribeUser.mockImplementation((_userId, handler) => {
+      registeredHandler = handler as (n: unknown) => void;
+      return jest.fn();
+    });
+
+    const req = buildReq({ user: { id: 'u-sub-revoked', role: 'sales', name: 'Revoked', email: 'r@test.com' } });
+    const res = buildRes();
+
+    sseHandler(req as unknown as Request, res as unknown as Response);
+    (res as unknown as { _restore: () => void })._restore();
+
+    registeredHandler!({
+      id: 'rev-1',
+      type: 'stream_revoked',
+      title: 'Session revoked',
+      message: 'Admin revoked',
+      timestamp: '2026-10-10T00:00:00Z',
+    });
+
+    expect(res.write).toHaveBeenCalledWith(
+      expect.stringContaining('event: stream_revoked'),
+    );
+    expect(res.end).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('mintSseTicketHandler & consumeSseTicket revocation checks', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('mintSseTicketHandler rejects revoked user with 401', async () => {
+    const { redis } = require('../../shared/utils/redis');
+    (redis.get as unknown as jest.Mock<any>).mockResolvedValueOnce('User logged out');
+
+    const req = buildReq({ user: { id: 'u-banned', role: 'sales', name: 'Banned', email: 'b@test.com' } });
+    const res = buildRes();
+
+    await mintSseTicketHandler(req as unknown as Request, res as unknown as Response);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'User session has been revoked' });
+  });
+
+  it('consumeSseTicket returns null if user is marked revoked in Redis', async () => {
+    const { redis } = require('../../shared/utils/redis');
+    (redis.getdel as unknown as jest.Mock<any>).mockResolvedValueOnce(
+      JSON.stringify({ id: 'u-banned', role: 'sales', name: 'Banned', email: 'b@test.com' }),
+    );
+    (redis.get as unknown as jest.Mock<any>).mockResolvedValueOnce('User logged out');
+
+    const result = await consumeSseTicket('some-ticket');
+    expect(result).toBeNull();
   });
 });

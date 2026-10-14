@@ -23,9 +23,13 @@ export interface MessageSnippetInput {
   file_ids?: string[];
 }
 
-export function useMessageSnippets(filters: { channel?: MessageChannel; search?: string } = {}) {
+export function useMessageSnippets(
+  filters: { channel?: MessageChannel; search?: string } = {},
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: ['messages', filters],
+    enabled: options.enabled,
     queryFn: async () => {
       const response = await apiClient.get<ApiResponse<MessageSnippet[]>>('/messages', {
         params: filters,

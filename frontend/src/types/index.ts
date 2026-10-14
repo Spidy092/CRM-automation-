@@ -142,7 +142,11 @@ export interface TemplateAttachment {
   mimeType: string;
   sizeBytes: number;
   url: string;
+  /** Set when the attachment references a Files-library entry (live reference, not a copy). */
+  libraryFileId?: string;
 }
+
+export type TemplateEditorMode = 'simple' | 'visual' | 'html';
 
 export interface Template {
   id: string;
@@ -156,6 +160,15 @@ export interface Template {
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
+  editor_mode: TemplateEditorMode;
+  /** Versioned visual-design document (visual mode only). */
+  design: unknown | null;
+  /** Rendered email HTML (visual) or sanitized custom HTML (html mode). */
+  html_body: string | null;
+  /** Plain-text alternative generated alongside html_body. */
+  text_body: string | null;
+  preheader: string | null;
+  archived_at: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -349,7 +362,29 @@ export interface ScraperConfig {
   created_at: string;
   updated_at: string;
   health: SourceHealth;
+  /** Honest source capability (what this source type can ever do). */
+  capability?: ScraperCapability;
+  /** Credential-reference presence — names only, never values. */
+  requirements?: Array<{ ref: string; label: string; met: boolean }>;
+  /** Normalized review-first research options from the config blob. */
+  research?: {
+    importMode: 'automatic' | 'review';
+    targets: {
+      industries: string[];
+      locations: string[];
+      requiredContactChannel: 'email' | 'phone' | 'either';
+      serviceCategories: Array<'website' | 'web_application' | 'ai_agent'>;
+    };
+  };
 }
+
+/** What a scraper source can honestly do — never more than its channel allows. */
+export type ScraperCapability =
+  | 'discovery'
+  | 'configured_page_enrichment'
+  | 'webhook_ingestion'
+  | 'manual_import'
+  | 'actor_retrieval';
 
 export interface FailedScrapeItem {
   lead: Record<string, unknown>;
@@ -393,6 +428,8 @@ export interface ScraperStatsSummary {
   recordsImported: number;
   recordsDuplicate: number;
   recordsFailed: number;
+  /** Candidates staged for review but not yet imported (review-mode runs). */
+  reviewPending?: number;
 }
 
 export interface ScraperRunLeadsResult {
@@ -407,4 +444,51 @@ export interface DiscoveredPage {
   url: string;
   /** Nav link text, or the page path when no link text is available. */
   label: string;
+}
+
+/** AI-suggested selectors with bounded evidence for operator review. */
+export interface DetectSelectorsResult {
+  containerSelector: string;
+  selectors: Record<string, string>;
+  /** Bounded match counts per surviving selector. */
+  matchCounts?: Record<string, number>;
+  /** Up to 3 text samples per selector. */
+  samples?: Record<string, string[]>;
+}
+
+export type ResearchContactState =
+  | 'observed'
+  | 'malformed'
+  | 'disposable'
+  | 'dns_supported'
+  | 'unknown'
+  | 'synthetic';
+
+export interface StagedResearchContact {
+  channel: 'email' | 'phone';
+  value: string;
+  provenance: string;
+  state: ResearchContactState;
+}
+
+/** A research candidate staged on a run log for review before import. */
+export interface StagedResearchCandidate {
+  provider: { kind: string; id: string };
+  source: { sourceType: string; configId?: string; runId?: string; collectedAt: string };
+  business: {
+    name: string;
+    website: string | null;
+    sourceUrls: string[];
+    location: string;
+    industry: string;
+  };
+  contacts: StagedResearchContact[];
+  evidence: Array<{ snippet: string; url?: string; kind: string }>;
+  observedOpportunities: Array<{ fact: string; evidenceUrl?: string }>;
+  modelSuggestions: Array<{ suggestion: string; evidenceUrl?: string }>;
+  targetFit: number;
+  contactQuality: number;
+  eligibility: 'eligible' | 'research_only' | 'rejected';
+  rejectionReasons: string[];
+  suggestedService: 'website' | 'web_application' | 'ai_agent' | 'none';
 }

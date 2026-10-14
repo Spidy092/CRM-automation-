@@ -40,6 +40,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     sessionStorage.removeItem('session_active');
     localStorage.removeItem('refreshToken');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:logout'));
+    }
     set({ user: null, accessToken: null, isAuthenticated: false });
   },
 

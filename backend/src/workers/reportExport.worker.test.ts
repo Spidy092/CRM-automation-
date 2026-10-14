@@ -26,6 +26,9 @@ jest.mock('./queue', () => ({
   REPORT_EXPORT: 'report:export',
 }));
 
+jest.mock('../modules/notifications/notifications.service', () => ({
+  createNotification: jest.fn().mockResolvedValue({ ok: true, data: {} }),
+}));
 jest.mock('../modules/notifications/notifications.emitter', () => ({
   pushToUser: jest.fn().mockResolvedValue(undefined),
 }));
@@ -67,6 +70,8 @@ import {
   findCampaignAnalytics,
   findIntegrationHealth,
 } from '../modules/reports/reports.repository';
+import { createNotification } from '../modules/notifications/notifications.service';
+import { AppError } from '../../src/shared/middleware/errorHandler';
 import fs from 'fs';
 import xlsx from 'xlsx';
 
@@ -465,5 +470,25 @@ describe('handleReportExport', () => {
     const written = (fs.writeFileSync as jest.Mock).mock.calls[0][1] as string;
     expect(written).toContain('totalLeads,qualifiedLeads');
     expect(written).toContain('10,5');
+  });
+
+  it('rethrows when createNotification fails so BullMQ retries the export job', async () => {
+    (findDashboardMetrics as jest.Mock).mockResolvedValue(baseDashboardMetrics);
+    (createNotification as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      error: new AppError('Notification DB down', 500),
+    });
+
+    await expect(
+      handleReportExport(
+        {
+          reportType: 'dashboard',
+          format: 'csv',
+          actorId: 'user1',
+          actorRole: 'admin',
+        },
+        'job-fail',
+      ),
+    ).rejects.toThrow('Notification DB down');
   });
 });

@@ -44,6 +44,26 @@ describe('Campaigns Routes', () => {
     });
   });
 
+  describe('GET /campaigns/enrollment-options', () => {
+    it('returns available options before the campaign id route', async () => {
+      (campaignsService.getCampaignEnrollmentOptions as jest.Mock).mockResolvedValue({ sources: ['facebook'], tags: ['vip'] });
+      const res = await request(app).get('/campaigns/enrollment-options');
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual({ sources: ['facebook'], tags: ['vip'] });
+      expect(campaignsService.getCampaignById).not.toHaveBeenCalled();
+    });
+    it('rejects unexpected query inputs', async () => {
+      const res = await request(app).get('/campaigns/enrollment-options?source=raw');
+      expect(res.status).toBe(422);
+      expect(campaignsService.getCampaignEnrollmentOptions).not.toHaveBeenCalled();
+    });
+    it('forwards errors', async () => {
+      (campaignsService.getCampaignEnrollmentOptions as jest.Mock).mockRejectedValue(new Error('unavailable'));
+      const res = await request(app).get('/campaigns/enrollment-options');
+      expect(res.status).toBe(500);
+    });
+  });
+
   describe('GET /campaigns/:id', () => {
     it('returns 200 and a campaign', async () => {
       (campaignsService.getCampaignById as jest.Mock).mockResolvedValue({ id: 'campaign-1' });

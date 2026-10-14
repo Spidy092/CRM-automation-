@@ -44,15 +44,19 @@ beforeEach(() => {
 describe('findForms', () => {
   it('parses stringified fields/email_settings JSON columns', async () => {
     mockQuery.mockResolvedValueOnce([
-      { ...BASE_FORM, fields: JSON.stringify(BASE_FORM.fields), email_settings: JSON.stringify({ autoReply: { enabled: true } }) },
+      {
+        ...BASE_FORM,
+        fields: JSON.stringify(BASE_FORM.fields),
+        email_settings: JSON.stringify({ autoReply: { enabled: true } }),
+      },
     ]);
     const result = await findForms(20, 0);
     expect(result[0].fields).toEqual(BASE_FORM.fields);
     expect(result[0].email_settings).toEqual({ autoReply: { enabled: true } });
-    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('ORDER BY created_at DESC'), [
-      20,
-      0,
-    ]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('ORDER BY created_at DESC'),
+      [20, 0],
+    );
   });
 
   it('defaults fields to an empty array when JSON parsing fails', async () => {
@@ -83,7 +87,11 @@ describe('countForms', () => {
 
 describe('findFormById', () => {
   it('returns the mapped form when found', async () => {
-    mockQueryOne.mockResolvedValueOnce({ ...BASE_FORM, fields: BASE_FORM.fields, email_settings: {} });
+    mockQueryOne.mockResolvedValueOnce({
+      ...BASE_FORM,
+      fields: BASE_FORM.fields,
+      email_settings: {},
+    });
     const result = await findFormById('f1');
     expect(result?.id).toBe('f1');
   });
@@ -246,6 +254,7 @@ describe('getFormAnalytics', () => {
 
     const result = await getFormAnalytics('f1');
     expect(result).toEqual({
+      failedLeadSubmissions: 0,
       totalSubmissions: 10,
       uniqueLeads: 4,
       submissionsByDay: [{ date: '2026-01-01', count: 3 }],

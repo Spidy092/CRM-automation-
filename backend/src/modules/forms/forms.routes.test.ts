@@ -15,7 +15,11 @@ jest.mock('./forms.controller', () => ({
 }));
 
 jest.mock('../../shared/middleware/rbac', () => ({
-  authorize: jest.fn((..._roles: string[]) => (req: Request, res: Response, next: NextFunction) => next()),
+  authorize: jest.fn(
+    (..._roles: string[]) =>
+      (req: Request, res: Response, next: NextFunction) =>
+        next(),
+  ),
 }));
 import { authorize } from '../../shared/middleware/rbac';
 const mockAuthorize = authorize as unknown as jest.Mock;

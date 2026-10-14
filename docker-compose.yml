@@ -74,6 +74,7 @@ services:
       - '3000:3000'
     volumes:
       - ./backend/src:/app/src
+      - ./backend/uploads:/app/uploads
       - ./migrations:/app/migrations
     command: npm run dev
 
@@ -99,6 +100,7 @@ services:
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL:-}
     volumes:
       - ./backend/src:/app/src
+      - ./backend/uploads:/app/uploads
     command: npm run worker
 
   # NOTE: BullMQ workers (scoring, round-robin assignment) are wired in

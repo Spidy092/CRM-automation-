@@ -43,6 +43,10 @@ COPY --from=builder --chown=crm:crm /app/node_modules ./node_modules
 COPY --from=builder --chown=crm:crm /app/dist ./dist
 COPY --from=builder --chown=crm:crm /app/package.json ./package.json
 
+# Upload services write beneath /app/uploads as the non-root crm user.
+RUN mkdir -p /app/uploads/files /app/uploads/templates \
+ && chown -R crm:crm /app/uploads
+
 # Migrations live at the repo root, not inside backend/
 # In prod compose, the host ./migrations directory is mounted at /migrations
 # and referenced via NODE_PG_MIGRATE_DIR or by symlink. We copy the

@@ -1,4 +1,5 @@
 jest.mock('./outreach.controller', () => ({
+  unsubscribeOutreachHandler: jest.fn(),
   listSequencesHandler: jest.fn(),
   getSequenceHandler: jest.fn(),
   createSequenceHandler: jest.fn(),
@@ -23,6 +24,7 @@ jest.mock('../../shared/middleware/rbac', () => ({
 }));
 
 jest.mock('../../shared/middleware/rateLimiter', () => ({
+  publicLimiter: jest.fn((_req: any, _res: any, next: any) => next()),
   authenticatedLimiter: jest.fn((_req: any, _res: any, next: any) => next()),
 }));
 
@@ -100,6 +102,14 @@ describe('outreach routes', () => {
     });
     await request(app).post('/outreach/tasks').send({}).expect(201);
     expect(controller.createTaskHandler).toHaveBeenCalled();
+  });
+
+  it('GET /outreach/tasks/:id calls getTaskHandler', async () => {
+    (controller.getTaskHandler as jest.Mock).mockImplementation((_req: any, res: any) => {
+      res.json({ success: true, data: {} });
+    });
+    await request(app).get('/outreach/tasks/t1').expect(200);
+    expect(controller.getTaskHandler).toHaveBeenCalled();
   });
 
   it('PUT /outreach/tasks/:id calls updateTaskHandler', async () => {
