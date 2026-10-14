@@ -15,6 +15,7 @@ import {
   discoverPagesHandler,
   getRunLeadsHandler,
   retryFailedHandler,
+  importSelectedHandler,
   getStatsSummaryHandler,
   exportRunLeadsCsvHandler,
   getGroupsHandler,
@@ -38,6 +39,24 @@ router.get(
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
   wrap(listConfigsHandler),
 );
+
+// List distinct group names — all authenticated roles.
+// MUST be registered before /:id so Express does not treat "groups" as a
+// config ID and route this to getConfigHandler.
+router.get(
+  '/groups',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getGroupsHandler),
+);
+
+// Trend data for charts — all authenticated roles.
+// MUST be registered before /:id for the same reason as /groups.
+router.get(
+  '/trends',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getTrendsHandler),
+);
+
 router.get(
   '/:id',
   authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
@@ -68,21 +87,11 @@ router.get('/logs/:logId/leads', authorize('admin', 'manager'), wrap(getRunLeads
 // Retry just the records that failed on a run — admin only (triggers a new run)
 router.post('/logs/:logId/retry-failed', authorize('admin'), wrap(retryFailedHandler));
 
+// Import an explicit selection from a review-staged run — admin only
+// (creates leads; idempotent, never campaigns or messages).
+router.post('/logs/:logId/import-selected', authorize('admin'), wrap(importSelectedHandler));
+
 // Export leads from a run as CSV — admin and manager
 router.get('/logs/:logId/export', authorize('admin', 'manager'), wrap(exportRunLeadsCsvHandler));
-
-// List distinct group names — all authenticated roles
-router.get(
-  '/groups',
-  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
-  wrap(getGroupsHandler),
-);
-
-// Trend data for charts — all authenticated roles
-router.get(
-  '/trends',
-  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
-  wrap(getTrendsHandler),
-);
 
 export { router as scraperRoutes };

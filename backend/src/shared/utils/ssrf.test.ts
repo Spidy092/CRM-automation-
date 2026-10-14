@@ -1,5 +1,13 @@
 import { validateSafeUrl, isPrivateIp } from './ssrf';
 
+jest.mock('dns/promises', () => ({
+  __esModule: true,
+  default: {
+    lookup: jest.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+  },
+}));
+import dns from 'dns/promises';
+
 describe('SSRF Protection Utility', () => {
   describe('isPrivateIp', () => {
     it('identifies private IPv4 addresses correctly', () => {
@@ -15,6 +23,8 @@ describe('SSRF Protection Utility', () => {
       expect(isPrivateIp('::1')).toBe(true);
       expect(isPrivateIp('fe80::1')).toBe(true);
       expect(isPrivateIp('fc00::1')).toBe(true);
+      expect(isPrivateIp('::ffff:127.0.0.1')).toBe(true);
+      expect(isPrivateIp('::ffff:7f00:1')).toBe(true);
     });
   });
 
@@ -33,6 +43,23 @@ describe('SSRF Protection Utility', () => {
       await expect(validateSafeUrl('http://localhost:8080')).rejects.toThrow('SSRF protection');
       await expect(validateSafeUrl('http://169.254.169.254/latest/meta-data/')).rejects.toThrow('SSRF protection');
       await expect(validateSafeUrl('http://server.local')).rejects.toThrow('SSRF protection');
+    });
+
+    it('rejects public hostnames that resolve to private addresses', async () => {
+      (dns.lookup as jest.Mock).mockResolvedValueOnce([
+        { address: '93.184.216.34', family: 4 },
+        { address: '10.0.0.8', family: 4 },
+      ]);
+      await expect(validateSafeUrl('https://attacker.example/pixel')).rejects.toThrow(
+        'resolves to private IP',
+      );
+    });
+
+    it('fails closed when DNS returns no addresses', async () => {
+      (dns.lookup as jest.Mock).mockResolvedValueOnce([]);
+      await expect(validateSafeUrl('https://empty.example')).rejects.toThrow(
+        'resolved to no addresses',
+      );
     });
   });
 });

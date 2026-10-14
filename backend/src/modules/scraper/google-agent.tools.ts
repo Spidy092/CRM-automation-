@@ -137,19 +137,27 @@ export function createGoogleAgentAdapters(input: {
         throw new AppError('Business website credentials are forbidden', 400);
       seed.hash = '';
       seed.search = '';
-      // Only the Google-observed origin and fixed public pages can be visited; the model cannot supply URLs.
-      const pages = [seed.toString(), new URL('/contact', seed.origin).toString()];
+      // Only the Google-observed origin can be visited, and only its contact /
+      // about / services pages — discovered from the site's own links, never
+      // supplied by the model. Bounded: seed + /contact default + at most 2
+      // observed links, so one business cannot consume the run's budget.
+      const defaults = [seed.toString(), new URL('/contact', seed.origin).toString()];
       const evidence: string[] = [];
       let email: string | undefined;
       let emailSource: string | undefined;
-      for (const url of [...new Set(pages)]) {
+      let robotsUnavailable = false;
+      const inspect = async (url: string): Promise<string | null> => {
         assertBudget();
+        // A site whose robots policy cannot be obtained is not inspected at
+        // all — recorded once, not once per page.
+        if (robotsUnavailable) return null;
         try {
           if (!robotsCache.has(seed.origin)) {
             const robots = await page(new URL('/robots.txt', seed.origin).toString());
             if (robots.status !== 404 && robots.status !== 200) {
+              robotsUnavailable = true;
               evidence.push('Website robots policy unavailable; website was not inspected.');
-              break;
+              return null;
             }
             robotsCache.set(seed.origin, robots.status === 404 ? '' : robots.text);
           }
@@ -165,39 +173,83 @@ export function createGoogleAgentAdapters(input: {
             )
           ) {
             evidence.push('Website path excluded by robots policy.');
-            continue;
+            return null;
           }
           const response = await page(url);
           if (response.status !== 200 || !response.contentType.includes('text/html')) {
             evidence.push('Website page unavailable or redirects; not inspected.');
-            continue;
+            return null;
           }
-          const $ = cheerio.load(response.text);
-          $('script,style,noscript,svg').remove();
-          const text = $('body').text().replace(/\s+/g, ' ').trim();
-          evidence.push(text.slice(0, 1300));
-          if (!email) {
-            const emails: string[] = [];
-            $('a[href]').each((_i, element) => {
-              const href = $(element).attr('href') ?? '';
-              if (/^mailto:/i.test(href)) emails.push(href.slice(7).split('?')[0]);
-            });
-            emails.push(...(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []));
-            email = emails
-              .map((value) => value.trim().toLowerCase())
-              .find(
-                (value) =>
-                  z.string().email().safeParse(value).success &&
-                  !/\.(local|png|jpg|svg)$/i.test(value) &&
-                  !/^no-reply@/i.test(value) &&
-                  value.split('@')[0].length <= 64,
-              );
-            if (email) emailSource = url;
-          }
+          return response.text;
         } catch (error) {
           if (error instanceof AppError && error.statusCode === 422) throw error;
           evidence.push('Website could not be inspected safely.');
+          return null;
         }
+      };
+      const mineEmail = ($: cheerio.CheerioAPI, text: string, url: string): void => {
+        if (email) return;
+        const emails: string[] = [];
+        $('a[href]').each((_i, element) => {
+          const href = $(element).attr('href') ?? '';
+          if (/^mailto:/i.test(href)) emails.push(href.slice(7).split('?')[0]);
+        });
+        emails.push(...(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []));
+        const found = emails
+          .map((value) => value.trim().toLowerCase())
+          .find(
+            (value) =>
+              z.string().email().safeParse(value).success &&
+              !/\.(local|png|jpg|svg)$/i.test(value) &&
+              !/^no-reply@/i.test(value) &&
+              value.split('@')[0].length <= 64,
+          );
+        if (found) {
+          email = found;
+          emailSource = url;
+        }
+      };
+      // Seed first: its links determine which (if any) extra pages are observed.
+      const seedText = await inspect(defaults[0]);
+      const extraLinks: string[] = [];
+      if (seedText !== null) {
+        const $seed = cheerio.load(seedText);
+        $seed('script,style,noscript,svg').remove();
+        const text = $seed('body').text().replace(/\s+/g, ' ').trim();
+        evidence.push(text.slice(0, 1300));
+        mineEmail($seed, text, defaults[0]);
+        const seen = new Set(defaults);
+        $seed('a[href]').each((_i, element) => {
+          if (extraLinks.length >= 2) return;
+          const href = $seed(element).attr('href') ?? '';
+          let absolute: string;
+          try {
+            absolute = new URL(href, seed.origin).toString();
+          } catch {
+            return;
+          }
+          let parsed: URL;
+          try {
+            parsed = new URL(absolute);
+          } catch {
+            return;
+          }
+          // Observed same-origin contact/about/services links only.
+          if (parsed.origin !== seed.origin) return;
+          if (!/\/(contact|about|service|team|location)/i.test(parsed.pathname)) return;
+          if (seen.has(absolute)) return;
+          seen.add(absolute);
+          extraLinks.push(absolute);
+        });
+      }
+      for (const url of [...defaults.slice(1), ...extraLinks]) {
+        const text = await inspect(url);
+        if (text === null) continue;
+        const $ = cheerio.load(text);
+        $('script,style,noscript,svg').remove();
+        const body = $('body').text().replace(/\s+/g, ' ').trim();
+        evidence.push(body.slice(0, 1300));
+        mineEmail($, body, url);
       }
       return { ...candidate, email, emailSource, evidence: evidence.join(' ').slice(0, 3000) };
     },

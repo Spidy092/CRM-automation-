@@ -4,6 +4,7 @@ import {
   createConfigHandler,
   getRunLeadsHandler,
   retryFailedHandler,
+  importSelectedHandler,
   getStatsSummaryHandler,
   discoverPagesHandler,
   triggerScrapeHandler,
@@ -85,12 +86,13 @@ describe('Scraper Controller', () => {
 
   describe('getRunLeadsHandler', () => {
     it('returns leads for the run', async () => {
-      req.params = { logId: 'log-1' } as any;
+      const logId = 'a0000000-0000-0000-0000-000000000001';
+      req.params = { logId } as any;
       (service.getLeadsForRun as jest.Mock).mockResolvedValue([{ id: 'lead-1' }]);
 
       await getRunLeadsHandler(req as Request, res as Response, (() => {}) as any);
 
-      expect(service.getLeadsForRun).toHaveBeenCalledWith('log-1');
+      expect(service.getLeadsForRun).toHaveBeenCalledWith(logId);
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
         success: true,
@@ -99,7 +101,8 @@ describe('Scraper Controller', () => {
     });
 
     it('forwards errors to next', async () => {
-      req.params = { logId: 'missing' } as any;
+      const logId = 'a0000000-0000-0000-0000-000000000001';
+      req.params = { logId } as any;
       const err = new Error('not found');
       (service.getLeadsForRun as jest.Mock).mockRejectedValue(err);
       const next = jest.fn();
@@ -108,11 +111,22 @@ describe('Scraper Controller', () => {
 
       expect(next).toHaveBeenCalledWith(err);
     });
+
+    it('forwards validation error when logId is not a UUID', async () => {
+      req.params = { logId: 'not-a-uuid' } as any;
+      const next = jest.fn();
+
+      await getRunLeadsHandler(req as Request, res as Response, next as any);
+
+      expect(next).toHaveBeenCalled();
+      expect(service.getLeadsForRun).not.toHaveBeenCalled();
+    });
   });
 
   describe('retryFailedHandler', () => {
     it('retries failed items for the run', async () => {
-      req.params = { logId: 'log-1' } as any;
+      const logId = 'a0000000-0000-0000-0000-000000000001';
+      req.params = { logId } as any;
       (service.retryFailedItems as jest.Mock).mockResolvedValue({
         logId: 'retry-log-1',
         status: 'completed',
@@ -121,7 +135,7 @@ describe('Scraper Controller', () => {
       await retryFailedHandler(req as Request, res as Response, (() => {}) as any);
 
       expect(service.retryFailedItems).toHaveBeenCalledWith(
-        'log-1',
+        logId,
         expect.objectContaining({ id: '1', role: 'admin' }),
       );
       expect(res.status).toHaveBeenCalledWith(200);
@@ -129,6 +143,49 @@ describe('Scraper Controller', () => {
         success: true,
         data: { logId: 'retry-log-1', status: 'completed' },
       });
+    });
+  });
+
+  describe('importSelectedHandler', () => {
+    it('imports the selection with a 201 envelope', async () => {
+      const logId = 'a0000000-0000-0000-0000-000000000001';
+      req.params = { logId } as any;
+      req.body = { selection: ['UC1'] };
+      (service.importSelectedCandidates as jest.Mock).mockResolvedValue({
+        logId: 'import-log-1',
+        status: 'completed',
+      });
+
+      await importSelectedHandler(req as Request, res as Response, (() => {}) as any);
+
+      expect(service.importSelectedCandidates).toHaveBeenCalledWith(
+        logId,
+        ['UC1'],
+        expect.objectContaining({ id: '1', role: 'admin' }),
+      );
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('rejects non-UUID log ids before any service call', async () => {
+      req.params = { logId: 'not-a-uuid' } as any;
+      req.body = { selection: ['UC1'] };
+      const next = jest.fn();
+
+      await importSelectedHandler(req as Request, res as Response, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(service.importSelectedCandidates as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it('rejects empty selections before any service call', async () => {
+      req.params = { logId: 'a0000000-0000-0000-0000-000000000001' } as any;
+      req.body = { selection: [] };
+      const next = jest.fn();
+
+      await importSelectedHandler(req as Request, res as Response, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(service.importSelectedCandidates as jest.Mock).not.toHaveBeenCalled();
     });
   });
 

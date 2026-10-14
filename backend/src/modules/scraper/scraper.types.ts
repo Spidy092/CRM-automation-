@@ -35,6 +35,12 @@ export type SourceHealth = 'healthy' | 'failing' | 'unknown';
 
 export interface ScraperConfigWithHealth extends ScraperConfigRow {
   health: SourceHealth;
+  /** Honest source capability (what this source type can ever do). */
+  capability?: string;
+  /** Credential-reference presence check — names only, never values. */
+  requirements?: Array<{ ref: string; label: string; met: boolean }>;
+  /** Normalized review-first research options from the config blob. */
+  research?: { importMode: 'automatic' | 'review'; targets: Record<string, unknown> };
 }
 
 /** A single record that failed to import — enough to retry it without re-scraping. */
@@ -69,6 +75,8 @@ export interface ScraperStatsSummary {
   recordsImported: number;
   recordsDuplicate: number;
   recordsFailed: number;
+  /** Candidates staged for review but not yet imported (review-mode runs). */
+  reviewPending: number;
 }
 
 export interface ScraperConfigInput {
