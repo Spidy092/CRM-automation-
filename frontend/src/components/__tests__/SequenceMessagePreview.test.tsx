@@ -97,6 +97,36 @@ describe('SequenceMessagePreview', () => {
     expect(firstNameTags.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('renders legacy HTML email bodies in an isolated preview', () => {
+    const html = '<table><tr><td>Hello {{first_name}}</td></tr></table><script>alert(1)</script>';
+    const templates = new Map(templateById);
+    templates.set('tpl-1', { ...mockTemplates[0], body: html });
+    renderWithProviders(<SequenceMessagePreview sequence={mockSequence} templateById={templates} />);
+    const frame = screen.getByTitle(`Email preview: ${mockTemplates[0].name}`);
+    expect(frame).toHaveAttribute('srcdoc', html);
+    expect(frame).toHaveAttribute('sandbox', '');
+    expect(frame).toHaveAttribute('referrerpolicy', 'no-referrer');
+    expect(screen.queryByText(html)).not.toBeInTheDocument();
+  });
+
+  it('previews the saved HTML for visual and HTML editor templates', () => {
+    const templates = new Map(templateById);
+    templates.set('tpl-1', { ...mockTemplates[0], editor_mode: 'visual', body: 'Text fallback', html_body: '<h1>Designed email</h1>' });
+    templates.set('tpl-2', { ...mockTemplates[1], editor_mode: 'html', body: 'Text fallback', html_body: '<p>Custom email</p>' });
+    renderWithProviders(<SequenceMessagePreview sequence={mockSequence} templateById={templates} />);
+    expect(screen.getByTitle(`Email preview: ${mockTemplates[0].name}`)).toHaveAttribute('srcdoc', '<h1>Designed email</h1>');
+    expect(screen.getByTitle(`Email preview: ${mockTemplates[1].name}`)).toHaveAttribute('srcdoc', '<p>Custom email</p>');
+  });
+
+  it('keeps HTML-looking non-email messages as text', () => {
+    const sequence = { ...mockSequence, steps: [{ ...mockSequence.steps[0], channel: 'sms' as const }] };
+    const templates = new Map(templateById);
+    templates.set('tpl-1', { ...mockTemplates[0], channel: 'sms', body: '<strong>Hello</strong>' });
+    renderWithProviders(<SequenceMessagePreview sequence={sequence} templateById={templates} />);
+    expect(screen.getByText('<strong>Hello</strong>')).toBeInTheDocument();
+    expect(screen.queryByTitle(`Email preview: ${mockTemplates[0].name}`)).not.toBeInTheDocument();
+  });
+
   it('shows the portfolio filename and an edit link for the selected email', () => {
     const templates = new Map(templateById);
     templates.set('tpl-1', {

@@ -116,7 +116,11 @@ function StepPreviewCard({
 }) {
   const channelClass =
     CHANNEL_COLORS[step.channel] ?? 'bg-slate-50 border-slate-200 text-slate-800';
-  const portfolio = splitPortfolioButton(template?.body ?? '');
+  const previewBody = step.channel === 'email' && template?.editor_mode !== 'simple'
+    ? template?.html_body || template?.body || ''
+    : template?.body ?? '';
+  const portfolio = splitPortfolioButton(previewBody);
+  const isHtmlEmail = step.channel === 'email' && /<\/?[a-z][\s\S]*>/i.test(portfolio.text);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/30">
@@ -188,9 +192,24 @@ function StepPreviewCard({
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Message Body:
             </div>
-            <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-slate-700 dark:text-slate-300">
-              {renderTextWithVariables(portfolio.text)}
-            </div>
+            {isHtmlEmail ? (
+              <>
+                <iframe
+                  sandbox=""
+                  referrerPolicy="no-referrer"
+                  srcDoc={portfolio.text}
+                  title={`Email preview: ${template.name}`}
+                  className="h-[480px] w-full rounded border border-slate-200 bg-white"
+                />
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Preview only. Variables are filled when sent; email clients may display the message differently.
+                </p>
+              </>
+            ) : (
+              <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-slate-700 dark:text-slate-300">
+                {renderTextWithVariables(portfolio.text)}
+              </div>
+            )}
             {step.channel === 'email' && portfolio.url && (
               <a href={portfolio.url} target="_blank" rel="noopener noreferrer"
                 className="mt-3 inline-block rounded-md bg-indigo-700 px-5 py-3 text-sm font-semibold text-white">
