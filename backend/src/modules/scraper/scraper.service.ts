@@ -4,6 +4,9 @@ import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
 import { z } from 'zod';
 import type { Page, HTTPRequest, HTTPResponse } from 'puppeteer-core';
+import { request as httpRequest } from 'http';
+import { request as httpsRequest } from 'https';
+import type { LookupFunction } from 'net';
 import { fetchFormLeads } from '../integrations/facebook/facebook.connector';
 import {
   loadCredentials as loadApifyCredentials,
@@ -13,7 +16,7 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { logger } from '../../shared/utils/logger';
 import { normalizePhone } from '../../shared/utils/phone';
-import { validateSafeUrl, isHostnameBlocked } from '../../shared/utils/ssrf';
+import { validateSafeUrl, resolveSafeUrl, isHostnameBlocked } from '../../shared/utils/ssrf';
 import { getAiConfig } from '../ai-settings/ai-settings.service';
 import {
   ScraperConfigInput,
@@ -171,23 +174,21 @@ const MAX_FETCH_REDIRECTS = 5;
  * Bodies beyond this are rejected with 413 rather than buffered and mined —
  * silently truncating would produce partial contacts presented as complete.
  */
-const MAX_PAGE_BODY_CHARS = 2_000_000;
+const MAX_PAGE_BODY_BYTES = 2_000_000;
 
 /**
  * HTML-page fetch with redirect validation, timeout, and body caps.
  *
- * `fetch` follows redirects automatically with no validation, so a target
+ * A normal `fetch` follows redirects automatically with no validation, so a target
  * that 302s to `http://169.254.169.254/` bypasses the pre-flight SSRF guard.
  * This helper follows redirects manually (`redirect: 'manual'`), running
- * `validateSafeUrl` — hostname blocklist + DNS resolution vs private IPs —
- * on every hop, and rejects oversized bodies before they are mined.
+ * resolves and pins public DNS addresses on every hop, and streams the body
+ * under a strict byte cap before it is mined.
  *
- * Timeouts come from `fetchWithTimeout` (504 AppError, retryable). A 413
+ * Socket timeouts surface as a 504 AppError and are retryable. A 413
  * oversized-body error is a 4xx AppError and therefore NOT retried by
  * `isRetryableScrapeError` — retrying a huge page just re-downloads it.
  *
- * Test fakes (plain `{ ok, status, text }` objects without `headers`) skip
- * the header pre-check and go straight to the body cap.
  */
 async function fetchHtmlWithGuards(
   url: string,
@@ -198,8 +199,8 @@ async function fetchHtmlWithGuards(
   let response: Response | null = null;
 
   for (let hop = 0; hop <= MAX_FETCH_REDIRECTS; hop++) {
-    await validateSafeUrl(current);
-    const hopResponse = await fetchWithTimeout(current, { ...init, redirect: 'manual' }, timeoutMs);
+    const safe = await resolveSafeUrl(current);
+    const hopResponse = await requestPinnedPage(safe.url, safe.addresses, init, timeoutMs);
     const status = hopResponse.status ?? 0;
     const hopHeaders = hopResponse.headers as unknown as
       | { get?: (name: string) => string | null }
@@ -213,6 +214,7 @@ async function fetchHtmlWithGuards(
       typeof location === 'string' &&
       location.trim()
     ) {
+      await hopResponse.body?.cancel();
       try {
         current = new URL(location, current).toString();
       } catch {
@@ -228,29 +230,148 @@ async function fetchHtmlWithGuards(
     throw new AppError(`Too many redirects (>${MAX_FETCH_REDIRECTS}) for ${url}`, 400);
   }
 
-  // Declared-size pre-check (skipped when the caller fakes fetch without headers).
+  // Declared-size pre-check avoids opening a body reader for known oversized pages.
   const headers = response.headers as unknown as
     | { get?: (name: string) => string | null }
     | undefined;
   const declaredLength = typeof headers?.get === 'function' ? headers.get('content-length') : null;
   if (declaredLength !== null && declaredLength !== undefined && declaredLength !== '') {
     const parsed = Number(declaredLength);
-    if (Number.isFinite(parsed) && parsed > MAX_PAGE_BODY_CHARS) {
+    if (Number.isFinite(parsed) && parsed > MAX_PAGE_BODY_BYTES) {
       throw new AppError(
-        `Page body for ${current} declares ${parsed} bytes, over the ${MAX_PAGE_BODY_CHARS} cap`,
+        `Page body for ${current} declares ${parsed} bytes, over the ${MAX_PAGE_BODY_BYTES} byte cap`,
         413,
       );
     }
   }
 
-  const text = await response.text();
-  if (text.length > MAX_PAGE_BODY_CHARS) {
-    throw new AppError(
-      `Page body for ${current} exceeds the ${MAX_PAGE_BODY_CHARS}-character cap`,
-      413,
-    );
-  }
+  const text = await readBoundedResponseText(response, current);
   return { response, text };
+}
+
+async function requestPinnedPage(
+  url: string,
+  addresses: Array<{ address: string; family: number }>,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const parsed = new URL(url);
+  const pinnedLookup: LookupFunction = (_hostname, options, callback) => {
+    if (options && typeof options === 'object' && 'all' in options && options.all) {
+      callback(null, addresses);
+    } else {
+      const first = addresses[0];
+      callback(null, first.address, first.family);
+    }
+  };
+  const headers: Record<string, string> = {};
+  if (init.headers) {
+    new Headers(init.headers).forEach((value, name) => {
+      headers[name] = value;
+    });
+  }
+
+  return new Promise<Response>((resolve, reject) => {
+    const requester = parsed.protocol === 'https:' ? httpsRequest : httpRequest;
+    const request = requester(parsed, { headers, lookup: pinnedLookup }, (incoming) => {
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (Array.isArray(value)) {
+          for (const item of value) responseHeaders.append(name, item);
+        } else if (value !== undefined) {
+          responseHeaders.set(name, value);
+        }
+      }
+      const status = incoming.statusCode ?? 502;
+      let bytes = 0;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const declaredLength = Number(incoming.headers['content-length']);
+          if (Number.isFinite(declaredLength) && declaredLength > MAX_PAGE_BODY_BYTES) {
+            const tooLarge = new AppError(
+              `Page body for ${url} exceeds the ${MAX_PAGE_BODY_BYTES} byte cap`,
+              413,
+            );
+            incoming.destroy(tooLarge);
+            controller.error(tooLarge);
+            return;
+          }
+          incoming.on('data', (chunk: Buffer | string) => {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += buffer.byteLength;
+            if (bytes > MAX_PAGE_BODY_BYTES) {
+              const tooLarge = new AppError(
+                `Page body for ${url} exceeds the ${MAX_PAGE_BODY_BYTES} byte cap`,
+                413,
+              );
+              incoming.destroy(tooLarge);
+              controller.error(tooLarge);
+              return;
+            }
+            controller.enqueue(new Uint8Array(buffer));
+          });
+          incoming.on('end', () => controller.close());
+          incoming.on('error', (error) => controller.error(error));
+        },
+        cancel(reason) {
+          incoming.destroy(reason instanceof Error ? reason : undefined);
+        },
+      });
+      resolve(
+        new Response([204, 205, 304].includes(status) ? null : body, {
+          status: status >= 200 && status <= 599 ? status : 502,
+          statusText: incoming.statusMessage,
+          headers: responseHeaders,
+        }),
+      );
+    });
+    const timeout = setTimeout(
+      () => request.destroy(new AppError(`Request to ${url} timed out after ${timeoutMs}ms`, 504)),
+      timeoutMs,
+    );
+    request.on('error', reject);
+    request.on('close', () => clearTimeout(timeout));
+    request.end();
+  });
+}
+
+async function readBoundedResponseText(response: Response, url: string): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader() as unknown as {
+    read: () => Promise<{ done: boolean; value?: Uint8Array }>;
+    cancel: () => Promise<void>;
+    releaseLock: () => void;
+  };
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  let finished = false;
+  try {
+    while (!finished) {
+      const result = await reader.read();
+      if (result.done) {
+        finished = true;
+        continue;
+      }
+      const value = result.value;
+      if (!value) continue;
+      bytes += value.byteLength;
+      if (bytes > MAX_PAGE_BODY_BYTES) {
+        await reader.cancel();
+        throw new AppError(`Page body for ${url} exceeds the ${MAX_PAGE_BODY_BYTES} byte cap`, 413);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const combined = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
 }
 /** Arbitrary third-party pages, which can legitimately be slow to render. */
 const DEFAULT_PAGE_TIMEOUT_MS = 30_000;
@@ -2459,9 +2580,14 @@ async function scrapeBrowser(
         }
 
         if (pageNum < maxPages) {
-          const next = await resolveNextPageUrl(html, pageUrl, _config, pageNum + 1);
-          if (next && respectRobotsTxt) await assertRobotsAllowed(next, userAgent);
-          pageUrl = next;
+          pageUrl = await resolveNextPageOrStop(
+            html,
+            pageUrl,
+            _config,
+            pageNum + 1,
+            respectRobotsTxt,
+            userAgent,
+          );
         }
       }
       urlsScraped++;
@@ -3685,6 +3811,33 @@ async function resolveNextPageUrl(
   return normalized;
 }
 
+async function resolveNextPageOrStop(
+  html: string,
+  pageUrl: string,
+  config: Record<string, unknown>,
+  pageNum: number,
+  respectRobotsTxt: boolean,
+  userAgent: string,
+): Promise<string | null> {
+  try {
+    const next = await resolveNextPageUrl(html, pageUrl, config, pageNum);
+    if (next && respectRobotsTxt) await assertRobotsAllowed(next, userAgent);
+    return next;
+  } catch (error) {
+    if (
+      error instanceof AppError &&
+      error.message.startsWith('paginationUrlPattern must contain')
+    ) {
+      throw error;
+    }
+    logger.warn('scraper pagination stopped after next page validation failed', {
+      url: pageUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 /** Enqueues a page's unseen same-origin links for the next crawl depth. */
 function enqueueDiscoveredLinks(
   html: string,
@@ -3910,9 +4063,14 @@ async function scrapeWeb(
       }
 
       if (page < maxPages) {
-        const next = await resolveNextPageUrl(html, pageUrl, _config, page + 1);
-        if (next && respectRobotsTxt) await assertRobotsAllowed(next, userAgent);
-        pageUrl = next;
+        pageUrl = await resolveNextPageOrStop(
+          html,
+          pageUrl,
+          _config,
+          page + 1,
+          respectRobotsTxt,
+          userAgent,
+        );
       }
 
       if (page < maxPages && pageUrl) {
@@ -4016,7 +4174,11 @@ async function importLeads(
             // No MX and no A record — email domain cannot receive mail.
             // But if a genuine phone is present, preserve the lead as
             // phone-contactable rather than discarding it.
-            if (lead.phone) {
+            const hasGenuinePhone =
+              Boolean(lead.phone) &&
+              lead.google_contact_provenance?.phone !== 'placeholder' &&
+              !lead.phone?.startsWith('+0');
+            if (hasGenuinePhone) {
               logger.info('scraper email no_mx_record but phone present, keeping lead', {
                 business_name: lead.business_name,
                 emailDomain: normalizedEmail.split('@')[1] ?? 'unknown',

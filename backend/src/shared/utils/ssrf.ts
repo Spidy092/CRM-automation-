@@ -32,6 +32,9 @@ export function isPrivateIp(ip: string): boolean {
     if (parts[0] === 192 && parts[1] === 168) return true;
     if (parts[0] === 169 && parts[1] === 254) return true;
     if (parts[0] === 0) return true;
+    // Shared address space (RFC 6598) and benchmarking networks (RFC 2544).
+    if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true;
+    if (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19)) return true;
     if (parts[0] >= 224) return true;
     return false;
   }
@@ -48,15 +51,19 @@ export function isPrivateIp(ip: string): boolean {
         return isPrivateIp(`${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`);
       }
     }
-    if (normalized.startsWith('fe80:')) return true;
-    if (normalized.startsWith('fc00:') || normalized.startsWith('fd00:')) return true;
-    if (normalized.startsWith('ff')) return true;
+    const firstHextet = parseInt(normalized.split(':')[0] || '0', 16);
+    if ((firstHextet & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+    if ((firstHextet & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+    if ((firstHextet & 0xff00) === 0xff00) return true; // ff00::/8 multicast
     return false;
   }
   return false;
 }
 
-export async function validateSafeUrl(urlStr: string): Promise<string> {
+export async function resolveSafeUrl(urlStr: string): Promise<{
+  url: string;
+  addresses: Array<{ address: string; family: number }>;
+}> {
   let parsed: URL;
   try {
     parsed = new URL(urlStr);
@@ -71,16 +78,23 @@ export async function validateSafeUrl(urlStr: string): Promise<string> {
     );
   }
 
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
+  if (parsed.username || parsed.password) {
+    throw new AppError('Website credentials are not allowed', 400);
+  }
+
+  let addresses: Array<{ address: string; family: number }>;
   if (isHostnameBlocked(hostname)) {
     throw new AppError(
       `Access to local/internal host '${hostname}' is forbidden (SSRF protection).`,
       400,
     );
+  } else if (net.isIP(hostname)) {
+    addresses = [{ address: hostname, family: net.isIP(hostname) }];
   } else {
     try {
-      const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+      addresses = await dns.lookup(hostname, { all: true, verbatim: true });
       if (addresses.length === 0) {
         throw new AppError(`Host '${hostname}' resolved to no addresses (SSRF protection).`, 400);
       }
@@ -95,9 +109,6 @@ export async function validateSafeUrl(urlStr: string): Promise<string> {
     } catch (err) {
       if (err instanceof AppError) throw err;
       // DNS lookup failure: the hostname doesn't exist or is unreachable.
-      // Do NOT silently swallow this — a subsequent fetch() call would perform
-      // its own DNS lookup, which could resolve to a different (possibly private)
-      // address, bypassing this guard via a TOCTOU race.
       throw new AppError(
         `Host '${hostname}' could not be resolved (DNS lookup failed): ${
           err instanceof Error ? err.message : String(err)
@@ -107,5 +118,9 @@ export async function validateSafeUrl(urlStr: string): Promise<string> {
     }
   }
 
-  return parsed.toString();
+  return { url: parsed.toString(), addresses };
+}
+
+export async function validateSafeUrl(urlStr: string): Promise<string> {
+  return (await resolveSafeUrl(urlStr)).url;
 }

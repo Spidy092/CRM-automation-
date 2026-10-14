@@ -1,4 +1,4 @@
-import { validateSafeUrl, isPrivateIp } from './ssrf';
+import { validateSafeUrl, resolveSafeUrl, isPrivateIp } from './ssrf';
 
 jest.mock('dns/promises', () => ({
   __esModule: true,
@@ -16,6 +16,13 @@ describe('SSRF Protection Utility', () => {
       expect(isPrivateIp('172.16.0.1')).toBe(true);
       expect(isPrivateIp('192.168.1.1')).toBe(true);
       expect(isPrivateIp('169.254.169.254')).toBe(true);
+      expect(isPrivateIp('100.64.0.0')).toBe(true);
+      expect(isPrivateIp('100.127.255.255')).toBe(true);
+      expect(isPrivateIp('100.63.255.255')).toBe(false);
+      expect(isPrivateIp('100.128.0.0')).toBe(false);
+      expect(isPrivateIp('198.18.0.0')).toBe(true);
+      expect(isPrivateIp('198.19.255.255')).toBe(true);
+      expect(isPrivateIp('198.20.0.0')).toBe(false);
       expect(isPrivateIp('8.8.8.8')).toBe(false);
     });
 
@@ -23,6 +30,11 @@ describe('SSRF Protection Utility', () => {
       expect(isPrivateIp('::1')).toBe(true);
       expect(isPrivateIp('fe80::1')).toBe(true);
       expect(isPrivateIp('fc00::1')).toBe(true);
+      expect(isPrivateIp('fc00::')).toBe(true);
+      expect(isPrivateIp('fdff::')).toBe(true);
+      expect(isPrivateIp('fe80::')).toBe(true);
+      expect(isPrivateIp('febf::')).toBe(true);
+      expect(isPrivateIp('fec0::')).toBe(false);
       expect(isPrivateIp('::ffff:127.0.0.1')).toBe(true);
       expect(isPrivateIp('::ffff:7f00:1')).toBe(true);
     });
@@ -43,6 +55,7 @@ describe('SSRF Protection Utility', () => {
       await expect(validateSafeUrl('http://localhost:8080')).rejects.toThrow('SSRF protection');
       await expect(validateSafeUrl('http://169.254.169.254/latest/meta-data/')).rejects.toThrow('SSRF protection');
       await expect(validateSafeUrl('http://server.local')).rejects.toThrow('SSRF protection');
+      await expect(validateSafeUrl('http://[::1]/')).rejects.toThrow('SSRF protection');
     });
 
     it('rejects public hostnames that resolve to private addresses', async () => {
@@ -60,6 +73,25 @@ describe('SSRF Protection Utility', () => {
       await expect(validateSafeUrl('https://empty.example')).rejects.toThrow(
         'resolved to no addresses',
       );
+    });
+
+    it('returns the exact validated addresses for a caller to pin', async () => {
+      const addresses = [
+        { address: '93.184.216.34', family: 4 },
+        { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 },
+      ];
+      (dns.lookup as jest.Mock).mockResolvedValueOnce(addresses);
+      await expect(resolveSafeUrl('https://example.com/page')).resolves.toEqual({
+        url: 'https://example.com/page',
+        addresses,
+      });
+    });
+
+    it('pins public IPv6 literals without a DNS lookup', async () => {
+      await expect(resolveSafeUrl('https://[2606:2800:220:1:248:1893:25c8:1946]/')).resolves.toEqual({
+        url: 'https://[2606:2800:220:1:248:1893:25c8:1946]/',
+        addresses: [{ address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }],
+      });
     });
   });
 });

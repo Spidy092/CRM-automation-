@@ -28,6 +28,58 @@ import { AppError } from '../../shared/middleware/errorHandler';
 import { syncSchedule, removeSchedule } from './scraper.scheduler';
 import { enqueueScraperRun } from '../../workers/queue';
 import dns from 'dns/promises';
+import { EventEmitter } from 'events';
+
+// The guarded page fetch now uses Node's HTTP clients so it can pin the DNS
+// answer. Bridge those requests to the suite's existing fetch fakes.
+jest.mock('http', () => ({
+  request: (url: URL, _options: unknown, onResponse: (response: unknown) => void) => {
+    const request = new EventEmitter() as EventEmitter & {
+      end: () => void;
+      destroy: (error?: Error) => void;
+    };
+    request.end = () => {
+      void Promise.resolve(global.fetch(url.toString(), { redirect: 'manual' }))
+        .then(async (response) => {
+          const incoming = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            statusMessage: string;
+            headers: Record<string, string>;
+            destroy: (error?: Error) => void;
+          };
+          incoming.statusCode = response.status;
+          incoming.statusMessage = response.statusText;
+          const location = response.headers?.get?.('location');
+          const contentLength = response.headers?.get?.('content-length');
+          incoming.headers = {
+            ...(location ? { location } : {}),
+            ...(contentLength ? { 'content-length': contentLength } : {}),
+          };
+          incoming.destroy = (error?: Error) => {
+            if (error) incoming.emit('error', error);
+          };
+          onResponse(incoming);
+          const text = await response.text();
+          if (text) incoming.emit('data', Buffer.from(text));
+          incoming.emit('end');
+          request.emit('close');
+        })
+        .catch((error: unknown) => {
+          request.emit('error', error);
+          request.emit('close');
+        });
+    };
+    request.destroy = (error?: Error) => {
+      if (error) request.emit('error', error);
+      request.emit('close');
+    };
+    return request;
+  },
+}));
+jest.mock('https', () => ({
+  request: (url: URL, options: unknown, onResponse: (response: unknown) => void) =>
+    jest.requireMock('http').request(url, options, onResponse),
+}));
 
 // Keep URL validation active, but isolate unit tests from real DNS latency.
 // Otherwise DNS can settle after runWithFakeTimers drains its timers, leaving
@@ -567,6 +619,35 @@ describe('Scraper Service', () => {
         }),
       );
     });
+    it('does not keep a no-MX email because the generated phone is only a placeholder', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
+      (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
+      (runConfiguredGoogleAgent as jest.Mock).mockResolvedValue({
+        candidates: [
+          {
+            placeId: 'observed-without-phone',
+            name: 'No Phone Clinic',
+            address: 'Bangalore',
+            email: 'hello@clinic.test',
+            emailSource: 'https://clinic.test/contact',
+            website: 'https://clinic.test',
+            rating: 4,
+            reviewCount: 20,
+          },
+        ],
+        summary: 'Matched clinic.',
+        rounds: 1,
+        toolCalls: 1,
+        decisions: [{ placeId: 'observed-without-phone', reason: 'Observed' }],
+      });
+      const verifyEmailMock = jest.requireMock('../../shared/utils/email').verifyEmail as jest.Mock;
+      verifyEmailMock.mockResolvedValueOnce({ valid: false, reason: 'no_mx_record' });
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.recordsFailed).toBe(1);
+      expect(createLeadMock).not.toHaveBeenCalled();
+    });
     it('does not import partial results when the agent fails', async () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(config());
       (getAiConfig as jest.Mock).mockResolvedValue({ apiKey: 'model-key', model: 'gpt-4o' });
@@ -1091,8 +1172,8 @@ describe('Scraper Service', () => {
 
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(2);
-      expect(fetchMock).toHaveBeenCalledWith('http://a.example.com', expect.anything());
-      expect(fetchMock).toHaveBeenCalledWith('http://b.example.com', expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith('http://a.example.com/', expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith('http://b.example.com/', expect.anything());
     });
 
     it('dedupes the same contact found more than once in one run before importing', async () => {
@@ -1195,6 +1276,30 @@ describe('Scraper Service', () => {
       jest.useRealTimers();
     });
 
+    it('keeps page-one leads when the discovered next page fails SSRF validation', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 2, paginationSelector: '.next' }),
+      );
+      const html = `<div class="card"><span class="name">P1</span><span class="phone">+15550001234</span></div><a class="next" href="http://127.0.0.1/private">Next</a>`;
+      global.fetch = jest.fn().mockResolvedValue(htmlResponse(html));
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(createLeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still fails for a pagination URL pattern without a page placeholder', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        webConfig({ maxPages: 2, paginationUrlPattern: 'https://example.com/list' }),
+      );
+      global.fetch = jest.fn().mockResolvedValue(
+        htmlResponse('<div class="card"><span class="name">P1</span></div>'),
+      );
+      const result = await runScrape('1', mockActor);
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toContain('paginationUrlPattern must contain');
+    });
+
     it('stops paginating when pagination selector is absent', async () => {
       (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
         webConfig({ maxPages: 3, paginationSelector: '.next' }),
@@ -1254,6 +1359,7 @@ describe('Scraper Service', () => {
       expect(result.recordsFailed).toBe(1);
     });
   });
+
 
   describe('runScrape apify_actor', () => {
     it('runs the actor and imports mapped leads', async () => {
@@ -1617,6 +1723,21 @@ describe('Scraper Service', () => {
       expect(result.status).toBe('completed');
       expect(result.recordsFound).toBe(1);
       expect(createLeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps rendered page-one leads when a pagination link fails SSRF validation', async () => {
+      (repo.findScraperConfigById as jest.Mock).mockResolvedValue(
+        browserConfig({ maxPages: 2, paginationSelector: '.next' }),
+      );
+      puppeteerPageMock.content.mockResolvedValue(
+        '<html><body><a href="mailto:hi@acme.com">Email</a><a class="next" href="http://127.0.0.1/private">Next</a></body></html>',
+      );
+
+      const result = await runScrape('1', mockActor);
+
+      expect(result.status).toBe('completed');
+      expect(result.recordsFound).toBe(1);
+      expect(puppeteerPageMock.goto).toHaveBeenCalledTimes(1);
     });
 
     it('merges duplicate contacts instead of dropping data — keeps the phone from a later page', async () => {
