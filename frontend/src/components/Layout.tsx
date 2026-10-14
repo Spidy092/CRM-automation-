@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard,
@@ -54,7 +54,8 @@ const groupDescriptions: Record<string, string> = {
 };
 
 function isRouteActive(pathname: string, href: string): boolean {
-  return href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const routes = href === '/outreach/sequences' ? ['/outreach/sequences', '/files', '/pages'] : [href];
+  return routes.some((route) => pathname === route || (route !== '/' && pathname.startsWith(`${route}/`)));
 }
 
 export function Layout() {
@@ -112,27 +113,28 @@ export function Layout() {
               {groupDescriptions[group] && <p className="mt-1 px-3 text-[11px] leading-4 text-slate-400 dark:text-slate-500">{groupDescriptions[group]}</p>}
               <div className="mt-2 space-y-1">
                 {items.map((item) => (
-                  <NavLink
+                  <Link
                     key={item.name}
                     to={item.href}
-                    end={item.href === '/'}
+                    aria-current={isRouteActive(location.pathname, item.href) ? 'page' : undefined}
                     onClick={() => setSidebarOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
+                    className={cn(
                         'group flex min-h-10 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
+                        isRouteActive(location.pathname, item.href)
                           ? 'bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 shadow-sm'
                           : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-slate-950 dark:hover:text-slate-50',
-                      )
-                    }
+                      )}
                   >
-                    {({ isActive }) => (
+                    {(() => {
+                      const isActive = isRouteActive(location.pathname, item.href);
+                      return (
                       <>
                         <item.icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-white dark:text-slate-950' : 'text-slate-400 dark:text-slate-500')} />
                         <span className="truncate">{item.name}</span>
                       </>
-                    )}
-                  </NavLink>
+                      );
+                    })()}
+                  </Link>
                 ))}
               </div>
             </div>

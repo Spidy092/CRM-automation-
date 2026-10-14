@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   useTemplates,
@@ -9,6 +9,7 @@ import {
   useUnarchiveTemplate,
   useRenameTemplate,
 } from '@/api/templates';
+import { useMessageSnippets } from '@/api/messages';
 import { useAuthStore } from '@/store/authStore';
 import { ROLE_PERMISSIONS } from '@/types/account';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -29,7 +30,7 @@ import { getApiErrorMessage } from '@/lib/apiError';
 import type { MessageChannel, Template, TemplateApprovalStatus } from '@/types';
 import {
   Plus, Search, Check, X, Trash2, Edit, FileText, Paperclip, Copy, Archive,
-  ArchiveRestore, Eye, Pencil, Play,
+  ArchiveRestore, Eye, Pencil, Play, MessageSquare,
 } from 'lucide-react';
 
 const approvalTones: Record<TemplateApprovalStatus, StatusTone> = {
@@ -51,9 +52,17 @@ const modeLabels: Record<string, string> = {
   html: 'Custom HTML',
 };
 
-type GalleryTab = 'built-in' | 'mine' | 'all';
+type GalleryTab = 'built-in' | 'mine' | 'all' | 'saved-snippets';
+
+const GALLERY_TABS: Array<[GalleryTab, string]> = [
+  ['built-in', 'Built-in'],
+  ['mine', 'My templates'],
+  ['all', 'All templates'],
+  ['saved-snippets', 'Saved snippets'],
+];
 
 export function TemplatesPage() {
+  const galleryId = useId();
   const user = useAuthStore((s) => s.user);
   const canWrite = user ? ROLE_PERMISSIONS[user.role]?.Templates?.write : false;
   const navigate = useNavigate();
@@ -76,7 +85,7 @@ export function TemplatesPage() {
     cursor: cursors[page] || undefined,
     include_archived: showArchived || undefined,
     mine: tab === 'mine' || undefined,
-  });
+  }, { enabled: tab !== 'saved-snippets' });
 
   const templates = data?.items ?? [];
   const hasMore = data?.meta?.hasMore ?? false;
@@ -95,6 +104,11 @@ export function TemplatesPage() {
   const [renameTarget, setRenameTarget] = useState<Template | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [previewTarget, setPreviewTarget] = useState<Template | null>(null);
+
+  const { data: savedSnippets = [], isLoading: snippetsLoading, error: snippetsError } = useMessageSnippets(
+    { search: search || undefined },
+    { enabled: tab === 'saved-snippets' },
+  );
 
   const resetPaging = () => { setPage(0); setCursors([]); };
 
@@ -196,7 +210,7 @@ export function TemplatesPage() {
         eyebrow="Outreach"
         title="Templates"
         description="Create and manage message templates for outreach sequences. Templates require approval before use."
-        metrics={[
+        metrics={tab === 'saved-snippets' ? [] : [
           { label: 'Total', value: templates.length },
           { label: 'Approved', value: templates.filter((t) => t.approval_status === 'approved').length, tone: 'success' },
           { label: 'Pending', value: templates.filter((t) => t.approval_status === 'pending').length, tone: 'warning' },
@@ -220,10 +234,12 @@ export function TemplatesPage() {
       />
 
       <div className="flex gap-1 border-b border-slate-200" role="tablist" aria-label="Template gallery">
-        {([['built-in', 'Built-in'], ['mine', 'My templates'], ['all', 'All templates']] as Array<[GalleryTab, string]>).map(([key, label]) => (
+        {GALLERY_TABS.map(([key, label]) => (
           <button
             key={key}
             role="tab"
+            id={`${galleryId}-tab-${key}`}
+            aria-controls={`${galleryId}-panel-${key}`}
             aria-selected={tab === key}
             onClick={() => { setTab(key); resetPaging(); }}
             className={`px-4 py-2 text-sm font-medium ${tab === key ? 'border-b-2 border-indigo-600 text-indigo-700' : 'text-slate-500 hover:text-slate-800'}`}
@@ -233,9 +249,66 @@ export function TemplatesPage() {
         ))}
       </div>
 
+      {GALLERY_TABS.map(([key]) => (
+        <div
+          key={key}
+          id={`${galleryId}-panel-${key}`}
+          role="tabpanel"
+          aria-labelledby={`${galleryId}-tab-${key}`}
+          hidden={tab !== key}
+        >
+          {tab === key && (
+            <>
       {tab === 'built-in' && <StarterGallery />}
 
-      {tab !== 'built-in' && (
+      {tab === 'saved-snippets' && (
+        <Card>
+          <CardHeader>
+            <div className="space-y-3">
+              <p className="max-w-3xl text-sm text-slate-600">
+                Saved snippets are kept here for reference. To use one in outreach, copy its text into a new template draft and submit that template for approval.
+              </p>
+              <div className="relative max-w-lg">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input placeholder="Search saved snippets…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" aria-label="Search saved snippets" />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {snippetsLoading && <LoadingTable />}
+            {!snippetsLoading && snippetsError && <ErrorState message="Failed to load saved snippets" />}
+            {!snippetsLoading && !snippetsError && savedSnippets.length === 0 && (
+              <EmptyState
+                icon={<MessageSquare className="h-6 w-6" />}
+                title="No saved snippets found"
+                description={search ? 'Try another search term.' : 'Saved snippets will appear here.'}
+              />
+            )}
+            {!snippetsLoading && !snippetsError && savedSnippets.length > 0 && (
+              <div className="divide-y divide-slate-200">
+                {savedSnippets.map((snippet) => (
+                  <article key={snippet.id} className="py-4 first:pt-0 last:pb-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-medium text-slate-900">{snippet.title}</h3>
+                      {snippet.channel && <StatusBadge tone="gray">{channelLabels[snippet.channel]}</StatusBadge>}
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{snippet.body}</p>
+                    {snippet.variables.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {snippet.variables.map((variable) => (
+                          <code key={variable} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">{`{{${variable}}}`}</code>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {tab !== 'built-in' && tab !== 'saved-snippets' && (
         <Card>
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -352,6 +425,10 @@ export function TemplatesPage() {
           </CardContent>
         </Card>
       )}
+            </>
+          )}
+        </div>
+      ))}
 
       {previewTarget && (
         <TemplatePreviewModal templateId={previewTarget.id} templateName={previewTarget.name} onClose={() => setPreviewTarget(null)} />

@@ -42,7 +42,6 @@ const LeadDetailPage = lazy(() => import('@/pages/LeadDetailPage').then(m => ({ 
 const TemplatesPage = lazy(() => import('@/pages/TemplatesPage').then(m => ({ default: m.TemplatesPage })));
 const TemplateFormPage = lazy(() => import('@/pages/TemplateFormPage').then(m => ({ default: m.TemplateFormPage })));
 const FilesLibraryPage = lazy(() => import('@/pages/FilesLibraryPage').then(m => ({ default: m.FilesLibraryPage })));
-const MessagesLibraryPage = lazy(() => import('@/pages/MessagesLibraryPage').then(m => ({ default: m.MessagesLibraryPage })));
 const PagesLibraryPage = lazy(() => import('@/pages/PagesLibraryPage').then(m => ({ default: m.PagesLibraryPage })));
 const PageEditorPage = lazy(() => import('@/pages/PageEditorPage').then(m => ({ default: m.PageEditorPage })));
 const PublicLandingPage = lazy(() => import('@/pages/PublicLandingPage').then(m => ({ default: m.PublicLandingPage })));
@@ -251,7 +250,7 @@ function App() {
                 <Route path="templates/new" element={<LazyPage><TemplateFormPage /></LazyPage>} />
                 <Route path="templates/:id/edit" element={<LazyPage><TemplateFormPage /></LazyPage>} />
                 <Route path="files" element={<LazyPage><FilesLibraryPage /></LazyPage>} />
-                <Route path="messages" element={<LazyPage><MessagesLibraryPage /></LazyPage>} />
+                <Route path="messages/*" element={<Navigate to="/templates" replace />} />
                 <Route path="pages" element={<LazyPage><PagesLibraryPage /></LazyPage>} />
                 <Route path="pages/new" element={<LazyPage><PageEditorPage /></LazyPage>} />
                 <Route path="pages/:id/edit" element={<LazyPage><PageEditorPage /></LazyPage>} />

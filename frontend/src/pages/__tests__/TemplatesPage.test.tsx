@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { TemplatesPage } from '../TemplatesPage';
 
@@ -70,6 +71,24 @@ vi.mock('@/api/templates', () => ({
   }),
 }));
 
+vi.mock('@/api/messages', () => ({
+  useMessageSnippets: vi.fn().mockReturnValue({
+    data: [{
+      id: 'snippet-1',
+      title: 'Legacy introduction',
+      channel: 'email',
+      body: 'Hello {{first_name}}, thanks for connecting.',
+      variables: ['first_name'],
+      file_ids: [],
+      created_by: 'u1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }],
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 describe('TemplatesPage', () => {
   it('renders successfully', () => {
     const { container } = renderWithProviders(<TemplatesPage />);
@@ -113,5 +132,33 @@ describe('TemplatesPage', () => {
   it('renders pagination controls', () => {
     renderWithProviders(<TemplatesPage />);
     expect(document.body.textContent).toContain('Rows per page');
+  });
+  it('connects every gallery tab to its labelled panel', () => {
+    renderWithProviders(<TemplatesPage />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(4);
+
+    for (const tab of tabs) {
+      const panel = document.getElementById(tab.getAttribute('aria-controls') ?? '');
+      expect(panel).toHaveAttribute('role', 'tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', tab.id);
+      fireEvent.click(tab);
+      expect(tab).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('tabpanel', { name: tab.textContent ?? '' })).toBe(panel);
+      expect(panel).not.toHaveAttribute('hidden');
+      for (const inactive of screen.getAllByRole('tabpanel', { hidden: true })) {
+        if (inactive !== panel) expect(inactive).toHaveAttribute('hidden');
+      }
+    }
+  });
+
+  it('keeps saved snippets available in a read-only Templates tab', () => {
+    renderWithProviders(<TemplatesPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Saved snippets' }));
+
+    expect(screen.getByText('Legacy introduction')).toBeInTheDocument();
+    expect(screen.getByText('Hello {{first_name}}, thanks for connecting.')).toBeInTheDocument();
+    expect(screen.getByText(/submit that template for approval/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /New Snippet/i })).not.toBeInTheDocument();
   });
 });
