@@ -4,8 +4,13 @@ import { request } from 'https';
 import { readPublicWebsite } from './google-agent.network';
 
 jest.mock('dns/promises', () => ({
+  __esModule: true,
   lookup: jest.fn(),
-  default: { resolve: jest.fn().mockResolvedValue(['93.184.216.34']) },
+  resolve: jest.fn().mockResolvedValue(['93.184.216.34']),
+  default: {
+    lookup: jest.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+    resolve: jest.fn().mockResolvedValue(['93.184.216.34']),
+  },
 }));
 jest.mock('https', () => ({ request: jest.fn() }));
 jest.mock('http', () => ({ request: jest.fn() }));

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.1.0] - 2026-10-14
+## [0.3.1.0] - 2026-10-14
 
 ### Changed
 - Templates is now the single library for reusable messages; existing saved snippets remain searchable there as reference material.
@@ -8,6 +8,17 @@
 
 ### Fixed
 - Content stays highlighted when browsing Files or Landing pages.
+
+## [0.3.0.0] - 2026-10-14
+
+### Added
+- Review-first scraper research with target scoring, candidate assessment, and explicit import selection.
+- Scraper source capability and credential requirement guidance in the configuration UI.
+
+### Changed
+- Browser requests now validate DNS answers before continuing, including subresources.
+- Research settings are validated on save, and malformed stored settings fail closed to review.
+- Review staging retains every fetched candidate and pending counts exclude completed imports.
 
 ## [0.2.0.0] - 2026-10-13
 

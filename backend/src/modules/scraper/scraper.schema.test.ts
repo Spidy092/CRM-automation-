@@ -143,6 +143,15 @@ describe('parseSourceConfig', () => {
     expect(parsed.userAgent).toBe('Custom/1.0');
   });
 
+  it('validates nested research options instead of passing malformed targeting through', () => {
+    expect(() =>
+      parseSourceConfig('web_scrape', {
+        url: 'https://example.com',
+        research: { importMode: 'review', targets: { industries: ['x'.repeat(101)] } },
+      }),
+    ).toThrow();
+  });
+
   it('validates browser_scrape waitMs against its cap', () => {
     expect(() =>
       parseSourceConfig('browser_scrape', { url: 'https://example.com', waitMs: 999_999 }),

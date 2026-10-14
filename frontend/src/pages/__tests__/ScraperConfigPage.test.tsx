@@ -86,6 +86,22 @@ describe('ScraperConfigPage', () => {
     expect(screen.queryByLabelText('Research goal')).not.toBeInTheDocument();
   });
 
+  it('allows a pinned YouTube channel without a search query and defaults it to review', async () => {
+    renderWithProviders(<ScraperConfigPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Source' }));
+    fireEvent.click(screen.getByRole('button', { name: 'YouTube' }));
+    fireEvent.change(screen.getByPlaceholderText('My Google Places Scraper'), { target: { value: 'Pinned channel' } });
+    fireEvent.change(screen.getByPlaceholderText('UC...'), {
+      target: { value: 'UC1234567890123456789012' },
+    });
+
+    expect(screen.getByLabelText('Import mode')).toHaveValue('review');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Source' }));
+
+    expect(await screen.findByRole('button', { name: 'Add Source' })).toBeInTheDocument();
+    expect(screen.queryByText('Search query or channel ID is required')).not.toBeInTheDocument();
+  });
+
   it('renders successfully', async () => {
     const { container } = renderWithProviders(<ScraperConfigPage />);
     await new Promise(resolve => setTimeout(resolve, 50));

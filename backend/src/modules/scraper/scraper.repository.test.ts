@@ -1,4 +1,4 @@
-import { findScraperConfigs, findScraperConfigById, insertScraperConfig, updateScraperConfig, deleteScraperConfig, insertScraperLog, updateScraperLog, findScraperLogsByConfig, countScraperLogsByConfig, findScraperLogById, findScraperConfigsWithHealth, sumScraperLogsSince } from './scraper.repository';
+import { findScraperConfigs, findScraperConfigById, insertScraperConfig, updateScraperConfig, deleteScraperConfig, insertScraperLog, updateScraperLog, findScraperLogsByConfig, countScraperLogsByConfig, findScraperLogById, findScraperConfigsWithHealth, sumScraperLogsSince, sumReviewPendingSince } from './scraper.repository';
 import { query, queryOne, pool } from '../../shared/utils/db';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -171,6 +171,17 @@ describe('Scraper Repository', () => {
       const result = await sumScraperLogsSince('2026-01-01T00:00:00.000Z');
       expect(result.totalRuns).toBe(0);
       expect(result.activeSources).toBe(0);
+    });
+  });
+
+  describe('sumReviewPendingSince', () => {
+    it('subtracts candidates processed by completed selection logs', async () => {
+      (queryOne as jest.Mock).mockResolvedValue({ pending: '2' });
+      await expect(sumReviewPendingSince('2026-01-01T00:00:00.000Z')).resolves.toBe(2);
+      expect(queryOne).toHaveBeenCalledWith(
+        expect.stringContaining("processed_candidate_ids"),
+        ['2026-01-01T00:00:00.000Z'],
+      );
     });
   });
 });
