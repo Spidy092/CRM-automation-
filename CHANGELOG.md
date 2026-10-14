@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.2.1] - 2026-10-14
+
+### Added
+- Newsletter workspace with audience filters, CSV export, broadcast history, draft composition, previews, test sends, and timezone-aware scheduling.
+- Reviewable AI digests and targeted recovery for failed or uncertain recipients.
+- Append-only migrations 0079, 0081, 0082, and 0083 for broadcast history and compatible subscriber tokens; database application requires approval.
+
+### Fixed
+- Preserve older unsubscribe links and enforce current topic/frequency preferences before dispatch.
+- Persist digest status and make broadcast retries idempotent with provider-acceptance accounting.
+
 ## [0.3.2.0] - 2026-10-14
 
 ### Changed
