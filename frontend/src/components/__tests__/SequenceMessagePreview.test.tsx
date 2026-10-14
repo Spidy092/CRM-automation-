@@ -109,6 +109,14 @@ describe('SequenceMessagePreview', () => {
     expect(screen.queryByText(html)).not.toBeInTheDocument();
   });
 
+  it('keeps plain text angle-bracket placeholders visible', () => {
+    const templates = new Map(templateById);
+    templates.set('tpl-1', { ...mockTemplates[0], body: 'Hello <name>, contact <email> if interested.' });
+    renderWithProviders(<SequenceMessagePreview sequence={mockSequence} templateById={templates} />);
+    expect(screen.getByText('Hello <name>, contact <email> if interested.')).toBeInTheDocument();
+    expect(screen.queryByTitle(`Email preview: ${mockTemplates[0].name}`)).not.toBeInTheDocument();
+  });
+
   it('previews the saved HTML for visual and HTML editor templates', () => {
     const templates = new Map(templateById);
     templates.set('tpl-1', { ...mockTemplates[0], editor_mode: 'visual', body: 'Text fallback', html_body: '<h1>Designed email</h1>' });

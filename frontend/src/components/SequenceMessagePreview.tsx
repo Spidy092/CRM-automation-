@@ -120,7 +120,9 @@ function StepPreviewCard({
     ? template?.html_body || template?.body || ''
     : template?.body ?? '';
   const portfolio = splitPortfolioButton(previewBody);
-  const isHtmlEmail = step.channel === 'email' && /<\/?[a-z][\s\S]*>/i.test(portfolio.text);
+  const hasSavedHtml = (template?.editor_mode === 'visual' || template?.editor_mode === 'html') && Boolean(template?.html_body);
+  const hasLegacyHtml = /<\/?(?:html|head|body|div|p|br|hr|table|thead|tbody|tfoot|tr|td|th|span|strong|b|em|i|u|a|img|ul|ol|li|h[1-6]|blockquote|style|center|font|section|article|header|footer|main)(?=[\s/>])[^<>]*>/i.test(portfolio.text);
+  const isHtmlEmail = step.channel === 'email' && (hasSavedHtml || hasLegacyHtml);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/30">
