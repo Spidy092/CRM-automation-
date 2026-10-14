@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1.0] - 2026-10-14
+
+### Changed
+- Templates is now the single library for reusable messages; existing saved snippets remain searchable there as reference material.
+- Old Messages links open Templates, and Content retains Sequences, Files, and Landing pages.
+
+### Fixed
+- Content stays highlighted when browsing Files or Landing pages.
+
 ## [0.2.0.0] - 2026-10-13
 
 ### Changed
