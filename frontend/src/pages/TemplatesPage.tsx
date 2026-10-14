@@ -30,7 +30,7 @@ import { getApiErrorMessage } from '@/lib/apiError';
 import type { MessageChannel, Template, TemplateApprovalStatus } from '@/types';
 import {
   Plus, Search, Check, X, Trash2, Edit, FileText, Paperclip, Copy, Archive,
-  ArchiveRestore, Eye, Pencil, Play, MessageSquare,
+  ArchiveRestore, Eye, Pencil, MessageSquare,
 } from 'lucide-react';
 
 const approvalTones: Record<TemplateApprovalStatus, StatusTone> = {
@@ -105,6 +105,11 @@ export function TemplatesPage() {
   const [renameValue, setRenameValue] = useState('');
   const [previewTarget, setPreviewTarget] = useState<Template | null>(null);
 
+  const { data: snippetLibrary, error: snippetLibraryError } = useMessageSnippets();
+  const galleryTabs = GALLERY_TABS.filter(([key]) =>
+    key !== 'saved-snippets' || tab === key || (snippetLibrary?.length ?? 0) > 0 || !!snippetLibraryError,
+  );
+
   const { data: savedSnippets = [], isLoading: snippetsLoading, error: snippetsError } = useMessageSnippets(
     { search: search || undefined },
     { enabled: tab === 'saved-snippets' },
@@ -152,12 +157,6 @@ export function TemplatesPage() {
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Failed to duplicate template.'), 'error');
     }
-  };
-
-  /** “Use” creates a working copy and opens it — the original is never modified. */
-  const handleUse = async (t: Template) => {
-    if (!canWrite) return;
-    await handleDuplicate(t);
   };
 
   const handleArchive = async (t: Template) => {
@@ -234,7 +233,7 @@ export function TemplatesPage() {
       />
 
       <div className="flex gap-1 border-b border-slate-200" role="tablist" aria-label="Template gallery">
-        {GALLERY_TABS.map(([key, label]) => (
+        {galleryTabs.map(([key, label]) => (
           <button
             key={key}
             role="tab"
@@ -249,7 +248,7 @@ export function TemplatesPage() {
         ))}
       </div>
 
-      {GALLERY_TABS.map(([key]) => (
+      {galleryTabs.map(([key]) => (
         <div
           key={key}
           id={`${galleryId}-panel-${key}`}
@@ -380,11 +379,6 @@ export function TemplatesPage() {
                       <Button variant="ghost" size="icon" title="Preview" onClick={() => setPreviewTarget(template)} aria-label={`Preview ${template.name}`}>
                         <Eye className="h-4 w-4" />
                       </Button>
-                      {canWrite && (
-                        <Button variant="ghost" size="icon" title="Use (create a working copy)" onClick={() => handleUse(template)} aria-label={`Use ${template.name}`}>
-                          <Play className="h-4 w-4 text-indigo-600" />
-                        </Button>
-                      )}
                       {canWrite && template.approval_status === 'pending' && (
                         <>
                           <Button variant="ghost" size="icon" title="Approve" onClick={() => handleApprove(template)} className="text-emerald-600 hover:text-emerald-700" aria-label={`Approve ${template.name}`}>
@@ -397,8 +391,9 @@ export function TemplatesPage() {
                       )}
                       {canWrite && (
                         <>
-                          <Button variant="ghost" size="icon" title="Duplicate" onClick={() => handleDuplicate(template)} aria-label={`Duplicate ${template.name}`}>
-                            <Copy className="h-4 w-4" />
+                          <Button variant="ghost" size="sm" title="Duplicate" onClick={() => handleDuplicate(template)} aria-label={`Duplicate ${template.name}`}>
+                            <Copy className="mr-2 h-4 w-4" />
+                            Duplicate
                           </Button>
                           <Button variant="ghost" size="icon" title="Rename" onClick={() => { setRenameTarget(template); setRenameValue(template.name); }} aria-label={`Rename ${template.name}`}>
                             <Pencil className="h-4 w-4" />

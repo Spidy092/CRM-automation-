@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
+import { useMessageSnippets } from '@/api/messages';
 import { TemplatesPage } from '../TemplatesPage';
 
 const { mockApproveMutateAsync, mockDeleteMutateAsync } = vi.hoisted(() => ({
@@ -89,6 +90,12 @@ vi.mock('@/api/messages', () => ({
   }),
 }));
 
+const defaultSnippetHook = vi.mocked(useMessageSnippets).getMockImplementation()!;
+
+afterEach(() => {
+  vi.mocked(useMessageSnippets).mockImplementation(defaultSnippetHook);
+});
+
 describe('TemplatesPage', () => {
   it('renders successfully', () => {
     const { container } = renderWithProviders(<TemplatesPage />);
@@ -133,6 +140,38 @@ describe('TemplatesPage', () => {
     renderWithProviders(<TemplatesPage />);
     expect(document.body.textContent).toContain('Rows per page');
   });
+  it('hides Saved snippets when the library is empty', () => {
+    vi.mocked(useMessageSnippets).mockReturnValueOnce({ data: [], isLoading: false, error: null } as ReturnType<typeof useMessageSnippets>);
+    renderWithProviders(<TemplatesPage />);
+    expect(screen.queryByRole('tab', { name: 'Saved snippets' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'All templates' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps the saved-snippets tab when a search has no matches', () => {
+    vi.mocked(useMessageSnippets).mockImplementation((filters = {}) => {
+      const result = defaultSnippetHook(filters);
+      return filters.search ? { ...result, data: [] } : result;
+    });
+    renderWithProviders(<TemplatesPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Saved snippets' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search saved snippets' }), { target: { value: 'no-match' } });
+    expect(screen.getByRole('tab', { name: 'Saved snippets' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('No saved snippets found')).toBeInTheDocument();
+  });
+
+  it('keeps snippet loading errors accessible', () => {
+    vi.mocked(useMessageSnippets).mockReturnValue({ data: undefined, isLoading: false, error: new Error('Load failed') } as ReturnType<typeof useMessageSnippets>);
+    renderWithProviders(<TemplatesPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Saved snippets' }));
+    expect(screen.getByText('Failed to load saved snippets')).toBeInTheDocument();
+  });
+
+  it('offers Duplicate without the redundant Use action', () => {
+    renderWithProviders(<TemplatesPage />);
+    expect(screen.getByRole('button', { name: 'Duplicate Welcome Email' })).toHaveTextContent('Duplicate');
+    expect(screen.queryByRole('button', { name: 'Use Welcome Email' })).not.toBeInTheDocument();
+  });
+
   it('connects every gallery tab to its labelled panel', () => {
     renderWithProviders(<TemplatesPage />);
     const tabs = screen.getAllByRole('tab');

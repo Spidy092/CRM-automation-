@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.2.0] - 2026-10-14
+
+### Changed
+- Simplified template actions by removing the redundant working-copy action and making duplication explicit.
+- Hide the Saved snippets tab when the library is empty while preserving access to search and error states.
+
+### Fixed
+- Campaign sequence previews render HTML email templates in a sandboxed preview instead of showing raw markup.
+
 ## [0.3.1.0] - 2026-10-14
 
 ### Changed
