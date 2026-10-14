@@ -52,6 +52,7 @@ import {
   exportRunLeadsCsv,
 } from '@/api/scraper';
 import { MultiLineChart, type SeriesDef } from '@/components/reports/AnalyticsCharts';
+import { ReviewCandidates } from '@/components/scraper/ReviewCandidates';
 import type { ScraperSourceType, ScraperConfig } from '@/types';
 import { ROLE_PERMISSIONS } from '@/types/account';
 
@@ -116,23 +117,23 @@ const emptyForm: ConfigForm = {
 function getPlaceholderConfig(sourceType: ScraperSourceType): Record<string, unknown> {
   switch (sourceType) {
     case 'google_places':
-      return { query: '', location: '', radius: 5000, maxResults: 20, apiKeyRef: 'GOOGLE_PLACES_API_KEY', agentEnabled: true, aiGoal: '', maxAgentRounds: 12, maxApiRequests: 80 };
+      return { query: '', location: '', radius: 5000, maxResults: 20, apiKeyRef: 'GOOGLE_PLACES_API_KEY', agentEnabled: true, aiGoal: '', maxAgentRounds: 12, maxApiRequests: 80, research: { importMode: 'review' } };
     case 'facebook':
-      return { pageId: '', accessTokenRef: 'FACEBOOK_ACCESS_TOKEN', fields: 'name,about,phone,website,emails,location', maxPosts: 25 };
+      return { pageId: '', accessTokenRef: 'FACEBOOK_ACCESS_TOKEN', fields: 'name,about,phone,website,emails,location', maxPosts: 25, research: { importMode: 'review' } };
     case 'youtube':
-      return { query: '', channelId: '', maxResults: 10, apiKeyRef: 'YOUTUBE_API_KEY' };
+      return { query: '', channelId: '', maxResults: 10, apiKeyRef: 'YOUTUBE_API_KEY', research: { importMode: 'review' } };
     case 'web_scrape':
-      return { url: '', mode: 'smart', selectors: {}, maxPages: 1 };
+      return { url: '', mode: 'smart', selectors: {}, maxPages: 1, research: { importMode: 'review' } };
     case 'meta_lead_forms':
-      return { integrationId: '', formId: '', sinceHours: 24, maxResults: 100 };
+      return { integrationId: '', formId: '', sinceHours: 24, maxResults: 100, research: { importMode: 'review' } };
     case 'google_ads_lead_forms':
       return { webhookSecretRef: 'GOOGLE_ADS_WEBHOOK_SECRET' };
     case 'linkedin_lead_forms':
       return { mode: 'manual_import' };
     case 'apify_actor':
-      return { actorId: '', input: {}, maxResults: 100 };
+      return { actorId: '', input: {}, maxResults: 100, research: { importMode: 'review' } };
     case 'browser_scrape':
-      return { url: '', mode: 'smart', selectors: {}, waitForSelector: '', waitMs: 0, maxPages: 1 };
+      return { url: '', mode: 'smart', selectors: {}, waitForSelector: '', waitMs: 0, maxPages: 1, research: { importMode: 'review' } };
   }
 }
 
@@ -462,6 +463,131 @@ function DeepCrawlFields({
 
 /* ─── Config Fields Per Source Type ─── */
 
+const capabilityLabels: Record<string, string> = {
+  discovery: 'Discovery',
+  configured_page_enrichment: 'Page enrichment',
+  webhook_ingestion: 'Webhook ingestion',
+  manual_import: 'Manual import',
+  actor_retrieval: 'Actor retrieval',
+};
+
+const SERVICE_CATEGORIES = [
+  { value: 'website', label: 'Websites' },
+  { value: 'web_application', label: 'Web apps' },
+  { value: 'ai_agent', label: 'AI agents' },
+] as const;
+
+/**
+ * Review-first research options, stored in the config blob (`config.research`,
+ * no migration). Absent options behave exactly like before: automatic import
+ * with no targeting. New AI/research runs default to review before import.
+ */
+function ResearchOptionsFields({
+  config,
+  onChange,
+  agentDefault,
+}: {
+  config: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  agentDefault: boolean;
+}) {
+  const research = (config.research as Record<string, unknown> | undefined) ?? {};
+  const targets = (research.targets as Record<string, unknown> | undefined) ?? {};
+  const importMode =
+    typeof research.importMode === 'string' ? research.importMode : agentDefault ? 'review' : 'automatic';
+
+  const patchResearch = (patch: Record<string, unknown>) => {
+    onChange('research', { ...research, ...patch });
+  };
+  const patchTargets = (patch: Record<string, unknown>) => {
+    patchResearch({ targets: { ...targets, ...patch } });
+  };
+  const listValue = (key: string): string => {
+    const v = targets[key];
+    return Array.isArray(v) ? (v as string[]).join(', ') : '';
+  };
+  const listChange = (key: string, text: string) => {
+    patchTargets({ [key]: text.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 20) });
+  };
+
+  return (
+    <div className="col-span-2 rounded-lg border border-slate-200 p-3">
+      <p className="text-sm font-medium text-slate-700">Research & review</p>
+      <p className="mt-1 text-xs text-slate-500">
+        Targets and contact requirements score every candidate. Review mode stages candidates on
+        the run for approval instead of importing — nothing is auto-imported.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <label className="text-xs text-slate-500">Import mode
+          <select
+            aria-label="Import mode"
+            value={importMode}
+            onChange={(e) => patchResearch({ importMode: e.target.value })}
+            className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+          >
+            <option value="automatic">Automatic import</option>
+            <option value="review">Review before import</option>
+          </select>
+        </label>
+        <label className="text-xs text-slate-500">Required contact channel
+          <select
+            aria-label="Required contact channel"
+            value={(targets.requiredContactChannel as string) ?? 'either'}
+            onChange={(e) => patchTargets({ requiredContactChannel: e.target.value })}
+            className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+          >
+            <option value="either">Email or phone</option>
+            <option value="email">Email</option>
+            <option value="phone">Phone</option>
+          </select>
+        </label>
+        <label className="col-span-2 text-xs text-slate-500">Target industries
+          <Input
+            type="text"
+            aria-label="Target industries"
+            value={listValue('industries')}
+            onChange={(e) => listChange('industries', e.target.value)}
+            placeholder="Bakery, Dental clinic"
+          />
+        </label>
+        <label className="col-span-2 text-xs text-slate-500">Target locations
+          <Input
+            type="text"
+            aria-label="Target locations"
+            value={listValue('locations')}
+            onChange={(e) => listChange('locations', e.target.value)}
+            placeholder="Bangalore, Mumbai"
+          />
+        </label>
+        <div className="col-span-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+          <span>Service categories:</span>
+          {SERVICE_CATEGORIES.map(({ value, label }) => {
+            const selected = Array.isArray(targets.serviceCategories)
+              ? (targets.serviceCategories as string[])
+              : [];
+            return (
+              <label key={value} className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(value)}
+                  onChange={(e) => {
+                    patchTargets({
+                      serviceCategories: e.target.checked
+                        ? [...selected, value]
+                        : selected.filter((s) => s !== value),
+                    });
+                  }}
+                />
+                {label}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getConfigFields(
   sourceType: ScraperSourceType,
   config: Record<string, unknown>,
@@ -613,13 +739,14 @@ function getConfigFields(
       return (
         <>
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Search Query <span className="text-red-500">*</span></label>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Search Query</label>
             <Input
               type="text"
               value={(config.query as string) ?? ''}
               onChange={(e) => onChange('query', e.target.value)}
               placeholder="real estate agent"
             />
+            <p className="mt-1 text-xs text-slate-400">Optional when a channel ID is set.</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Channel ID (optional)</label>
@@ -700,7 +827,8 @@ function getConfigFields(
           </div>
           <div className="col-span-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
             Pulls leads from a Meta/Facebook lead form via the Graph API. Requires a configured
-            Facebook integration with an access token. Leads are imported into your CRM automatically.
+            Facebook integration with an access token. New sources stage submissions for review;
+            choose Automatic import above only if you want them created as leads immediately.
           </div>
         </>
       );
@@ -1164,7 +1292,9 @@ export function ScraperConfigPage() {
     if (src === 'google_places' && !cfg.query) errors.query = 'Search query is required';
     if (src === 'google_places' && cfg.agentEnabled === true && !(cfg.location as string)?.trim()) errors.location = 'Location is required for the AI agent';
     if (src === 'facebook' && !cfg.pageId) errors.pageId = 'Page ID is required';
-    if (src === 'youtube' && !cfg.query) errors.query = 'Search query is required';
+    if (src === 'youtube' && !cfg.query && !cfg.channelId) {
+      errors.query = 'Search query or channel ID is required';
+    }
     if (src === 'meta_lead_forms') {
       if (!cfg.integrationId) errors.integrationId = 'Integration ID is required';
       if (!cfg.formId) errors.formId = 'Form ID is required';
@@ -1192,9 +1322,13 @@ export function ScraperConfigPage() {
         applyChange('selectors', res.selectors ?? {});
         if (res.containerSelector) applyChange('containerSelector', res.containerSelector);
         const count = Object.keys(res.selectors ?? {}).length;
+        const evidence = Object.entries(res.matchCounts ?? {})
+          .slice(0, 4)
+          .map(([field, n]) => `${field}: ${n}`)
+          .join(', ');
         showToast(
           count > 0
-            ? `Detected ${count} field selector(s). Review them and Save.`
+            ? `Detected ${count} field selector(s)${evidence ? ` (${evidence})` : ''}. Review them and Save.`
             : 'No selectors detected. Try Smart mode or enter them manually.',
           count > 0 ? 'success' : 'error',
         );
@@ -1363,7 +1497,7 @@ export function ScraperConfigPage() {
 
       {/* 24h Dashboard Summary */}
       {statsSummary && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Card>
             <CardContent className="p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Runs (24h)</p>
@@ -1378,6 +1512,13 @@ export function ScraperConfigPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">New Leads (24h)</p>
               <p className="mt-1 text-2xl font-semibold text-emerald-600">{statsSummary.recordsImported}</p>
               <p className="mt-0.5 text-xs text-slate-400">of {statsSummary.recordsFound} found</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Needs Review (24h)</p>
+              <p className="mt-1 text-2xl font-semibold text-violet-600">{statsSummary.reviewPending ?? 0}</p>
+              <p className="mt-0.5 text-xs text-slate-400">staged, not imported</p>
             </CardContent>
           </Card>
           <Card>
@@ -1552,6 +1693,39 @@ export function ScraperConfigPage() {
                 })()}
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                {(() => {
+                  const currentConfig = editConfig ? editConfig.form.config : form.config;
+                  const currentSourceType = editConfig
+                    ? editConfig.form.source_type
+                    : form.source_type;
+                  const applyChange = (key: string, value: unknown) => {
+                    if (editConfig) {
+                      setEditConfig((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: { ...prev.form, config: { ...prev.form.config, [key]: value } },
+                            }
+                          : null,
+                      );
+                    } else {
+                      handleConfigChange(key, value);
+                    }
+                  };
+                  return (
+                    <ResearchOptionsFields
+                      config={currentConfig}
+                      onChange={applyChange}
+                      agentDefault={
+                        currentSourceType === 'google_places' &&
+                        (currentConfig.agentEnabled as boolean | undefined) === true
+                      }
+                    />
+                  );
+                })()}
+              </div>
+
               {/* Show form-level config errors */}
               {Object.entries(formErrors).filter(([k]) => k !== 'name').map(([key, msg]) => (
                 <p key={key} className="text-xs text-red-500">{msg}</p>
@@ -1703,6 +1877,14 @@ export function ScraperConfigPage() {
                             <StatusBadge tone={sourceColors[config.source_type].includes('blue') ? 'blue' : sourceColors[config.source_type].includes('red') ? 'red' : sourceColors[config.source_type].includes('emerald') ? 'green' : sourceColors[config.source_type].includes('purple') ? 'violet' : sourceColors[config.source_type].includes('amber') ? 'amber' : 'gray'}>
                               {sourceLabels[config.source_type]}
                             </StatusBadge>
+                            {config.capability && capabilityLabels[config.capability] && (
+                              <StatusBadge tone="gray">
+                                {capabilityLabels[config.capability]}
+                              </StatusBadge>
+                            )}
+                            {config.research?.importMode === 'review' && (
+                              <StatusBadge tone="violet">Review mode</StatusBadge>
+                            )}
                             {config.health === 'failing' && (
                               <StatusBadge tone="red">
                                 <AlertTriangle className="h-3 w-3" />
@@ -1717,6 +1899,11 @@ export function ScraperConfigPage() {
                             {config.webhook_url ? ' · Webhook' : ''}
                             {config.last_run_at ? ` · Last run: ${new Date(config.last_run_at).toLocaleDateString()}` : ''}
                           </p>
+                          {config.requirements?.some((r) => !r.met) && (
+                            <p className="mt-1 text-xs text-amber-600">
+                              Missing credentials: {config.requirements.filter((r) => !r.met).map((r) => r.ref).join(', ')}. Runs will fail until these are set.
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1780,6 +1967,12 @@ export function ScraperConfigPage() {
                                       <span className="font-medium">AI assessment: </span>{log.raw_response.agent.summary}
                                     </p>
                                   )}
+                                {typeof log.raw_response?.review_pending === 'number' && log.raw_response.review_pending > 0 && (
+                                  <p className="mt-1.5 pl-5 text-xs text-violet-700">
+                                    {log.raw_response.review_pending} candidate(s) staged for review — nothing auto-imported.
+                                  </p>
+                                )}
+                                <ReviewCandidates log={log} canWrite={canWrite} />
                                 {log.status === 'failed' && log.error_message && (
                                   <p className="mt-1.5 pl-5 text-xs text-red-600">{log.error_message}</p>
                                 )}

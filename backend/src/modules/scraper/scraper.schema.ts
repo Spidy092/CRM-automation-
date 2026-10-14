@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { researchOptionsSchema } from './research.schema';
 
 export const sourceTypeEnum = z.enum([
   'google_places',
@@ -41,8 +42,10 @@ export const facebookConfigSchema = z.object({
 });
 
 export const youtubeConfigSchema = z.object({
-  query: z.string().min(1, 'Search query is required'),
-  channelId: z.string().optional(),
+  // Search query for channel discovery. Optional when channelId pins the run
+  // to one known channel; the run layer rejects a config with neither.
+  query: z.string().trim().min(1, 'Search query is required').max(250).optional(),
+  channelId: z.string().trim().min(1).max(100).optional(),
   maxResults: z.number().int().positive().max(50).optional().default(10),
   apiKeyRef: z.string().min(1, 'API key reference is required'),
 });
@@ -71,6 +74,12 @@ export const webScrapeConfigSchema = z.object({
   selectors: z.record(z.string(), z.string()).optional(),
   containerSelector: z.string().optional(),
   paginationSelector: z.string().optional(),
+  // Explicit operator-configured pagination URL pattern for multi-page lists.
+  // Use {n} or {page} as the page-number placeholder, e.g.
+  // "https://example.com/list?page={n}". Pagination beyond page 1 ONLY happens
+  // through this pattern or an actual pagination link matched by
+  // paginationSelector — page URLs are never invented by appending ?page=N.
+  paginationUrlPattern: z.string().max(2048).optional(),
   maxPages: z.number().int().positive().max(100).optional().default(1),
   headers: z.record(z.string(), z.string()).optional(),
   ...deepCrawlFields,
@@ -90,6 +99,9 @@ export const browserScrapeConfigSchema = z.object({
   waitMs: z.number().int().min(0).max(15000).optional().default(0),
   maxPages: z.number().int().positive().max(30).optional().default(1),
   headers: z.record(z.string(), z.string()).optional(),
+  // Same explicit-pattern rule as web_scrape: page 2+ is only fetched through
+  // paginationUrlPattern ({n}/{page} placeholder) or an actual pagination link.
+  paginationUrlPattern: z.string().max(2048).optional(),
   ...deepCrawlFields,
 });
 
@@ -97,8 +109,23 @@ export const apifyActorConfigSchema = z.object({
   // Actor id or tilde-separated "username~actor-name" (e.g. "compass~crawler-google-places").
   actorId: z.string().min(1, 'Actor id is required'),
   // Passed through verbatim as the Actor's INPUT — shape is actor-specific.
+  // This controls what the Actor scrapes AND what it spends: the retrieval
+  // limit below caps how many dataset items we READ, not what the Actor run
+  // costs on Apify. Keep INPUT tight to control provider spend.
   input: z.record(z.unknown()).optional().default({}),
+  // Retrieval cap only (not a spend cap) — at most this many dataset items
+  // are read and imported per run.
   maxResults: z.number().int().positive().max(1000).optional().default(100),
+  // Explicit operator-configured mapping from Actor item fields to lead
+  // fields. Keys are lead fields (businessName, contactName, phone, email,
+  // website, industry, location, id); values are Actor item field names.
+  // When set, mapped fields win over name-guessing; unmapped fields still
+  // fall back to likely-key guessing so popular Actors work unconfigured.
+  fieldMapping: z.record(z.string().min(1).max(100)).optional().default({}),
+  // Actor item field that carries the stable provider-side id (e.g. "id",
+  // "placeId", "url"). Used for the stable source identity below; when absent
+  // the first present stable key is used.
+  idField: z.string().min(1).max(100).optional(),
 });
 
 export const metaLeadFormsConfigSchema = z.object({
@@ -161,7 +188,11 @@ export function parseSourceConfig(
   // `.passthrough()` keeps forward-compatible extra keys (e.g. userAgent,
   // crawlDelayMs, respectRobotsTxt) that the run-time code reads defensively
   // but that predate these schemas. Validation still applies to known keys.
-  return schema.passthrough().parse(config) as Record<string, unknown>;
+  const parsed = schema.passthrough().parse(config) as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(config, 'research')) {
+    parsed.research = researchOptionsSchema.parse(config.research);
+  }
+  return parsed;
 }
 
 // Body for the AI "auto-detect selectors" endpoint.
@@ -314,6 +345,41 @@ export const listLogsQuerySchema = z.object({
 
 export const statsSummaryQuerySchema = z.object({
   hours: z.coerce.number().int().positive().max(720).optional().default(24),
+});
+
+/**
+ * Query schema for the GET /trends endpoint.
+ * `days` must be between 1 and 90; defaults to 14.
+ */
+export const trendsQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).optional().default(14),
+});
+
+/**
+ * Body for POST /logs/:logId/import-selected — imports an explicit operator
+ * selection from a review-staged run. Entries are staged candidate provider
+ * ids (always present: provider identities or deterministic staged ids).
+ * Bounded and idempotent: re-importing the same selection dedupes to
+ * duplicates through the normal 409 path, never to new leads.
+ */
+export const importSelectedSchema = z.object({
+  selection: z.array(z.string().trim().min(1).max(255)).min(1).max(100),
+});
+
+/**
+ * UUID path-param schema shared by log-scoped endpoints (getRunLeads,
+ * retryFailed, exportRunLeadsCsv). Validates the param before any
+ * service call and produces a consistent 400 for non-UUID values.
+ */
+export const logIdParamSchema = z.object({
+  logId: z.string().uuid('logId must be a valid UUID'),
+});
+
+/**
+ * UUID path-param schema for config-scoped endpoints.
+ */
+export const configIdParamSchema = z.object({
+  id: z.string().uuid('id must be a valid UUID'),
 });
 
 export type CreateScraperConfigInput = z.infer<typeof createScraperConfigSchema>;

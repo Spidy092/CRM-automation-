@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { decryptJson } from '../../../shared/utils/encryption';
 import { AppError } from '../../../shared/middleware/errorHandler';
+import { logger } from '../../../shared/utils/logger';
 import { findByName } from '../integrations.repository';
 import { findCredentialsById } from '../integrations.repository';
 import { loggedFetch, type ConnectorResult } from '../connector.base';
@@ -114,15 +115,49 @@ export interface FacebookLead {
   field_data: Array<{ name: string; values: string[] }>;
 }
 
+/** Graph `/leads` page payload — `paging` drives cursor pagination. */
+export interface MetaLeadsPagePayload {
+  data: FacebookLead[];
+  paging?: { next?: string; cursors?: { after?: string } };
+}
+
+/** Bounded cursor pagination: Graph pages are small; never chase unboundedly. */
+const META_MAX_PAGES = 10;
+/** Per-page size requested from Graph (also bounds any single response). */
+const META_PAGE_SIZE = 100;
+/** Provider pagination links must stay on the Graph API host. */
+const META_ALLOWED_HOSTS = new Set(['graph.facebook.com']);
+
+/**
+ * True only for https: pagination URLs on the Graph API host. A compromised
+ * or buggy `paging.next` pointing elsewhere (or at http:) ends pagination —
+ * the collected leads are kept, the link is never followed.
+ */
+export function isAllowedMetaPagingUrl(next: string): boolean {
+  try {
+    const parsed = new URL(next);
+    return parsed.protocol === 'https:' && META_ALLOWED_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Pulls leads from a single Facebook Lead Form. Idempotent — caller passes
  * `since` timestamp to filter server-side. Token refresh is handled inline.
+ *
+ * Follows Graph cursor pagination (`paging.next`) up to META_MAX_PAGES with
+ * repetition detection: a repeated cursor/URL ends pagination instead of
+ * looping forever. Collection stops at `maxResults`; the cap bounds retrieval,
+ * not provider cost. Submission order is preserved (Graph returns newest
+ * first); per-page submission ids are returned so importers can dedupe.
  */
 export async function fetchFormLeads(
   integrationId: string,
   formId: string,
   since: Date,
-): Promise<ConnectorResult<{ data: FacebookLead[] }>> {
+  maxResults = 100,
+): Promise<ConnectorResult<{ data: FacebookLead[]; pages_fetched: number }>> {
   const creds = await loadCredentials();
   let accessToken = creds.accessToken;
   if (isExpiringSoon(creds)) {
@@ -132,20 +167,70 @@ export async function fetchFormLeads(
   }
 
   const sinceUnix = Math.floor(since.getTime() / 1000);
-  const url =
+  let url: string | null =
     `https://graph.facebook.com/v20.0/${encodeURIComponent(formId)}/leads` +
     `?access_token=${encodeURIComponent(accessToken)}` +
     `&filtering=[{"field":"time_created","operator":"GREATER_THAN","value":${sinceUnix}}]` +
-    `&fields=id,created_time,field_data`;
+    `&fields=id,created_time,field_data` +
+    `&limit=${META_PAGE_SIZE}`;
 
-  return loggedFetch<{ data: FacebookLead[] }>(
-    url,
-    { method: 'GET' },
-    {
-      channel: 'facebook',
-      context: { formId, op: 'fetch_leads' },
-    },
-  );
+  const leads: FacebookLead[] = [];
+  const seenCursors = new Set<string>();
+  let pagesFetched = 0;
+  const cap = Math.min(Math.max(maxResults, 1), 1000);
+
+  while (url && leads.length < cap && pagesFetched < META_MAX_PAGES) {
+    const res: ConnectorResult<MetaLeadsPagePayload> = await loggedFetch<MetaLeadsPagePayload>(
+      url,
+      { method: 'GET' },
+      {
+        channel: 'facebook',
+        context: { formId, op: 'fetch_leads', page: pagesFetched + 1 },
+      },
+    );
+    if (!res.ok) {
+      // A failed page aborts pagination; leads collected so far are kept by
+      // the caller alongside this error. Never collapse this into "empty".
+      if (pagesFetched === 0)
+        return res as ConnectorResult<{ data: FacebookLead[]; pages_fetched: number }>;
+      return {
+        ok: false,
+        status: res.status,
+        error: `Meta page ${pagesFetched + 1} failed after ${leads.length} collected: ${res.error}`,
+        latencyMs: res.latencyMs,
+        retryable: res.retryable,
+      };
+    }
+    pagesFetched++;
+    const page = res.data?.data ?? [];
+    for (const row of page) {
+      if (leads.length >= cap) break;
+      leads.push(row);
+    }
+    const next: string | undefined = res.data?.paging?.next;
+    const cursor: string | undefined = res.data?.paging?.cursors?.after;
+    if (!next) {
+      url = null;
+    } else if (!isAllowedMetaPagingUrl(next)) {
+      logger.warn('facebook: refusing off-host paging URL', { formId });
+      url = null;
+    } else if (seenCursors.has(next) || (cursor && seenCursors.has(`cursor:${cursor}`))) {
+      // Provider repeated a page — stop instead of looping forever.
+      logger.warn('facebook: repeated paging cursor, ending pagination', { formId });
+      url = null;
+    } else {
+      seenCursors.add(next);
+      if (cursor) seenCursors.add(`cursor:${cursor}`);
+      url = next;
+    }
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    data: { data: leads, pages_fetched: pagesFetched },
+    latencyMs: 0,
+  };
 }
 
 async function persistAccessToken(

@@ -3,6 +3,7 @@ import { useRef } from 'react';
 import { apiClient } from './client';
 import type { ApiResponse } from './client';
 import type {
+  DetectSelectorsResult,
   DiscoveredPage,
   ScraperConfig,
   ScraperLog,
@@ -130,9 +131,10 @@ export function useTriggerScrape() {
 export function useDetectSelectors() {
   return useMutation({
     mutationFn: async (url: string) => {
-      const response = await apiClient.post<
-        ApiResponse<{ containerSelector: string; selectors: Record<string, string> }>
-      >('/scraper/detect-selectors', { url });
+      const response = await apiClient.post<ApiResponse<DetectSelectorsResult>>(
+        '/scraper/detect-selectors',
+        { url },
+      );
       return response.data.data;
     },
   });
@@ -238,6 +240,29 @@ export function useRetryFailedScrape() {
       return response.data.data;
     },
     onSuccess: (_data, logId) => {
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'logs'] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'configs'] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'run-leads', logId] });
+      queryClient.invalidateQueries({ queryKey: ['scraper', 'stats-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+    },
+  });
+}
+
+/* ─── Import Selected Review Candidates ─── */
+
+export function useImportSelectedCandidates() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ logId, selection }: { logId: string; selection: string[] }) => {
+      const response = await apiClient.post<ApiResponse<ScraperRunResult>>(
+        `/scraper/logs/${logId}/import-selected`,
+        { selection },
+      );
+      return response.data.data;
+    },
+    onSuccess: (_data, { logId }) => {
       queryClient.invalidateQueries({ queryKey: ['scraper', 'logs'] });
       queryClient.invalidateQueries({ queryKey: ['scraper', 'configs'] });
       queryClient.invalidateQueries({ queryKey: ['scraper', 'run-leads', logId] });

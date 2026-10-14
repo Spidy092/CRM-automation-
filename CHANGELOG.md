@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0.0] - 2026-10-14
+
+### Added
+- Review-first scraper research with target scoring, candidate assessment, and explicit import selection.
+- Scraper source capability and credential requirement guidance in the configuration UI.
+
+### Changed
+- Browser requests now validate DNS answers before continuing, including subresources.
+- Research settings are validated on save, and malformed stored settings fail closed to review.
+- Review staging retains every fetched candidate and pending counts exclude completed imports.
+
 ## [0.2.0.0] - 2026-10-13
 
 ### Changed

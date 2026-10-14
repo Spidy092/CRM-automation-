@@ -8,6 +8,10 @@ import {
   detectSelectorsSchema,
   discoverPagesSchema,
   statsSummaryQuerySchema,
+  trendsQuerySchema,
+  logIdParamSchema,
+  configIdParamSchema,
+  importSelectedSchema,
 } from './scraper.schema';
 import * as scraperService from './scraper.service';
 import { findScraperLogById } from './scraper.repository';
@@ -41,7 +45,8 @@ export async function getConfigHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const config = await scraperService.getConfigById(req.params.id);
+    const { id } = configIdParamSchema.parse(req.params);
+    const config = await scraperService.getConfigById(id);
     sendSuccess(res, config);
   } catch (err) {
     next(err);
@@ -158,7 +163,8 @@ export async function getRunLeadsHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const leads = await scraperService.getLeadsForRun(req.params.logId);
+    const { logId } = logIdParamSchema.parse(req.params);
+    const leads = await scraperService.getLeadsForRun(logId);
     sendSuccess(res, leads);
   } catch (err) {
     next(err);
@@ -171,8 +177,34 @@ export async function retryFailedHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const result = await scraperService.retryFailedItems(req.params.logId, actorFromReq(req));
+    const { logId } = logIdParamSchema.parse(req.params);
+    const result = await scraperService.retryFailedItems(logId, actorFromReq(req));
     sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Imports an explicit operator selection from a review-staged run.
+ * Idempotent — re-importing the same selection dedupes instead of
+ * duplicating. Research candidates are never turned into campaigns or
+ * messages here; this creates leads only.
+ */
+export async function importSelectedHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { logId } = logIdParamSchema.parse(req.params);
+    const { selection } = importSelectedSchema.parse(req.body);
+    const result = await scraperService.importSelectedCandidates(
+      logId,
+      selection,
+      actorFromReq(req),
+    );
+    sendSuccess(res, result, 201);
   } catch (err) {
     next(err);
   }
@@ -198,11 +230,12 @@ export async function exportRunLeadsCsvHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const logId = req.params.logId;
+    const { logId } = logIdParamSchema.parse(req.params);
     const log = await findScraperLogById(logId);
     if (!log) {
-      res.status(404).json({ success: false, error: 'Scraper log not found' });
-      return;
+      // Use AppError so the response goes through the shared error handler
+      // and produces the standard { success:false, error } envelope.
+      throw new AppError('Scraper log not found', 404);
     }
     const csv = await scraperService.exportRunLeadsCsv(logId);
     const config = await scraperService.getConfigById(log.config_id);
@@ -234,7 +267,7 @@ export async function getTrendsHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const days = Math.min(Math.max(parseInt(req.query.days as string) || 14, 1), 90);
+    const { days } = trendsQuerySchema.parse(req.query);
     const trends = await scraperService.getScraperTrendsData(days);
     sendSuccess(res, trends);
   } catch (err) {

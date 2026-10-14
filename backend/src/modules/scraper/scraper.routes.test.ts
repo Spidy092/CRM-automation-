@@ -28,6 +28,8 @@ jest.mock('./scraper.controller', () => ({
   detectSelectorsHandler: (req: any, res: any) => res.status(200).json({ success: true, data: {} }),
   getRunLeadsHandler: (req: any, res: any) => res.status(200).json({ success: true, data: [] }),
   retryFailedHandler: (req: any, res: any) => res.status(200).json({ success: true, data: {} }),
+  importSelectedHandler: (req: any, res: any) =>
+    res.status(201).json({ success: true, data: {} }),
   getStatsSummaryHandler: (req: any, res: any) =>
     res.status(200).json({ success: true, data: { windowHours: 24 } }),
   discoverPagesHandler: (req: any, res: any) => res.status(200).json({ success: true, data: [] }),
@@ -63,6 +65,13 @@ describe('Scraper Routes', () => {
   it('POST /scraper/logs/:logId/retry-failed', async () => {
     const res = await request(app).post('/scraper/logs/log-1/retry-failed');
     expect(res.status).toBe(200);
+  });
+
+  it('POST /scraper/logs/:logId/import-selected', async () => {
+    const res = await request(app)
+      .post('/scraper/logs/log-1/import-selected')
+      .send({ selection: ['UC1'] });
+    expect(res.status).toBe(201);
   });
 
   it('routes /scraper/stats/summary to the stats handler, not the :id config handler', async () => {
