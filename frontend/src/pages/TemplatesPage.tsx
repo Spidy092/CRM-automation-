@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   useTemplates,
@@ -54,7 +54,15 @@ const modeLabels: Record<string, string> = {
 
 type GalleryTab = 'built-in' | 'mine' | 'all' | 'saved-snippets';
 
+const GALLERY_TABS: Array<[GalleryTab, string]> = [
+  ['built-in', 'Built-in'],
+  ['mine', 'My templates'],
+  ['all', 'All templates'],
+  ['saved-snippets', 'Saved snippets'],
+];
+
 export function TemplatesPage() {
+  const galleryId = useId();
   const user = useAuthStore((s) => s.user);
   const canWrite = user ? ROLE_PERMISSIONS[user.role]?.Templates?.write : false;
   const navigate = useNavigate();
@@ -226,10 +234,12 @@ export function TemplatesPage() {
       />
 
       <div className="flex gap-1 border-b border-slate-200" role="tablist" aria-label="Template gallery">
-        {([['built-in', 'Built-in'], ['mine', 'My templates'], ['all', 'All templates'], ['saved-snippets', 'Saved snippets']] as Array<[GalleryTab, string]>).map(([key, label]) => (
+        {GALLERY_TABS.map(([key, label]) => (
           <button
             key={key}
             role="tab"
+            id={`${galleryId}-tab-${key}`}
+            aria-controls={`${galleryId}-panel-${key}`}
             aria-selected={tab === key}
             onClick={() => { setTab(key); resetPaging(); }}
             className={`px-4 py-2 text-sm font-medium ${tab === key ? 'border-b-2 border-indigo-600 text-indigo-700' : 'text-slate-500 hover:text-slate-800'}`}
@@ -239,6 +249,16 @@ export function TemplatesPage() {
         ))}
       </div>
 
+      {GALLERY_TABS.map(([key]) => (
+        <div
+          key={key}
+          id={`${galleryId}-panel-${key}`}
+          role="tabpanel"
+          aria-labelledby={`${galleryId}-tab-${key}`}
+          hidden={tab !== key}
+        >
+          {tab === key && (
+            <>
       {tab === 'built-in' && <StarterGallery />}
 
       {tab === 'saved-snippets' && (
@@ -405,6 +425,10 @@ export function TemplatesPage() {
           </CardContent>
         </Card>
       )}
+            </>
+          )}
+        </div>
+      ))}
 
       {previewTarget && (
         <TemplatePreviewModal templateId={previewTarget.id} templateName={previewTarget.name} onClose={() => setPreviewTarget(null)} />

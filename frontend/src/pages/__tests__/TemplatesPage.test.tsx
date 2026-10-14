@@ -133,6 +133,25 @@ describe('TemplatesPage', () => {
     renderWithProviders(<TemplatesPage />);
     expect(document.body.textContent).toContain('Rows per page');
   });
+  it('connects every gallery tab to its labelled panel', () => {
+    renderWithProviders(<TemplatesPage />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(4);
+
+    for (const tab of tabs) {
+      const panel = document.getElementById(tab.getAttribute('aria-controls') ?? '');
+      expect(panel).toHaveAttribute('role', 'tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', tab.id);
+      fireEvent.click(tab);
+      expect(tab).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('tabpanel', { name: tab.textContent ?? '' })).toBe(panel);
+      expect(panel).not.toHaveAttribute('hidden');
+      for (const inactive of screen.getAllByRole('tabpanel', { hidden: true })) {
+        if (inactive !== panel) expect(inactive).toHaveAttribute('hidden');
+      }
+    }
+  });
+
   it('keeps saved snippets available in a read-only Templates tab', () => {
     renderWithProviders(<TemplatesPage />);
     fireEvent.click(screen.getByRole('tab', { name: 'Saved snippets' }));
