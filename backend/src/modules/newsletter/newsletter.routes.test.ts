@@ -147,4 +147,133 @@ describe('Newsletter Routes', () => {
     expect(res.status).toBe(403);
     expect(mockedService.listSubscribers).not.toHaveBeenCalled();
   });
+
+  it('GET /newsletter/admin/subscribers/counts returns audience-wide counts', async () => {
+    mockedService.getSubscriberCounts.mockResolvedValue({
+      ok: true,
+      value: { pending: 1, confirmed: 2, unsubscribed: 0, total: 3 },
+    });
+    const res = await request(app).get('/newsletter/admin/subscribers/counts');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ pending: 1, confirmed: 2, unsubscribed: 0, total: 3 });
+  });
+
+  it('GET /newsletter/admin/subscribers/export downloads CSV with exact total header', async () => {
+    mockedService.exportSubscribersCsv.mockResolvedValue({
+      ok: true,
+      value: { csv: 'email,status\n"=cmd",confirmed', total: 1 },
+    });
+    const res = await request(app).get('/newsletter/admin/subscribers/export?status=confirmed');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.headers['content-disposition']).toContain('newsletter-subscribers.csv');
+    expect(res.headers['x-newsletter-export-total']).toBe('1');
+    expect(mockedService.exportSubscribersCsv).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'confirmed' }),
+    );
+  });
+
+  it('GET /newsletter/admin/eligible-count returns eligible recipients', async () => {
+    mockedService.getEligibleRecipientCount.mockResolvedValue({ ok: true, value: { eligible: 4 } });
+    const res = await request(app).get('/newsletter/admin/eligible-count?frequency=weekly');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ eligible: 4 });
+  });
+
+  it('POST /newsletter/admin/test-send requires an explicit address', async () => {
+    const res = await request(app)
+      .post('/newsletter/admin/test-send')
+      .send({ to: 'not-an-email', subject: 'S', htmlBody: '<p>B</p>' });
+    expect(res.status).toBe(422);
+    expect(mockedService.sendNewsletterTest).not.toHaveBeenCalled();
+  });
+
+  it('GET /newsletter/admin/digest-status returns persisted schedule/timezone/outcome', async () => {
+    mockedService.getDigestStatus.mockResolvedValue({
+      ok: true,
+      value: {
+        enabled: true,
+        schedule: '0 9 * * 5 (Fridays 09:00)',
+        timezone: 'UTC',
+        nextRunAt: null,
+        autoSend: false,
+        lastOutcome: { status: 'never_run', message: 'none', at: null },
+      },
+    });
+    const res = await request(app).get('/newsletter/admin/digest-status');
+    expect(res.status).toBe(200);
+    expect(res.body.data.timezone).toBe('UTC');
+  });
+
+  it('GET /newsletter/admin/broadcasts returns history without invented delivery metrics', async () => {
+    mockedService.listBroadcastHistory.mockResolvedValue({ ok: true, value: { items: [] } });
+    const res = await request(app).get('/newsletter/admin/broadcasts');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  it('POST /newsletter/admin/broadcast keeps backwards-compatible { subject, htmlBody }', async () => {
+    mockedService.triggerBroadcast.mockResolvedValue({ ok: true, value: { enqueued: true } });
+    const res = await request(app)
+      .post('/newsletter/admin/broadcast')
+      .send({ subject: 'S', htmlBody: '<p>B</p>' });
+    expect(res.status).toBe(202);
+    expect(mockedService.triggerBroadcast).toHaveBeenCalledWith(
+      'S',
+      '<p>B</p>',
+      expect.objectContaining({ subject: 'S', htmlBody: '<p>B</p>' }),
+      { id: 'admin-1' },
+    );
+  });
+
+  it('POST /newsletter/admin/broadcasts/:id/retry-failed enqueues a targeted retry', async () => {
+    mockedService.retryFailedRecipients.mockResolvedValue({
+      ok: true,
+      value: { enqueued: true, retrying: 2 },
+    });
+    const res = await request(app).post('/newsletter/admin/broadcasts/550e8400-e29b-41d4-a716-446655440000/retry-failed');
+    expect(res.status).toBe(202);
+    expect(mockedService.retryFailedRecipients).toHaveBeenCalledWith(
+      '550e8400-e29b-41d4-a716-446655440000',
+      { id: 'admin-1' },
+      { includeUncertain: false },
+    );
+  });
+
+  it('POST /newsletter/admin/broadcasts/:id/retry-failed forwards explicit uncertain opt-in', async () => {
+    mockedService.retryFailedRecipients.mockResolvedValue({
+      ok: true,
+      value: { enqueued: true, retrying: 2, retryingUncertain: 1 },
+    });
+    const res = await request(app)
+      .post('/newsletter/admin/broadcasts/550e8400-e29b-41d4-a716-446655440000/retry-failed')
+      .send({ includeUncertain: true });
+    expect(res.status).toBe(202);
+    expect(mockedService.retryFailedRecipients).toHaveBeenCalledWith(
+      '550e8400-e29b-41d4-a716-446655440000',
+      { id: 'admin-1' },
+      { includeUncertain: true },
+    );
+  });
+
+  it('POST /newsletter/admin/broadcasts/:id/retry-failed returns 404 when content is gone', async () => {
+    mockedService.retryFailedRecipients.mockResolvedValue({
+      ok: false,
+      error: new AppError('Original broadcast content is no longer available for retry', 404),
+    });
+    const res = await request(app).post('/newsletter/admin/broadcasts/job-xyz/retry-failed');
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /newsletter/admin/broadcasts/:id/uncertain-recipients lists review ids', async () => {
+    mockedService.listUncertainRecipients.mockResolvedValue({
+      ok: true,
+      value: { items: [{ subscriberId: 'sub-u1', email: 'u1@example.com' }] },
+    });
+    const res = await request(app).get(
+      '/newsletter/admin/broadcasts/550e8400-e29b-41d4-a716-446655440000/uncertain-recipients',
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([{ subscriberId: 'sub-u1', email: 'u1@example.com' }]);
+  });
 });

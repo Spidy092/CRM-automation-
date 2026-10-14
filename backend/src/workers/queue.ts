@@ -479,6 +479,23 @@ export type JobData =
 export interface NewsletterBroadcastJob {
   subject: string;
   htmlBody: string;
+  previewText?: string;
+  topics?: string[];
+  frequency?: 'daily' | 'weekly' | 'monthly';
+  /** Frequency list for automated sends (e.g. digest targets daily + weekly). */
+  frequencies?: Array<'daily' | 'weekly' | 'monthly'>;
+  /** Canonical UTC ISO instant the job should run at (queue delay source). */
+  scheduledAt?: string;
+  /** Original wall-clock input for display/audit. */
+  scheduledAtLocal?: string;
+  timezone?: string;
+  idempotencyKey?: string;
+  templateId?: string;
+  broadcastRecordId?: string;
+  /** Targeted retry: only these subscriber ids are (re)processed. */
+  recipientIds?: string[];
+  /** When set, this job retries failures of an earlier broadcast. */
+  retryOf?: string;
 }
 
 export interface NewsletterAutomatedDigestJob {
@@ -623,16 +640,50 @@ export async function enqueueOutreachStopCheck(payload: OutreachStopCheckJob): P
   });
 }
 
-export async function enqueueNewsletterBroadcast(payload: NewsletterBroadcastJob): Promise<void> {
-  await newsletterQueue.add(NEWSLETTER_BROADCAST, payload);
+export async function enqueueNewsletterBroadcast(
+  payload: NewsletterBroadcastJob,
+): Promise<string | undefined> {
+  const opts: { jobId?: string; delay?: number } = {};
+  // Idempotency: retries / double-clicks with the same key dedupe instead of
+  // sending twice. Without a key each call enqueues a distinct broadcast.
+  if (payload.idempotencyKey) {
+    opts.jobId = `newsletter-broadcast-${payload.idempotencyKey}`;
+  }
+  // Scheduling: delay the job until scheduledAt (explicit timezone is stored
+  // on the payload for display; the delay is computed in UTC here).
+  if (payload.scheduledAt) {
+    const at = Date.parse(payload.scheduledAt);
+    if (Number.isFinite(at)) {
+      const delay = at - Date.now();
+      if (delay > 0) opts.delay = delay;
+    }
+  }
+  const job = await newsletterQueue.add(
+    NEWSLETTER_BROADCAST,
+    payload,
+    Object.keys(opts).length > 0 ? opts : undefined,
+  );
+  return job.id;
 }
 
 export async function toggleNewsletterAutomatedDigest(enabled: boolean): Promise<void> {
   if (enabled) {
+    // Remove any stale repeatable before re-adding so repeated "enable"
+    // clicks do not stack duplicate Friday schedules.
+    try {
+      const repeatableJobs = await newsletterQueue.getRepeatableJobs();
+      for (const job of repeatableJobs) {
+        if (job.name === NEWSLETTER_AUTOMATED_DIGEST) {
+          await newsletterQueue.removeRepeatableByKey(job.key);
+        }
+      }
+    } catch {
+      // Best-effort cleanup; the add below is authoritative.
+    }
     await newsletterQueue.add(
       NEWSLETTER_AUTOMATED_DIGEST,
       {},
-      { repeat: { pattern: '0 9 * * 5' } }, // Every Friday at 9 AM
+      { repeat: { pattern: '0 9 * * 5' } }, // Every Friday at 9 AM UTC
     );
   } else {
     const repeatableJobs = await newsletterQueue.getRepeatableJobs();

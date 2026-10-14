@@ -207,3 +207,14 @@ export const agentStepDurationSeconds = new Histogram({
   labelNames: ['risk_tier'] as const,
   buckets: [0.1, 0.5, 1, 5, 10, 30],
 });
+
+// ── Newsletter token telemetry ─────────────────────────────────────────────
+
+export const newsletterLegacyTokenHitsTotal = new Counter({
+  name: 'crm_newsletter_legacy_token_hits_total',
+  help: 'Unsubscribe/preference lookups resolved via the legacy direct-hash fallback (pre-0081 email links)',
+});
+
+export function incNewsletterLegacyTokenHit(): void {
+  newsletterLegacyTokenHitsTotal.inc();
+}

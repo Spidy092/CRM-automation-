@@ -29,4 +29,55 @@ export interface NewsletterDigestConfig {
   targetAudience: string;
 }
 
+export interface NewsletterBroadcastTargeting {
+  topics?: string[];
+  frequency?: NewsletterFrequency | NewsletterFrequency[];
+}
+
+export interface NewsletterBroadcastInput {
+  subject: string;
+  htmlBody: string;
+  previewText?: string;
+  topics?: string[];
+  frequency?: NewsletterFrequency;
+  /** Frequency list for automated sends (digest targets daily + weekly). */
+  frequencies?: NewsletterFrequency[];
+  scheduledAt?: string;
+  /** Wall-clock scheduling input; converted to UTC via `timezone`. */
+  scheduledAtLocal?: string;
+  timezone?: string;
+  idempotencyKey?: string;
+  templateId?: string;
+}
+
+export interface NewsletterDeliveryOutcome {
+  attempted: number;
+  accepted: number;
+  failed: number;
+  skipped: number;
+  failures: Array<{ subscriberId: string; error: string }>;
+}
+
+export interface NewsletterDigestStatus {
+  enabled: boolean;
+  schedule: string;
+  timezone: string;
+  nextRunAt: string | null;
+  autoSend: boolean;
+  lastOutcome: {
+    status: 'success' | 'failed' | 'needs_review' | 'never_run';
+    message: string;
+    at: string | null;
+  };
+}
+
+export interface NewsletterDigestDraft {
+  subject: string;
+  htmlBody: string;
+  status: 'draft' | 'approved' | 'sent';
+  createdAt: string;
+  updatedAt: string;
+  note?: string;
+}
+
 export type NewsletterResult<T, E> = { ok: true; value: T } | { ok: false; error: E };

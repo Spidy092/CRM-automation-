@@ -15,6 +15,18 @@ import {
   toggleAutomatedDigestHandler,
   getDigestConfigHandler,
   updateDigestConfigHandler,
+  getSubscriberCountsHandler,
+  getEligibleCountHandler,
+  testSendHandler,
+  exportSubscribersHandler,
+  getDigestStatusHandler,
+  getDigestDraftHandler,
+  saveDigestDraftHandler,
+  approveDigestDraftHandler,
+  setDigestAutoSendHandler,
+  listBroadcastsHandler,
+  retryBroadcastHandler,
+  listUncertainRecipientsHandler,
 } from './newsletter.controller';
 
 const router = Router();
@@ -31,10 +43,22 @@ router.patch('/preferences', publicLimiter, wrap(updatePreferencesHandler));
 
 router.use('/admin', wrap(authenticate), authenticatedLimiter, authorize('admin', 'marketing'));
 router.get('/admin/subscribers', wrap(listSubscribersHandler));
+router.get('/admin/subscribers/counts', wrap(getSubscriberCountsHandler));
+router.get('/admin/subscribers/export', wrap(exportSubscribersHandler));
 router.get('/admin/subscribers/:id', wrap(getSubscriberHandler));
+router.get('/admin/eligible-count', wrap(getEligibleCountHandler));
+router.get('/admin/broadcasts', wrap(listBroadcastsHandler));
+router.post('/admin/broadcasts/:id/retry-failed', wrap(retryBroadcastHandler));
+router.get('/admin/broadcasts/:id/uncertain-recipients', wrap(listUncertainRecipientsHandler));
 router.post('/admin/broadcast', wrap(broadcastHandler));
+router.post('/admin/test-send', wrap(testSendHandler));
 router.post('/admin/automated-digest', wrap(toggleAutomatedDigestHandler));
+router.get('/admin/digest-status', wrap(getDigestStatusHandler));
 router.get('/admin/digest-config', wrap(getDigestConfigHandler));
 router.put('/admin/digest-config', wrap(updateDigestConfigHandler));
+router.get('/admin/digest-draft', wrap(getDigestDraftHandler));
+router.post('/admin/digest-draft', wrap(saveDigestDraftHandler));
+router.post('/admin/digest-draft/approve', wrap(approveDigestDraftHandler));
+router.post('/admin/digest-auto-send', wrap(setDigestAutoSendHandler));
 
 export { router as newsletterRoutes };
