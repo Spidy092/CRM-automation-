@@ -52,9 +52,10 @@ interface TemplateListResponse {
   meta: { nextCursor?: string; hasMore: boolean };
 }
 
-export function useTemplates(filters: TemplateFilters = {}) {
+export function useTemplates(filters: TemplateFilters = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['templates', filters],
+    enabled: options.enabled,
     queryFn: async (): Promise<TemplateListResponse> => {
       const params = new URLSearchParams();
       params.set('limit', String(filters.limit ?? 20));
