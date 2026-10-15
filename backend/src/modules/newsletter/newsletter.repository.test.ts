@@ -33,6 +33,7 @@ import {
   listUncertainRecipientIdsForBroadcasts,
   findBroadcastFrequencies,
   isTokenTableAvailable,
+  isSendLimitStorageAvailable,
   reserveNewsletterSend,
   finishNewsletterSend,
 } from './newsletter.repository';
@@ -318,6 +319,18 @@ describe('newsletter.repository', () => {
     await expect(isTokenTableAvailable()).resolves.toBe(false);
     mockQueryOne.mockRejectedValueOnce(new Error('connection refused'));
     await expect(isTokenTableAvailable()).rejects.toThrow('connection refused');
+  });
+
+  it('isSendLimitStorageAvailable rejects pre-0084 schemas and propagates unrelated failures', async () => {
+    mockQuery.mockResolvedValue([]);
+    await expect(isSendLimitStorageAvailable()).resolves.toBe(true);
+    expect(mockQuery.mock.calls[0][0]).toContain('newsletter_reserved_until');
+    mockQuery.mockRejectedValueOnce(
+      Object.assign(new Error('column newsletter_reserved_until does not exist'), { code: '42703' }),
+    );
+    await expect(isSendLimitStorageAvailable()).resolves.toBe(false);
+    mockQuery.mockRejectedValueOnce(new Error('connection refused'));
+    await expect(isSendLimitStorageAvailable()).rejects.toThrow('connection refused');
   });
 
   it('listUncertainRecipientIds queries the uncertain state only', async () => {

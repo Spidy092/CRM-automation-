@@ -155,6 +155,20 @@ export async function isTokenTableAvailable(): Promise<boolean> {
   }
 }
 
+/** Probe the rolling-send-limit columns added by migration 0084 before enqueue. */
+export async function isSendLimitStorageAvailable(): Promise<boolean> {
+  try {
+    await query(
+      `SELECT newsletter_last_accepted_at, newsletter_reserved_until,
+        newsletter_reservation_key FROM newsletter_subscribers LIMIT 0`,
+    );
+    return true;
+  } catch (err) {
+    if (isUndefinedColumnError(err) || isMissingRelationError(err)) return false;
+    throw err;
+  }
+}
+
 /**
  * Append a token-table row for one broadcast send. Never updates or revokes
  * existing rows: older links stay valid. Throws through missing-table

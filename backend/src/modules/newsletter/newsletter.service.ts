@@ -35,6 +35,7 @@ import {
   createSubscriberToken,
   isMissingRelationError,
   isTokenTableAvailable,
+  isSendLimitStorageAvailable,
   findSubscribers,
   countSubscribers,
   countSubscribersByStatus,
@@ -594,6 +595,18 @@ export async function triggerBroadcast(
         error: new AppError(
           'Newsletter sending is not set up: run migration 0081 ' +
             '(newsletter_subscriber_tokens) before sending broadcasts. Nothing was enqueued.',
+          503,
+        ),
+      };
+    }
+    // Reservation columns ship in migration 0084. Reject before creating a
+    // history row or queue job when an environment has only applied 0081.
+    if (!(await isSendLimitStorageAvailable())) {
+      return {
+        ok: false,
+        error: new AppError(
+          'Newsletter sending is not set up: run migration 0084 ' +
+            '(newsletter send-limit columns) before sending broadcasts. Nothing was enqueued.',
           503,
         ),
       };
