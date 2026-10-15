@@ -1249,6 +1249,58 @@ describe('newsletter.service', () => {
       expect(result.value.lastOutcome.status).toBe('success');
     });
 
+    it('does not enqueue an already approved digest', async () => {
+      mockedRedis.get.mockResolvedValue(
+        JSON.stringify({ subject: 'S', htmlBody: '<p>B</p>', status: 'approved' }),
+      );
+      const { enqueueNewsletterBroadcast } = jest.requireMock('../../workers/queue');
+      const result = await approveDigestDraft();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.statusCode).toBe(409);
+      expect(enqueueNewsletterBroadcast).not.toHaveBeenCalled();
+    });
+
+    it('reuses the same approval identity after an approval-status write fails', async () => {
+      const draft = {
+        id: 'draft-id',
+        subject: 'S',
+        htmlBody: '<p>B</p>',
+        status: 'draft',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      };
+      mockedRedis.get.mockResolvedValue(JSON.stringify(draft));
+      mockedRedis.set.mockRejectedValueOnce(new Error('interrupted write')).mockResolvedValue('OK');
+      const first = await approveDigestDraft();
+      const second = await approveDigestDraft();
+      expect(first.ok).toBe(false);
+      expect(second.ok).toBe(true);
+      const { enqueueNewsletterBroadcast } = jest.requireMock('../../workers/queue');
+      expect(enqueueNewsletterBroadcast).toHaveBeenCalledTimes(2);
+      for (const [payload] of (enqueueNewsletterBroadcast as jest.Mock).mock.calls) {
+        expect(payload).toMatchObject({
+          idempotencyKey: 'digest-approval-draft-id',
+          frequencies: ['daily', 'weekly'],
+        });
+      }
+    });
+
+    it('preserves the setup error status on digest approval', async () => {
+      mockedRedis.get.mockResolvedValue(
+        JSON.stringify({
+          subject: 'S',
+          htmlBody: '<p>B</p>',
+          status: 'draft',
+          createdAt: '2026-01-01',
+          updatedAt: '2026-01-01',
+        }),
+      );
+      mockedRepo.isTokenTableAvailable.mockResolvedValue(false);
+      const result = await approveDigestDraft();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.statusCode).toBe(503);
+    });
+
     it('saves a draft as needs_review and approves it into a broadcast', async () => {
       mockedRedis.get.mockResolvedValue(null);
       mockedRedis.set.mockResolvedValue('OK');
@@ -1262,6 +1314,10 @@ describe('newsletter.service', () => {
       );
       const approved = await approveDigestDraft();
       expect(approved.ok).toBe(true);
+      expect(enqueueNewsletterBroadcast).toHaveBeenCalledWith(expect.objectContaining({
+        frequencies: ['daily', 'weekly'],
+        idempotencyKey: expect.stringMatching(/^digest-approval-/),
+      }));
     });
   });
 });

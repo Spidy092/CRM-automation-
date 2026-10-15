@@ -72,6 +72,7 @@ export interface NewsletterDigestStatus {
 }
 
 export interface NewsletterDigestDraft {
+  id?: string;
   subject: string;
   htmlBody: string;
   status: 'draft' | 'approved' | 'sent';

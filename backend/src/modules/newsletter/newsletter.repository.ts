@@ -327,7 +327,7 @@ export async function findSubscribers(
   // Params for LIMIT/OFFSET follow filter params to keep indexes stable.
   const rows = await query<NewsletterSubscriberRow & { topics: unknown }>(
     `SELECT ${SUBSCRIBER_COLS} FROM newsletter_subscribers
-     ${clause} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+     ${clause} ORDER BY created_at DESC, id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset],
   );
   return rows.map(mapRow);
@@ -403,7 +403,7 @@ function pushFrequencyClause(
 
 export async function findEligibleSubscribers(
   limit: number,
-  offset: number,
+  afterOrOffset: number | string | null,
   targeting?: EligibleTargeting,
 ): Promise<NewsletterSubscriberRow[]> {
   const params: unknown[] = [];
@@ -415,10 +415,19 @@ export async function findEligibleSubscribers(
     params.push(targeting.topics);
     clauses.push(`topics ?| $${params.length}::text[]`);
   }
-  params.push(limit, offset);
+  // Workers page on immutable UUIDs so opt-outs in earlier pages cannot
+  // shift later recipients. Numeric offsets remain for existing list callers.
+  const keyset = typeof afterOrOffset !== 'number';
+  if (typeof afterOrOffset === 'string') {
+    params.push(afterOrOffset);
+    clauses.push(`id < $${params.length}::uuid`);
+  }
+  params.push(limit);
+  const limitIndex = params.length;
+  if (!keyset) params.push(afterOrOffset);
   const rows = await query<NewsletterSubscriberRow & { topics: unknown }>(
     `SELECT ${SUBSCRIBER_COLS} FROM newsletter_subscribers
-     WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+     WHERE ${clauses.join(' AND ')} ORDER BY ${keyset ? 'id DESC' : 'created_at DESC, id DESC'} LIMIT $${limitIndex}${keyset ? '' : ` OFFSET $${params.length}`}`,
     params,
   );
   return rows.map(mapRow);

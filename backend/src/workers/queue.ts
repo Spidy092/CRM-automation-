@@ -16,6 +16,7 @@
  *     the assignment and then dispatches a Slack/Teams notification.
  */
 
+import { newsletterBroadcastJobId } from '../shared/utils/newsletterJobId';
 import IORedis, { type Redis } from 'ioredis';
 import { Queue, type ConnectionOptions } from 'bullmq';
 import { logger } from '../shared/utils/logger';
@@ -647,7 +648,7 @@ export async function enqueueNewsletterBroadcast(
   // Idempotency: retries / double-clicks with the same key dedupe instead of
   // sending twice. Without a key each call enqueues a distinct broadcast.
   if (payload.idempotencyKey) {
-    opts.jobId = `newsletter-broadcast-${payload.idempotencyKey}`;
+    opts.jobId = newsletterBroadcastJobId(payload.idempotencyKey);
   }
   // Scheduling: delay the job until scheduledAt (explicit timezone is stored
   // on the payload for display; the delay is computed in UTC here).

@@ -29,6 +29,24 @@ describe('localDateTimeInZoneToUtc', () => {
     expect(r.ambiguous).toBe(true);
   });
 
+  it.each([
+    ['Europe/Berlin', '2026-10-25T02:30', '2026-10-25T00:30:00.000Z'],
+    ['Europe/London', '2026-10-25T01:30', '2026-10-25T00:30:00.000Z'],
+    ['America/New_York', '2026-11-01T01:30', '2026-11-01T05:30:00.000Z'],
+  ])('chooses the earliest valid occurrence in %s', (zone, local, expectedUtc) => {
+    const resolved = localDateTimeInZoneToUtc(local, zone);
+    expect(resolved.utcIso).toBe(expectedUtc);
+    expect(resolved.ambiguous).toBe(true);
+  });
+
+  it.each([
+    ['Europe/Berlin', '2026-03-29T02:30'],
+    ['Europe/London', '2026-03-29T01:30'],
+    ['America/New_York', '2026-03-08T02:30'],
+  ])('rejects the spring-forward gap in %s', (zone, local) => {
+    expect(() => localDateTimeInZoneToUtc(local, zone)).toThrow(/does not exist/);
+  });
+
   it('converts an unambiguous DST-zone winter time normally', () => {
     // EST (-5): 09:00 wall = 14:00Z.
     const r = localDateTimeInZoneToUtc('2026-01-15T09:00', 'America/New_York');

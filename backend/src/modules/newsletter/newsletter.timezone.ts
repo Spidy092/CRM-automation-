@@ -116,9 +116,8 @@ export function localDateTimeInZoneToUtc(local: string, timeZone: string): Resol
     throw new AppError(`Unknown timezone: ${timeZone}`, 422);
   }
 
-  // Treat the wall fields as UTC to get a first guess, then correct by the
-  // zone offset at that guess. Two iterations settle all real zones
-  // (offsets change at most once across the correction span).
+  // Enumerate offsets on both sides of a possible transition rather than
+  // converging on one offset, which can hide the earlier fold occurrence.
   const wallAsUtc = Date.UTC(
     parts.year,
     parts.month - 1,
@@ -127,31 +126,34 @@ export function localDateTimeInZoneToUtc(local: string, timeZone: string): Resol
     parts.minute,
     parts.second,
   );
-  let utcMs = wallAsUtc - offsetMinutesAt(wallAsUtc, zone) * 60000;
-  utcMs = wallAsUtc - offsetMinutesAt(utcMs, zone) * 60000;
-
-  // Round-trip check: a nonexistent wall time (spring-forward gap) cannot
-  // survive conversion — the zone wall clock of the result differs.
-  const back = wallParts(utcMs, zone);
-  const matches =
-    back.year === parts.year &&
-    back.month === parts.month &&
-    back.day === parts.day &&
-    back.hour === parts.hour &&
-    back.minute === parts.minute;
-  if (!matches) {
+  const dayMs = 24 * 60 * 60000;
+  const offsets = new Set([
+    offsetMinutesAt(wallAsUtc - dayMs, zone),
+    offsetMinutesAt(wallAsUtc + dayMs, zone),
+  ]);
+  const candidates = [...offsets]
+    .map((offset) => wallAsUtc - offset * 60000)
+    .filter((instant): boolean => {
+      const back = wallParts(instant, zone);
+      return (
+        back.year === parts.year &&
+        back.month === parts.month &&
+        back.day === parts.day &&
+        back.hour === parts.hour &&
+        back.minute === parts.minute &&
+        back.second === parts.second
+      );
+    })
+    .sort((a, b) => a - b);
+  if (candidates.length === 0) {
     throw new AppError(
       `Local time ${local} does not exist in ${zone} (daylight-saving transition gap). Choose a different time.`,
       422,
     );
   }
 
-  // Ambiguity check (fall-back fold): the same wall clock maps from two
-  // instants an hour apart. We keep the earlier one (first iteration result
-  // from the wall-as-UTC guess lands pre-transition); report it honestly.
-  const ambiguous =
-    offsetMinutesAt(utcMs - 30 * 60000, zone) !== offsetMinutesAt(utcMs + 30 * 60000, zone) ||
-    offsetMinutesAt(utcMs, zone) !== offsetMinutesAt(utcMs + 60 * 60000, zone);
+  const utcMs = candidates[0];
+  const ambiguous = candidates.length > 1;
 
   return { utcIso: new Date(utcMs).toISOString(), local, timeZone: zone, ambiguous };
 }

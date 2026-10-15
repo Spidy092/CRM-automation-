@@ -302,7 +302,7 @@ describe('newsletter worker delivery accounting', () => {
     await processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>', frequency: 'weekly' }, 'job-f1'));
     expect(mockedRepo.findEligibleSubscribers).toHaveBeenCalledWith(
       100,
-      0,
+      null,
       expect.objectContaining({ frequency: 'weekly' }),
     );
     // Automated path (list) takes precedence and reaches the repository.
@@ -312,7 +312,7 @@ describe('newsletter worker delivery accounting', () => {
     );
     expect(mockedRepo.findEligibleSubscribers).toHaveBeenCalledWith(
       100,
-      0,
+      null,
       expect.objectContaining({ frequency: ['daily', 'weekly'] }),
     );
   });
@@ -362,18 +362,41 @@ describe('newsletter worker delivery accounting', () => {
     expect(JSON.parse(outcomeCall![1] as string).status).toBe('partially_failed');
   });
 
-  it('crash before provider dispatch becomes uncertain on retry, never resent', async () => {
+  it('releases claims on known token preparation failure and retries safely', async () => {
     mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
-    mockedSendgrid.sendEmail.mockResolvedValue({ ok: true, status: 202, data: {}, latencyMs: 1 } as any);
-    const mint = newsletterService.mintBroadcastToken as jest.Mock;
-    // First attempt dies between claim and receipt (mint throws out), so no
-    // page-2 fetch happens — no trailing `[]` queued.
     mockedRepo.findEligibleSubscribers.mockResolvedValueOnce([confirmedRow('a')]);
-    mint.mockRejectedValueOnce(new Error('process crashed'));
-    await expect(
-      processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }, 'job-crash-1')),
-    ).rejects.toThrow('process crashed');
+    (newsletterService.mintBroadcastToken as jest.Mock).mockRejectedValueOnce(new Error('DB unavailable'));
+    await expect(processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }, 'prepare')))
+      .rejects.toThrow('DB unavailable');
+    expect(mockedRedis.del).toHaveBeenCalledWith('newsletter:broadcast:claim:prepare:a');
     expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
+    mockedRepo.findEligibleSubscribers.mockResolvedValueOnce([confirmedRow('a')]).mockResolvedValueOnce([]);
+    mockedSendgrid.sendEmail.mockResolvedValue({ ok: true, status: 202, data: {}, latencyMs: 1 } as any);
+    const result = await processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }, 'prepare'));
+    expect(result.accepted).toBe(1);
+    expect(result.uncertain).toBe(0);
+  });
+
+  it('does not skip recipients when earlier eligible rows unsubscribe', async () => {
+    let eligible = ['c', 'b', 'a'];
+    mockedRepo.findEligibleSubscribers.mockImplementation(async (_limit, after) => {
+      if (typeof after === 'number') throw new Error('offset paging regressed');
+      return eligible.filter((id) => after === null || id < after).slice(0, 2).map(confirmedRow);
+    });
+    mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
+    mockedSendgrid.sendEmail.mockImplementation(async () => {
+      eligible = eligible.filter((id) => id !== 'c');
+      return { ok: true, status: 202, data: {}, latencyMs: 1 } as any;
+    });
+    const result = await processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }, 'cursor'));
+    expect(result.accepted).toBe(3);
+    expect(mockedRepo.findEligibleSubscribers).toHaveBeenNthCalledWith(2, 100, 'b', {});
+  });
+
+  it('hard process crash leaves an orphan claim uncertain without dispatch', async () => {
+    mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
+    const mint = newsletterService.mintBroadcastToken as jest.Mock;
+    // Persisted claim models process termination, which cannot run cleanup.
     // Second attempt sees the orphaned claim with no receipt: uncertain.
     mockedRepo.findEligibleSubscribers
       .mockResolvedValueOnce([confirmedRow('a')])

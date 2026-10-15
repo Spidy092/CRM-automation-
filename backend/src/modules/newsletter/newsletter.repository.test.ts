@@ -387,6 +387,24 @@ describe('newsletter.repository', () => {
     expect(counts).toEqual({ pending: 2, confirmed: 5, unsubscribed: 0, total: 7 });
   });
 
+  it('orders subscriber list pages by timestamp and unique ID', async () => {
+    mockQuery.mockResolvedValue([]);
+    await findSubscribers(100, 0);
+    expect(mockQuery.mock.calls[0][0]).toContain('ORDER BY created_at DESC, id DESC');
+  });
+
+  it('uses immutable ID keysets for broadcast pages without OFFSET', async () => {
+    mockQuery.mockResolvedValue([]);
+    await findEligibleSubscribers(100, null);
+    expect(mockQuery.mock.calls[0][0]).toContain('ORDER BY id DESC');
+    expect(mockQuery.mock.calls[0][0]).not.toContain('OFFSET');
+    await findEligibleSubscribers(100, '00000000-0000-4000-8000-000000000001', { frequency: 'weekly' });
+    const [sql, params] = mockQuery.mock.calls[1];
+    expect(sql).toContain('id < $2::uuid');
+    expect(sql).not.toContain('OFFSET');
+    expect(params).toEqual(['weekly', '00000000-0000-4000-8000-000000000001', 100]);
+  });
+
   it('findEligibleSubscribers only queries confirmed and rechecks apply topic/frequency', async () => {
     mockQuery.mockResolvedValue([baseRow]);
     await findEligibleSubscribers(100, 0, { topics: ['promotions'], frequency: 'weekly' });

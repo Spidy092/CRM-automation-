@@ -272,6 +272,7 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
   const baseUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
   let offset = 0;
+  let afterId: string | null = null;
   const limit = 100;
   let attempted = 0;
   let accepted = 0;
@@ -327,11 +328,12 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
       }
       subscribers = rows.filter((r): r is NonNullable<typeof r> => r !== null);
     } else {
-      subscribers = await findEligibleSubscribers(limit, offset, {
+      subscribers = await findEligibleSubscribers(limit, afterId, {
         ...(topics ? { topics } : {}),
         ...(frequencyFilter ? { frequency: frequencyFilter } : {}),
       });
       pageExhausted = subscribers.length === 0;
+      if (!pageExhausted) afterId = subscribers[subscribers.length - 1].id;
     }
     if (pageExhausted) {
       hasMore = false;
@@ -416,14 +418,23 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
       // Per-send token from the append-only table (migration 0081). Missing
       // table throws an actionable setup error here — before any send, with
       // no rotation and no invalidation of older links.
-      const { raw: rawToken } = await mintBroadcastToken(sub.id, broadcastLabel);
-      const prefsUrl = `${baseUrl}/newsletter/preferences?token=${encodeURIComponent(rawToken)}`;
-      const unsubUrl = `${baseUrl}/newsletter/unsubscribe?token=${encodeURIComponent(rawToken)}`;
-      const { html, text } = buildBroadcastHtml(htmlBody, {
-        ...(previewText ? { previewText } : {}),
-        prefsUrl,
-        unsubUrl,
-      });
+      let html: string;
+      let text: string;
+      try {
+        const { raw: rawToken } = await mintBroadcastToken(sub.id, broadcastLabel);
+        const prefsUrl = `${baseUrl}/newsletter/preferences?token=${encodeURIComponent(rawToken)}`;
+        const unsubUrl = `${baseUrl}/newsletter/unsubscribe?token=${encodeURIComponent(rawToken)}`;
+        ({ html, text } = buildBroadcastHtml(htmlBody, {
+          ...(previewText ? { previewText } : {}),
+          prefsUrl,
+          unsubUrl,
+        }));
+      } catch (err) {
+        // Preparation never contacted a provider: release the claim so a
+        // retry can safely send. Actual process crashes still leave claims.
+        await releaseClaim(broadcastId, sub.id);
+        throw err;
+      }
 
       attempted += 1;
       const result = await sendToRecipient({

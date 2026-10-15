@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { newsletterBroadcastJobId } from '../../shared/utils/newsletterJobId';
 import OpenAI from 'openai';
 import { AppError } from '../../shared/middleware/errorHandler';
 import {
@@ -148,7 +149,7 @@ async function checkStrandedBroadcast(
   if (rowStatus === 'completed' || rowStatus === 'partially_failed' || rowStatus === 'failed') {
     return 'duplicate-confirmed';
   }
-  const jobId = `newsletter-broadcast-${idempotencyKey}`;
+  const jobId = newsletterBroadcastJobId(idempotencyKey);
   let job: {
     getState: () => Promise<string>;
     retry: () => Promise<void>;
@@ -1028,6 +1029,7 @@ export async function saveDigestDraft(
       prev = null;
     }
     const next: NewsletterDigestDraft = {
+      id: prev?.status === 'draft' && prev.id ? prev.id : crypto.randomUUID(),
       subject: draft.subject,
       htmlBody: draft.htmlBody,
       status: 'draft',
@@ -1051,8 +1053,20 @@ export async function approveDigestDraft(): Promise<
     const raw = await redis.get(DIGEST_DRAFT_REDIS_KEY);
     if (!raw) return { ok: false, error: new AppError('No digest draft to approve', 404) };
     const draft = JSON.parse(raw) as NewsletterDigestDraft;
-    const result = await triggerBroadcast(draft.subject, draft.htmlBody);
-    if (!result.ok) throw result.error;
+    if (draft.status !== 'draft') {
+      return { ok: false, error: new AppError('Digest draft has already been approved', 409) };
+    }
+    const identity =
+      draft.id ??
+      hashToken(JSON.stringify([draft.createdAt, draft.updatedAt, draft.subject, draft.htmlBody]));
+    const result = await triggerBroadcast(draft.subject, draft.htmlBody, {
+      subject: draft.subject,
+      htmlBody: draft.htmlBody,
+      frequencies: ['daily', 'weekly'],
+      timezone: 'UTC',
+      idempotencyKey: `digest-approval-${identity}`,
+    });
+    if (!result.ok) return result;
     const now = new Date().toISOString();
     await redis.set(
       DIGEST_DRAFT_REDIS_KEY,
@@ -1060,6 +1074,7 @@ export async function approveDigestDraft(): Promise<
     );
     return { ok: true, value: result.value };
   } catch (err) {
+    if (err instanceof AppError) return { ok: false, error: err };
     const message = err instanceof Error ? err.message : 'Failed to approve digest draft';
     return { ok: false, error: new AppError(message, 500) };
   }

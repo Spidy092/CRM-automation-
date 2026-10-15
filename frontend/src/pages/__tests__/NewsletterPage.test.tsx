@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, within } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { NewsletterPage } from '../NewsletterPage';
+import { useDigestDraft, useBroadcasts } from '@/api/newsletter';
 
 vi.mock('@/store/authStore', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) =>
@@ -154,4 +155,13 @@ describe('NewsletterPage workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: /retry failed \+ uncertain recipients/i }));
     expect(retryMutate).toHaveBeenLastCalledWith({ id: 'b-1', includeUncertain: true });
   });
+  it('does not present an approved draft as awaiting review', () => {
+    vi.mocked(useDigestDraft).mockReturnValue({ data: { draft: { subject: 'Approved draft', status: 'approved' }, autoSend: false }, isLoading: false } as ReturnType<typeof useDigestDraft>);
+    vi.mocked(useBroadcasts).mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useBroadcasts>);
+    renderWithProviders(<NewsletterPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Broadcasts' }));
+    expect(screen.queryByText(/AI draft awaiting review/)).toBeNull();
+    expect(screen.getByText('No broadcasts yet')).toBeDefined();
+  });
+
 });

@@ -343,6 +343,8 @@ export function useSetDigestAutoSend() {
 }
 
 export interface BroadcastHistoryItem {
+  createdBy: string | null;
+  source: 'database' | 'redis';
   id: string;
   subject: string;
   status: 'completed' | 'partially_failed' | 'failed' | 'processing' | 'scheduled' | 'draft';

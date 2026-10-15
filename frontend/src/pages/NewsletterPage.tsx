@@ -435,7 +435,7 @@ export function NewsletterPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {digestDraftQuery.data?.draft && (
+            {digestDraftQuery.data?.draft?.status === 'draft' && (
               <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
                 <StatusBadge tone="amber">draft</StatusBadge>
                 <span className="ml-2 font-medium">{digestDraftQuery.data.draft.subject}</span>
@@ -444,7 +444,7 @@ export function NewsletterPage() {
             )}
             {broadcastsQuery.isLoading && <LoadingTable />}
             {broadcastsQuery.error && <ErrorState message={(broadcastsQuery.error as Error).message} onRetry={() => broadcastsQuery.refetch()} />}
-            {!broadcastsQuery.isLoading && !broadcastsQuery.error && (broadcastsQuery.data ?? []).length === 0 && !digestDraftQuery.data?.draft && (
+            {!broadcastsQuery.isLoading && !broadcastsQuery.error && (broadcastsQuery.data ?? []).length === 0 && digestDraftQuery.data?.draft?.status !== 'draft' && (
               <EmptyState icon={<InboxIcon className="h-6 w-6" />} title="No broadcasts yet" description="Create your first newsletter to see history here." />
             )}
             {!broadcastsQuery.isLoading && !broadcastsQuery.error && (broadcastsQuery.data ?? []).length > 0 && (
@@ -492,7 +492,7 @@ export function NewsletterPage() {
                 <dl className="mt-2 grid gap-1">
                   <div className="flex justify-between"><dt className="text-slate-500">Status</dt><dd>{selectedBroadcast.status.replace('_', ' ')}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Audience</dt><dd>{selectedBroadcast.topics.length ? selectedBroadcast.topics.join(', ') : 'All confirmed'} · {selectedBroadcast.frequencies?.length ? selectedBroadcast.frequencies.join(' + ') : (selectedBroadcast.frequency ?? 'any frequency')}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Creator</dt><dd>Not recorded (pre-persistence history)</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-500">Creator</dt><dd>{selectedBroadcast.createdBy ?? (selectedBroadcast.source === 'redis' ? 'Not recorded (pre-persistence history)' : 'System')}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Finished</dt><dd>{new Date(selectedBroadcast.finishedAt).toLocaleString()} ({selectedBroadcast.timezone})</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Accepted / Failed</dt><dd>{selectedBroadcast.accepted} / {selectedBroadcast.failed} (attempted {selectedBroadcast.attempted}, skipped {selectedBroadcast.skipped})</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Uncertain sends</dt><dd>{selectedBroadcast.uncertain ?? 0} — outcome unknown, never auto-resent</dd></div>

@@ -1,3 +1,4 @@
+import { useModalFocus } from '@/hooks/useModalFocus';
 import { useEffect, useId, useState } from 'react';
 import { Button } from './button';
 import { Input } from './input';
@@ -23,6 +24,7 @@ interface Props {
 
 export function NewsletterDigestConfigModal({ onClose }: Props) {
   const titleId = useId();
+  const dialogRef = useModalFocus(onClose);
   const { data: config, isLoading } = useDigestConfig();
   const { data: status, isLoading: statusLoading } = useDigestStatus();
   const { data: draftState, isLoading: draftLoading } = useDigestDraft();
@@ -38,30 +40,21 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
     customPrompt: 'Provide actionable sales techniques and productivity advice.',
     targetAudience: 'Sales reps and business professionals',
   });
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [configDirty, setConfigDirty] = useState(false);
   const [draftEdits, setDraftEdits] = useState({ subject: '', htmlBody: '' });
 
   useEffect(() => {
-    if (config) setFormData(config);
-  }, [config]);
+    if (config && !configDirty) setFormData(config);
+  }, [config, configDirty]);
 
   useEffect(() => {
-    if (draftState?.draft) {
+    if (draftState?.draft && !draftDirty) {
       setDraftEdits({ subject: draftState.draft.subject, htmlBody: draftState.draft.htmlBody });
     }
-  }, [draftState?.draft]);
+  }, [draftState?.draft, draftDirty]);
 
-  useEffect(() => {
-    // Restore focus to the opener on unmount (focus restoration for dialogs).
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      previouslyFocused?.focus?.();
-    };
-  }, [onClose]);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,6 +74,7 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
   const handleSaveDraftEdits = async () => {
     try {
       await saveDraftMutation.mutateAsync(draftEdits);
+      setDraftDirty(false);
       showToast('Draft saved for review.');
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Failed to save draft.'), 'error');
@@ -97,8 +91,8 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-lg bg-primary/10 text-primary">
             <Sparkles className="h-5 w-5" />
@@ -149,15 +143,16 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
               <p className="text-xs text-slate-500">Status: {draftState.draft.status} · Updated {new Date(draftState.draft.updatedAt).toLocaleString()}</p>
               <div>
                 <label htmlFor="digest-draft-subject" className="mb-1 block text-sm font-medium text-slate-700">Subject</label>
-                <Input id="digest-draft-subject" value={draftEdits.subject} onChange={(e) => setDraftEdits({ ...draftEdits, subject: e.target.value })} />
+                <Input id="digest-draft-subject" value={draftEdits.subject} onChange={(e) => { setDraftDirty(true); setDraftEdits({ ...draftEdits, subject: e.target.value }); }} />
               </div>
               <div>
                 <label htmlFor="digest-draft-body" className="mb-1 block text-sm font-medium text-slate-700">Content</label>
-                <Textarea id="digest-draft-body" rows={6} value={draftEdits.htmlBody} onChange={(e) => setDraftEdits({ ...draftEdits, htmlBody: e.target.value })} />
+                <Textarea id="digest-draft-body" rows={6} value={draftEdits.htmlBody} onChange={(e) => { setDraftDirty(true); setDraftEdits({ ...draftEdits, htmlBody: e.target.value }); }} />
               </div>
+              {draftDirty && <p className="text-sm text-amber-800" role="status">Save edits before approving this draft.</p>}
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={handleSaveDraftEdits} disabled={saveDraftMutation.isPending}>Save edits</Button>
-                <Button type="button" onClick={handleApprove} disabled={approveMutation.isPending}>{approveMutation.isPending ? 'Approving…' : 'Approve & send'}</Button>
+                <Button type="button" onClick={handleApprove} disabled={draftDirty || saveDraftMutation.isPending || approveMutation.isPending || draftState.draft.status !== 'draft'}>{approveMutation.isPending ? 'Approving…' : 'Approve & send'}</Button>
               </div>
             </div>
           ) : (
@@ -176,7 +171,7 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
               <Input
                 id="digest-topic"
                 value={formData.topic}
-                onChange={(e) => setFormData({ ...formData, topic: e.target.value })}
+                onChange={(e) => { setConfigDirty(true); setFormData({ ...formData, topic: e.target.value }); }}
                 placeholder="e.g. Weekly Sales Strategy & Prospecting Hacks"
                 required
               />
@@ -189,7 +184,7 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
                   id="digest-tone"
                   value={formData.tone}
                   onChange={(e) =>
-                    setFormData({ ...formData, tone: e.target.value as NewsletterDigestConfig['tone'] })
+                    { setConfigDirty(true); setFormData({ ...formData, tone: e.target.value as NewsletterDigestConfig['tone'] }); }
                   }
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
@@ -205,7 +200,7 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
                 <Input
                   id="digest-audience"
                   value={formData.targetAudience}
-                  onChange={(e) => setFormData({ ...formData, targetAudience: e.target.value })}
+                  onChange={(e) => { setConfigDirty(true); setFormData({ ...formData, targetAudience: e.target.value }); }}
                   placeholder="e.g. B2B Account Executives"
                 />
               </div>
@@ -216,7 +211,7 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
               <Textarea
                 id="digest-prompt"
                 value={formData.customPrompt}
-                onChange={(e) => setFormData({ ...formData, customPrompt: e.target.value })}
+                onChange={(e) => { setConfigDirty(true); setFormData({ ...formData, customPrompt: e.target.value }); }}
                 placeholder="e.g. Include 3 actionable tips for closing deals faster and 1 weekly objection handling template."
                 rows={4}
               />

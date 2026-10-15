@@ -76,4 +76,38 @@ describe('NewsletterBroadcastModal editing workflow', () => {
     );
     expect(mockMutateAsync).not.toHaveBeenCalledWith(expect.objectContaining({ scheduledAt: expect.anything() }));
   });
+  it('reuses the composition key when an ambiguous request is retried', async () => {
+    mockMutateAsync.mockRejectedValueOnce(new Error('Network timeout')).mockResolvedValueOnce({ enqueued: true });
+    renderWithProviders(<NewsletterBroadcastModal onClose={() => undefined} />);
+    fireEvent.change(screen.getByLabelText(/subject/i), { target: { value: 'Retry subject' } });
+    fireEvent.change(screen.getByLabelText(/paragraph text/i), { target: { value: 'Content' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('group', { name: /preview device/i });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+    await screen.findByText('Broadcast enqueued.');
+    expect(mockMutateAsync.mock.calls).toHaveLength(2);
+    expect(mockMutateAsync.mock.calls[0][0].idempotencyKey).toBe(mockMutateAsync.mock.calls[1][0].idempotencyKey);
+    expect(mockMutateAsync.mock.calls[0][0].idempotencyKey).not.toContain('Retry subject');
+  });
+
+  it('focuses its content, wraps Tab, and restores the opener', () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const { unmount } = renderWithProviders(<NewsletterBroadcastModal onClose={() => undefined} />);
+    const dialog = screen.getByRole('dialog');
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(screen.getByLabelText(/template \(approved/i));
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
 });

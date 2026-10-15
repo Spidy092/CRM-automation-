@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useModalFocus } from '@/hooks/useModalFocus';
+import { useId, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -89,6 +90,8 @@ function loadDraft(): Partial<FormValues> | null {
 
 export function NewsletterBroadcastModal({ onClose }: Props) {
   const titleId = useId();
+  const dialogRef = useModalFocus(onClose);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [step, setStep] = useState(0);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   const [sendState, setSendState] = useState<'idle' | 'pending' | 'success' | 'failure'>('idle');
@@ -129,18 +132,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
   );
   const { data: eligible, isLoading: eligibleLoading } = useEligibleCount(targeting);
 
-  useEffect(() => {
-    // Restore focus to the opener on unmount (focus restoration for dialogs).
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      previouslyFocused?.focus?.();
-    };
-  }, [onClose]);
+
 
   const persistDraft = () => {
     try {
@@ -215,7 +207,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
         ...(values.frequency ? { frequency: values.frequency } : {}),
         ...(values.scheduledAt ? { scheduledAtLocal: values.scheduledAt } : {}),
         timezone: values.timezone,
-        idempotencyKey: `${Date.now()}-${values.subject.slice(0, 32)}`,
+        idempotencyKey,
         ...(values.templateId ? { templateId: values.templateId } : {}),
       });
       try {
@@ -226,7 +218,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
       setSendState('success');
       showToast(
         res.scheduledAt
-          ? `Broadcast scheduled for ${new Date(res.scheduledAt).toLocaleString()} UTC.`
+          ? `Broadcast scheduled for ${new Date(res.scheduledAt).toLocaleString(undefined, { timeZone: 'UTC' })} UTC.`
           : 'Broadcast enqueued.',
       );
       onClose();
@@ -249,8 +241,8 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
   const topicOptions: NewsletterTopic[] = ['product_updates', 'promotions', 'company_news'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <h2 id={titleId} className="text-xl font-bold">Create newsletter</h2>
         <ol className="mt-2 flex gap-2 text-xs" aria-label="Creation steps">
           {steps.map((label, i) => (
@@ -280,7 +272,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
               </div>
               <div>
                 <label htmlFor="nl-subject" className="mb-1 block text-sm font-medium text-slate-700">Subject</label>
-                <Input id="nl-subject" autoFocus {...form.register('subject')} placeholder="e.g. October product updates" />
+                <Input id="nl-subject" {...form.register('subject')} placeholder="e.g. October product updates" />
                 {form.formState.errors.subject && <p className="mt-1 text-xs text-red-600">{form.formState.errors.subject.message}</p>}
               </div>
               <div>
