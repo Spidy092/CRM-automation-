@@ -97,10 +97,20 @@ describe('Newsletter Routes', () => {
     expect(mockedService.unsubscribe).toHaveBeenCalledWith('raw-token');
   });
 
-  it('does not change subscription state through a GET unsubscribe request', async () => {
-    const res = await request(app).get('/newsletter/unsubscribe?token=raw-token');
-    expect(res.status).toBe(404);
-    expect(mockedService.unsubscribe).not.toHaveBeenCalled();
+  it('hands legacy GET unsubscribe links to the confirmation UI without changing subscription state', async () => {
+    const originalFrontendUrl = process.env.FRONTEND_URL;
+    process.env.FRONTEND_URL = 'https://crm.example.test';
+    try {
+      const res = await request(app).get('/newsletter/unsubscribe?token=raw-token');
+      expect(res.status).toBe(303);
+      expect(res.headers.location).toBe(
+        'https://crm.example.test/newsletter/unsubscribe?token=raw-token',
+      );
+      expect(mockedService.unsubscribe).not.toHaveBeenCalled();
+    } finally {
+      if (originalFrontendUrl === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = originalFrontendUrl;
+    }
   });
 
   it('GET /newsletter/preferences returns current preferences', async () => {
