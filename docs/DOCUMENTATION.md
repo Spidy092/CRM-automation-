@@ -1,7 +1,7 @@
 # CRM Automation Platform — Complete Documentation
 
 **Version:** 1.0
-**Last Updated:** 2026-07-29
+**Last Updated:** 2026-10-15
 
 ---
 
@@ -697,7 +697,13 @@ Supported providers: `google_ads`, `facebook`
 |---|---|---|---|
 | GET | `/events` | Bearer token (header or `?token=`) | SSE stream for real-time events |
 
-### 6.21 Health & Metrics
+### 6.21 Newsletter — `/api/v1/newsletter`
+
+| Method | Path | Auth | Roles | Description |
+|---|---|---|---|---|
+| POST | `/newsletter/admin/contacts` | Auth | admin | Add up to 100 CRM leads to the newsletter audience without a confirmation email |
+
+### 6.22 Health & Metrics
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
