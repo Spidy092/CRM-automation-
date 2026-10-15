@@ -275,7 +275,7 @@ export async function markConfirmed(id: string): Promise<void> {
   await query(
     `UPDATE newsletter_subscribers
      SET status = 'confirmed', confirmed_at = now(), updated_at = now()
-     WHERE id = $1`,
+     WHERE id = $1 AND status = 'pending'`,
     [id],
   );
 }
@@ -839,4 +839,25 @@ export async function listUncertainRecipientIdsForBroadcasts(
     (grouped[r.broadcast_id] ??= []).push(r.subscriber_id);
   }
   return grouped;
+}
+
+/** Atomic enrollment: existing confirmations and opt-outs are never overwritten. */
+export async function addConfirmedContact(data: {
+  email: string;
+  topics: string[];
+  frequency: NewsletterFrequency;
+  unsubscribeTokenHash: string;
+}): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `INSERT INTO newsletter_subscribers
+       (email, status, topics, frequency, unsubscribe_token_hash, source, confirmed_at)
+     VALUES ($1, 'confirmed', $2::jsonb, $3, $4, 'lead_import', now())
+     ON CONFLICT (lower(email)) DO UPDATE
+       SET status = 'confirmed', topics = EXCLUDED.topics, frequency = EXCLUDED.frequency,
+           source = 'lead_import', confirmed_at = now(), updated_at = now()
+       WHERE newsletter_subscribers.status = 'pending'
+     RETURNING id`,
+    [data.email, JSON.stringify(data.topics), data.frequency, data.unsubscribeTokenHash],
+  );
+  return row !== null;
 }

@@ -1,3 +1,4 @@
+import { NewsletterContactsModal } from '@/components/ui/NewsletterContactsModal';
 import { useState } from 'react';
 import {
   useSubscribers,
@@ -51,6 +52,8 @@ const TOPICS: NewsletterTopic[] = ['product_updates', 'promotions', 'company_new
 const FREQUENCIES: NewsletterFrequency[] = ['daily', 'weekly', 'monthly'];
 
 export function NewsletterPage() {
+  const canAddContacts = useAuthStore((s) => s.user?.role === 'admin');
+  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [statusFilter, setStatusFilter] = useState<NewsletterSubscriberStatus | ''>('');
   const [topicFilter, setTopicFilter] = useState<NewsletterTopic | ''>('');
@@ -183,7 +186,8 @@ export function NewsletterPage() {
           { label: 'Unsubscribed', value: counts?.unsubscribed ?? '—', tone: 'default' },
         ]}
         actions={
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {canAddContacts && <Button variant="outline" onClick={() => setIsContactsModalOpen(true)}>Add contacts</Button>}
             <Button variant="outline" className="gap-2" onClick={() => setIsDigestConfigModalOpen(true)}>
               <Settings className="h-4 w-4" />
               Configure AI Digest
@@ -205,6 +209,7 @@ export function NewsletterPage() {
         }
       />
 
+      {isContactsModalOpen && canAddContacts && <NewsletterContactsModal onClose={() => setIsContactsModalOpen(false)} />}
       {isDigestConfigModalOpen && (
         <NewsletterDigestConfigModal onClose={() => setIsDigestConfigModalOpen(false)} />
       )}
@@ -333,7 +338,7 @@ export function NewsletterPage() {
               </summary>
               <div className="mt-2 space-y-2 text-sm text-blue-800">
                 <p><strong>1. Public Form:</strong> Direct users to your public subscription page: <span className="font-medium">/subscribe</span> (use “Copy signup link”).</p>
-                <p><strong>2. Confirmation Email:</strong> New signups are <span className="font-medium">pending</span> until they confirm via the emailed link. Imports never silently subscribe — every address confirms first.</p>
+                <p><strong>2. Confirmation Email:</strong> New signups are <span className="font-medium">pending</span> until they confirm via the emailed link. Admins can also use “Add contacts” to subscribe CRM leads immediately without a confirmation email.</p>
                 <p><strong>3. Preferences & Unsubscribe:</strong> Every broadcast footer carries per-recipient preference/unsubscribe links. Pending, unsubscribed, and suppressed recipients are excluded and rechecked before dispatch.</p>
               </div>
             </details>

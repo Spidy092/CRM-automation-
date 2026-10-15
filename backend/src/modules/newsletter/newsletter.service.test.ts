@@ -1,8 +1,13 @@
+jest.mock('../leads/leads.service', () => ({ getLeadById: jest.fn() }));
+jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
+import { getLeadById } from '../leads/leads.service';
+import { addNewsletterContacts } from './newsletter.service';
 jest.mock('./newsletter.repository', () => ({
   findSubscriberByEmail: jest.fn(),
   findSubscriberById: jest.fn(),
   findSubscriberByUnsubscribeTokenHash: jest.fn(),
   findSubscriberByUnsubscribeToken: jest.fn(),
+  addConfirmedContact: jest.fn(),
   insertSubscriber: jest.fn(),
   resetToPending: jest.fn(),
   markConfirmed: jest.fn(),
@@ -1319,5 +1324,63 @@ describe('newsletter.service', () => {
         idempotencyKey: expect.stringMatching(/^digest-approval-/),
       }));
     });
+  });
+});
+
+describe('direct contact enrollment', () => {
+  const id = '550e8400-e29b-41d4-a716-446655440000';
+  const actor = { id: 'admin-1', role: 'admin' as const };
+  const input = { leadIds: [id], topics: ['promotions' as const], frequency: 'weekly' as const };
+  const lead = { id, email: ' Lead@Example.com ', status: 'active' } as Awaited<ReturnType<typeof getLeadById>>;
+  beforeEach(() => jest.clearAllMocks());
+  it('adds immediately without a confirmation email and reports duplicates as skipped', async () => {
+    jest.mocked(getLeadById).mockResolvedValue(lead);
+    mockedRepo.addConfirmedContact.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await addNewsletterContacts(input, actor)).toEqual({ ok: true, value: { added: 1, failed: 0, skipped: 0, failedLeadIds: [] } });
+    expect(mockedRepo.addConfirmedContact).toHaveBeenCalledWith(expect.objectContaining({ email: 'lead@example.com' }));
+    expect(mockedRepo.addConfirmedContact.mock.calls[0][0].unsubscribeTokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(await addNewsletterContacts(input, actor)).toEqual({ ok: true, value: { added: 0, failed: 0, skipped: 1, failedLeadIds: [] } });
+    expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
+    expect(mockedSmtp.sendEmail).not.toHaveBeenCalled();
+  });
+  it('skips opted-out, invalid and duplicate lead emails', async () => {
+    const ids = [id, '550e8400-e29b-41d4-a716-446655440001', '550e8400-e29b-41d4-a716-446655440002', '550e8400-e29b-41d4-a716-446655440003'];
+    jest.mocked(getLeadById).mockResolvedValueOnce({ ...lead, status: 'opted_out' }).mockResolvedValueOnce({ ...lead, email: 'bad' }).mockResolvedValueOnce(lead).mockResolvedValueOnce(lead);
+    mockedRepo.addConfirmedContact.mockResolvedValue(true);
+    expect(await addNewsletterContacts({ ...input, leadIds: ids }, actor)).toEqual({ ok: true, value: { added: 1, failed: 0, skipped: 3, failedLeadIds: [] } });
+    expect(mockedRepo.addConfirmedContact).toHaveBeenCalledTimes(1);
+  });
+  it('reports partial repository failures so completed enrollments are not hidden', async () => {
+    const secondId = '550e8400-e29b-41d4-a716-446655440001';
+    jest.mocked(getLeadById)
+      .mockResolvedValueOnce(lead)
+      .mockResolvedValueOnce({ ...lead, id: secondId, email: 'second@example.com' });
+    mockedRepo.addConfirmedContact.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('database unavailable'));
+    expect(await addNewsletterContacts({ ...input, leadIds: [id, secondId] }, actor)).toEqual({
+      ok: true,
+      value: { added: 1, failed: 1, skipped: 0, failedLeadIds: [secondId] },
+    });
+  });
+  it('continues enrolling available leads when another lead lookup fails', async () => {
+    const missingId = '550e8400-e29b-41d4-a716-446655440001';
+    jest.mocked(getLeadById)
+      .mockRejectedValueOnce(new Error('Lead not found'))
+      .mockResolvedValueOnce(lead);
+    mockedRepo.addConfirmedContact.mockResolvedValue(true);
+
+    expect(await addNewsletterContacts({ ...input, leadIds: [missingId, id] }, actor)).toEqual({
+      ok: true,
+      value: { added: 1, failed: 1, skipped: 0, failedLeadIds: [missingId] },
+    });
+    expect(mockedRepo.addConfirmedContact).toHaveBeenCalledTimes(1);
+    expect(mockedRepo.addConfirmedContact).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'lead@example.com',
+    }));
+  });
+  it('rejects marketing before accessing CRM leads', async () => {
+    const result = await addNewsletterContacts(input, { ...actor, role: 'marketing' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.statusCode).toBe(403);
+    expect(getLeadById).not.toHaveBeenCalled();
   });
 });

@@ -251,7 +251,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
   };
 
   const previewDoc = useMemo(() => {
-    const footer = `<br/><br/><hr/><p style="font-size:12px;color:#666;">You are receiving this because you subscribed to our newsletter.<br/><a href="#">Update Preferences</a> | <a href="#">Unsubscribe</a></p>`;
+    const footer = `<br/><br/><hr/><p style="font-size:12px;color:#666;">You are receiving this newsletter as a contact on our mailing list.<br/><a href="#">Update Preferences</a> | <a href="#">Unsubscribe</a></p>`;
     const preview = watched.previewText
       ? `<span style="display:none;max-height:0;overflow:hidden;opacity:0;">${watched.previewText.replace(/</g, '&lt;')}</span>`
       : '';

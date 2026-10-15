@@ -1,3 +1,9 @@
+import {
+  addNewsletterContactsSchema,
+  subscribeSchema,
+  type AddNewsletterContactsInput,
+} from './newsletter.schema';
+import { writeAuditLog } from '../../shared/utils/audit';
 import crypto from 'crypto';
 import { newsletterBroadcastJobId } from '../../shared/utils/newsletterJobId';
 import OpenAI from 'openai';
@@ -16,6 +22,7 @@ import { localDateTimeInZoneToUtc } from './newsletter.timezone';
 import * as sendgrid from '../integrations/sendgrid/sendgrid.connector';
 import * as smtp from '../integrations/smtp/smtp.connector';
 import {
+  addConfirmedContact,
   findSubscriberByEmail,
   findSubscriberById,
   findSubscriberByUnsubscribeToken,
@@ -46,6 +53,7 @@ import {
   type NewsletterBroadcastRow,
 } from './newsletter.repository';
 import {
+  NewsletterActor,
   NewsletterSubscriberRow,
   NewsletterSubscriberStatus,
   NewsletterFrequency,
@@ -233,7 +241,7 @@ export function buildBroadcastHtml(
   const footer =
     `<br/><br/><hr/>` +
     `<p style="font-size: 12px; color: #666;">` +
-    `You are receiving this because you subscribed to our newsletter.<br/>` +
+    `You are receiving this newsletter as a contact on our mailing list.<br/>` +
     `<a href="${opts.prefsUrl}">Update Preferences</a> | ` +
     `<a href="${opts.unsubUrl}">Unsubscribe</a></p>`;
   const html = `${preview}${htmlBody}${footer}`;
@@ -1505,4 +1513,86 @@ export async function generateDigestContent(): Promise<AiDigestGeneration> {
   const subject = `${topic} - ${new Date().toLocaleDateString()}`;
   const htmlBody = `<div style="font-family: sans-serif; line-height: 1.5; color: #333;">${escapeHtmlFragment(content).replace(/\n\n/g, '<br/><br/>')}</div>`;
   return { subject, htmlBody, tokensUsed };
+}
+
+/** Direct admin enrollment from CRM leads. Does not send confirmation or campaign mail. */
+export async function addNewsletterContacts(
+  input: AddNewsletterContactsInput,
+  actor: NewsletterActor,
+): Promise<
+  NewsletterResult<
+    { added: number; failed: number; skipped: number; failedLeadIds: string[] },
+    AppError
+  >
+> {
+  try {
+    if (actor.role !== 'admin') return { ok: false, error: new AppError('Forbidden', 403) };
+    const values = addNewsletterContactsSchema.parse(input);
+    // Resolve through the leads service, preserving ownership/soft-delete checks.
+    const { getLeadById } = await import('../leads/leads.service');
+    const uniqueLeadIds = [...new Set(values.leadIds)];
+    const lookupResults = await Promise.allSettled(
+      uniqueLeadIds.map((id) => getLeadById(id, actor)),
+    );
+    let added = 0;
+    let failed = 0;
+    const failedLeadIds: string[] = [];
+    const leads = lookupResults.flatMap((result, index) => {
+      if (result.status === 'fulfilled') return [result.value];
+      failed += 1;
+      failedLeadIds.push(uniqueLeadIds[index]);
+      return [];
+    });
+    const seen = new Set<string>();
+    for (const lead of leads) {
+      const email = (lead.email ?? '').trim().toLowerCase();
+      if (
+        lead.status === 'opted_out' ||
+        !subscribeSchema.shape.email.safeParse(email).success ||
+        seen.has(email)
+      )
+        continue;
+      seen.add(email);
+      try {
+        if (
+          await addConfirmedContact({
+            email,
+            topics: values.topics,
+            frequency: values.frequency,
+            unsubscribeTokenHash: hashToken(crypto.randomBytes(32).toString('hex')),
+          })
+        ) {
+          added += 1;
+        }
+      } catch (err) {
+        // Preserve successes from earlier contacts and let the caller retry
+        // only the failed/skipped entries using the returned counts.
+        failed += 1;
+        failedLeadIds.push(lead.id);
+        logger.error('Newsletter contact enrollment failed for a lead', {
+          error: err instanceof Error ? err.message : 'unknown error',
+        });
+      }
+    }
+    const summary = {
+      added,
+      failed,
+      skipped: values.leadIds.length - added - failed,
+      failedLeadIds,
+    };
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'newsletter.contacts_added',
+      entityType: 'newsletter',
+      newValue: { added, failed, skipped: summary.skipped, source: 'lead_import' },
+    });
+    return { ok: true, value: summary };
+  } catch (err) {
+    if (err instanceof AppError) return { ok: false, error: err };
+    // Keep database details and contact data out of the API response.
+    return {
+      ok: false,
+      error: new AppError('Could not add newsletter contacts. Refresh before retrying.', 500),
+    };
+  }
 }

@@ -42,6 +42,9 @@ jest.mock(
 import { pool } from '../../shared/utils/db';
 import { hashToken } from './newsletter.service';
 import {
+  markConfirmed,
+  addConfirmedContact,
+  markUnsubscribed,
   insertSubscriber,
   findSubscriberByEmail,
   findSubscriberByUnsubscribeToken,
@@ -259,5 +262,18 @@ runIntegration('newsletter persistence (real PostgreSQL)', () => {
     expect(rows.find((r) => r.id === b.id)?.status).toBe('completed');
 
     expect(await isTokenTableAvailable()).toBe(true);
+  });
+
+  it('deduplicates concurrent direct additions and preserves opt-outs and links', async () => {
+    const input = { email: email('direct'), topics: ['promotions'], frequency: 'weekly' as const, unsubscribeTokenHash: hashToken('direct-seed') };
+    const results = await Promise.all([addConfirmedContact(input), addConfirmedContact(input)]);
+    expect(results.sort()).toEqual([false, true]);
+    const row = await findSubscriberByEmail(input.email);
+    expect(row?.status).toBe('confirmed');
+    await markUnsubscribed(row!.id);
+    await markConfirmed(row!.id); // Simulates a stale public confirmation link.
+    expect(await addConfirmedContact({ ...input, unsubscribeTokenHash: hashToken('new-seed') })).toBe(false);
+    expect((await findSubscriberByEmail(input.email))?.status).toBe('unsubscribed');
+    expect((await findSubscriberByUnsubscribeToken('direct-seed', hashToken))?.id).toBe(row!.id);
   });
 });

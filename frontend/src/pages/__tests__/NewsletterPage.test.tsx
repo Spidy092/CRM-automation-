@@ -4,9 +4,10 @@ import { renderWithProviders } from '@/lib/test-utils';
 import { NewsletterPage } from '../NewsletterPage';
 import { useDigestDraft, useBroadcasts } from '@/api/newsletter';
 
+const authState = vi.hoisted(() => ({ role: null as string | null }));
 vi.mock('@/store/authStore', () => ({
   useAuthStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ accessToken: 'test-token' }),
+    selector({ accessToken: 'test-token', user: authState.role ? { role: authState.role } : null }),
 }));
 
 vi.mock('@/api/newsletter', () => ({
@@ -63,9 +64,14 @@ vi.mock('@/components/ui/NewsletterDigestConfigModal', () => ({
   ),
 }));
 
+vi.mock('@/components/ui/NewsletterContactsModal', () => ({
+  NewsletterContactsModal: () => <div data-testid="contacts-modal" />,
+}));
+
 describe('NewsletterPage workspace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.role = null;
   });
 
   it('renders the Newsletters title, primary action, and backend digest status', () => {
@@ -75,6 +81,19 @@ describe('NewsletterPage workspace', () => {
     // Digest status comes from the backend hook, not local state.
     expect(screen.getAllByText('On').length).toBeGreaterThan(0);
     expect(screen.getByText(/Fridays 09:00/)).toBeDefined();
+  });
+
+  it('shows the contact enrollment action only to admins and opens its modal', () => {
+    authState.role = 'admin';
+    renderWithProviders(<NewsletterPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
+    expect(screen.getByTestId('contacts-modal')).toBeDefined();
+  });
+
+  it('hides the contact enrollment action from marketing users', () => {
+    authState.role = 'marketing';
+    renderWithProviders(<NewsletterPage />);
+    expect(screen.queryByRole('button', { name: 'Add contacts' })).toBeNull();
   });
 
   it('organizes the workspace into four tabs with keyboard navigation', () => {

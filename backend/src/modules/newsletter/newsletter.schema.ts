@@ -127,3 +127,11 @@ export type ListSubscribersQuery = z.infer<typeof listSubscribersQuerySchema>;
 export type BroadcastBody = z.infer<typeof broadcastBodySchema>;
 export type AutomatedDigestToggleBody = z.infer<typeof automatedDigestToggleSchema>;
 export type UpdateDigestConfigBody = z.infer<typeof updateDigestConfigSchema>;
+
+/** Admin-only direct enrollment; public signups retain double opt-in. */
+export const addNewsletterContactsSchema = z.object({
+  leadIds: z.array(z.string().uuid()).min(1).max(100),
+  topics: z.array(z.enum(NEWSLETTER_TOPICS)).default([...NEWSLETTER_TOPICS]),
+  frequency: z.enum(NEWSLETTER_FREQUENCIES).default('weekly'),
+});
+export type AddNewsletterContactsInput = z.infer<typeof addNewsletterContactsSchema>;

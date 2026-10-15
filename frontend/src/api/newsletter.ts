@@ -421,3 +421,23 @@ export function useUncertainRecipients(broadcastId: string | null) {
     enabled: !!broadcastId,
   });
 }
+
+export interface AddNewsletterContactsInput {
+  leadIds: string[];
+  topics: NewsletterTopic[];
+  frequency: NewsletterFrequency;
+}
+
+export function useAddNewsletterContacts() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AddNewsletterContactsInput): Promise<{ added: number; failed: number; skipped: number; failedLeadIds: string[] }> => {
+      const response = await apiClient.post<ApiResponse<{ added: number; failed: number; skipped: number; failedLeadIds: string[] }>>('/newsletter/admin/contacts', input);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ['newsletter-subscribers'] });
+      client.invalidateQueries({ queryKey: ['newsletter-eligible-count'] });
+    },
+  });
+}
