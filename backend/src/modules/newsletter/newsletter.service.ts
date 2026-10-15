@@ -283,7 +283,7 @@ async function sendConfirmationEmail(subscriberId: string, email: string): Promi
   await sendSystemEmail(
     email,
     'Confirm your newsletter subscription',
-    `<p>Please confirm your subscription by clicking the link below:</p>
+    `<p>Confirm your subscription to product updates, promotions, and company news by clicking the link below. You can change your preferences or unsubscribe from any newsletter.</p>
      <p><a href="${confirmUrl}">Confirm subscription</a></p>
      <p>If you didn't request this, you can safely ignore this email.</p>`,
     subscriberId,
@@ -603,7 +603,10 @@ export async function triggerBroadcast(
     let scheduledAtUtc: string | undefined;
     let ambiguous = false;
     if (opts?.scheduledAtLocal) {
-      const resolved = localDateTimeInZoneToUtc(opts.scheduledAtLocal, opts?.timezone ?? 'UTC');
+      const resolved = localDateTimeInZoneToUtc(
+        opts.scheduledAtLocal,
+        opts?.timezone ?? 'Asia/Kolkata',
+      );
       scheduledAtUtc = resolved.utcIso;
       ambiguous = resolved.ambiguous;
     } else if (opts?.scheduledAt) {
@@ -668,7 +671,7 @@ export async function triggerBroadcast(
           ...(opts?.topics ? { topics: opts.topics } : {}),
           ...(opts?.frequency ? { frequency: opts.frequency } : {}),
           ...(opts?.frequencies ? { frequencies: opts.frequencies } : {}),
-          timezone: opts?.timezone ?? 'UTC',
+          timezone: opts?.timezone ?? 'Asia/Kolkata',
           ...(scheduledAtUtc ? { scheduledAtUtc } : {}),
           ...(actor ? { createdBy: actor.id } : {}),
           ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
@@ -691,7 +694,7 @@ export async function triggerBroadcast(
       topics: opts?.topics,
       frequency: opts?.frequency,
       frequencies: opts?.frequencies,
-      timezone: opts?.timezone ?? 'UTC',
+      timezone: opts?.timezone ?? 'Asia/Kolkata',
       scheduledAtUtc,
       scheduledAtLocal: opts?.scheduledAtLocal,
       templateId: opts?.templateId,

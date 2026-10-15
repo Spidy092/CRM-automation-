@@ -6,6 +6,8 @@ import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/u
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import {
+  reserveNewsletterSend,
+  finishNewsletterSend,
   findEligibleSubscribers,
   findSubscriberById,
   updateBroadcastStatus,
@@ -436,6 +438,23 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
         throw err;
       }
 
+      let reserved: boolean;
+      try {
+        reserved = await reserveNewsletterSend(sub.id, broadcastId);
+      } catch (err) {
+        await releaseClaim(broadcastId, sub.id);
+        throw err; // Fail closed if migration/storage is unavailable.
+      }
+      if (!reserved) {
+        skipped += 1;
+        await releaseClaim(broadcastId, sub.id);
+        await recordDbOutcome(broadcastRecordId, dbAvailable, {
+          subscriberId: sub.id,
+          status: 'skipped',
+          error: 'rolling sending limit reached or another newsletter is in flight',
+        });
+        continue;
+      }
       attempted += 1;
       const result = await sendToRecipient({
         subscriberId: sub.id,
@@ -444,6 +463,9 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
         html,
         text,
       });
+      // Persist the shared cap before receipts. A crash/error leaves the
+      // reservation held, so another broadcast cannot send through the gap.
+      await finishNewsletterSend(sub.id, broadcastId, result.outcome === 'accepted');
       if (result.outcome === 'accepted') {
         accepted += 1;
         // Receipt FIRST-class: the known outcome is persisted immediately.

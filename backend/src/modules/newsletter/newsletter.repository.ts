@@ -1,4 +1,5 @@
 import { query, queryOne } from '../../shared/utils/db';
+import { NEWSLETTER_TOPICS } from './newsletter.schema';
 import { AppError } from '../../shared/middleware/errorHandler';
 import { incNewsletterLegacyTokenHit } from '../../shared/utils/metrics';
 import {
@@ -274,9 +275,9 @@ export async function resetToPending(
 export async function markConfirmed(id: string): Promise<void> {
   await query(
     `UPDATE newsletter_subscribers
-     SET status = 'confirmed', confirmed_at = now(), updated_at = now()
+     SET status = 'confirmed', topics = $2::jsonb, confirmed_at = now(), updated_at = now()
      WHERE id = $1 AND status = 'pending'`,
-    [id],
+    [id, JSON.stringify(NEWSLETTER_TOPICS)],
   );
 }
 
@@ -435,7 +436,7 @@ export async function findEligibleSubscribers(
 
 export async function countEligibleSubscribers(targeting?: EligibleTargeting): Promise<number> {
   const params: unknown[] = [];
-  const clauses = [`status = 'confirmed'`];
+  const clauses = [`status = 'confirmed'`, SENDABLE_NOW_SQL];
   pushFrequencyClause(clauses, params, targeting?.frequency);
   if (targeting?.topics && targeting.topics.length > 0) {
     params.push(targeting.topics);
@@ -860,4 +861,36 @@ export async function addConfirmedContact(data: {
     [data.email, JSON.stringify(data.topics), data.frequency, data.unsubscribeTokenHash],
   );
   return row !== null;
+}
+
+/** Fixed elapsed hours, independent of calendar boundaries and timezone/DST. */
+const ROLLING_LIMIT_SQL = `CASE frequency
+  WHEN 'daily' THEN interval '24 hours'
+  WHEN 'weekly' THEN interval '168 hours'
+  ELSE interval '720 hours' END`;
+const SENDABLE_NOW_SQL = `(newsletter_reserved_until IS NULL OR newsletter_reserved_until <= now())
+  AND (newsletter_last_accepted_at IS NULL OR newsletter_last_accepted_at <= now() - (${ROLLING_LIMIT_SQL}))`;
+
+/** Atomic cross-broadcast reservation, held conservatively on unknown outcomes. */
+export async function reserveNewsletterSend(subscriberId: string, key: string): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `UPDATE newsletter_subscribers SET newsletter_reservation_key = $2,
+      newsletter_reserved_until = now() + interval '720 hours'
+     WHERE id = $1 AND status = 'confirmed' AND ${SENDABLE_NOW_SQL} RETURNING id`,
+    [subscriberId, key],
+  );
+  return row !== null;
+}
+export async function finishNewsletterSend(
+  subscriberId: string,
+  key: string,
+  accepted: boolean,
+): Promise<void> {
+  await query(
+    `UPDATE newsletter_subscribers
+    SET newsletter_last_accepted_at = CASE WHEN $3 THEN now() ELSE newsletter_last_accepted_at END,
+      newsletter_reservation_key = NULL, newsletter_reserved_until = NULL
+    WHERE id = $1 AND newsletter_reservation_key = $2`,
+    [subscriberId, key, accepted],
+  );
 }

@@ -1,3 +1,4 @@
+import { NewsletterDraftsPanel } from '@/components/ui/NewsletterDraftsPanel';
 import { NewsletterContactsModal } from '@/components/ui/NewsletterContactsModal';
 import { useState } from 'react';
 import {
@@ -46,7 +47,7 @@ const broadcastTones: Record<string, StatusTone> = {
   scheduled: 'blue',
 };
 
-type Tab = 'overview' | 'subscribers' | 'broadcasts' | 'digest';
+type Tab = 'overview' | 'subscribers' | 'drafts' | 'broadcasts' | 'digest';
 
 const TOPICS: NewsletterTopic[] = ['product_updates', 'promotions', 'company_news'];
 const FREQUENCIES: NewsletterFrequency[] = ['daily', 'weekly', 'monthly'];
@@ -151,6 +152,7 @@ export function NewsletterPage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'subscribers', label: 'Subscribers' },
+    { id: 'drafts', label: 'Drafts' },
     { id: 'broadcasts', label: 'Broadcasts' },
     { id: 'digest', label: 'AI Digest' },
   ];
@@ -430,6 +432,8 @@ export function NewsletterPage() {
           </CardContent>
         </Card>
       )}
+
+      {tab === 'drafts' && <NewsletterDraftsPanel />}
 
       {tab === 'broadcasts' && (
         <Card>

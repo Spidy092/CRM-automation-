@@ -702,6 +702,16 @@ Supported providers: `google_ads`, `facebook`
 | Method | Path | Auth | Roles | Description |
 |---|---|---|---|---|
 | POST | `/newsletter/admin/contacts` | Auth | admin | Add up to 100 CRM leads to the newsletter audience without a confirmation email |
+| GET | `/newsletter/admin/drafts` | Auth | admin, marketing | List saved newsletter drafts |
+| POST | `/newsletter/admin/drafts` | Auth | admin, marketing | Create a newsletter draft |
+| PUT | `/newsletter/admin/drafts/:id` | Auth | admin, marketing | Update a draft using its current revision |
+| DELETE | `/newsletter/admin/drafts/:id` | Auth | admin, marketing | Delete a draft using its current revision |
+| POST | `/newsletter/admin/drafts/:id/send` | Auth | admin, marketing | Send a saved draft using its current revision |
+| GET | `/newsletter/admin/eligible-count` | Auth | admin, marketing | Count confirmed recipients who match targeting and frequency limits |
+
+Newsletter sending enforces rolling per-subscriber caps: one message per 24 hours, 7 days, or 30 days, according to the subscriber's chosen frequency. Broadcast scheduling defaults to `Asia/Kolkata`. A subscriber who confirms a public signup is opted into product updates, promotions, and company news; they can change topics or unsubscribe through the preference link in each email.
+
+Migration `1750000000084_newsletter-drafts-send-limits.js` creates server-side drafts and send-limit reservation fields. Apply it through the approved database migration process before using these features.
 
 ### 6.22 Health & Metrics
 

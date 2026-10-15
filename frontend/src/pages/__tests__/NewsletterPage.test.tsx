@@ -96,11 +96,11 @@ describe('NewsletterPage workspace', () => {
     expect(screen.queryByRole('button', { name: 'Add contacts' })).toBeNull();
   });
 
-  it('organizes the workspace into four tabs with keyboard navigation', () => {
+  it('organizes the workspace into five tabs with keyboard navigation', () => {
     renderWithProviders(<NewsletterPage />);
     const tablist = screen.getByRole('tablist', { name: /newsletter workspace/i });
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Overview', 'Subscribers', 'Broadcasts', 'AI Digest']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['Overview', 'Subscribers', 'Drafts', 'Broadcasts', 'AI Digest']);
     fireEvent.click(screen.getByRole('tab', { name: 'Broadcasts' }));
     expect(screen.getByText(/broadcast history/i)).toBeDefined();
     // ArrowRight moves focus/selection to the next tab.

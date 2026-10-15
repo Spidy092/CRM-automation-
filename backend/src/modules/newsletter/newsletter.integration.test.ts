@@ -50,6 +50,8 @@ import {
   findSubscriberByUnsubscribeToken,
   createSubscriberToken,
   isTokenTableAvailable,
+  reserveNewsletterSend,
+  finishNewsletterSend,
   createBroadcast,
   findBroadcastHistoryById,
   listBroadcastHistoryRows,
@@ -78,6 +80,25 @@ runIntegration('newsletter persistence (real PostgreSQL)', () => {
 
   afterAll(async () => {
     await pool.end();
+  });
+
+  it('confirms all public topics and enforces one rolling-window send across broadcasts', async () => {
+    const sub = await insertSubscriber({
+      email: email('frequency'), topics: [], frequency: 'daily',
+      unsubscribeTokenHash: hashToken('seed-frequency'), source: 'website',
+    });
+    await markConfirmed(sub.id);
+    expect((await findSubscriberByEmail(sub.email))?.topics).toEqual([
+      'product_updates', 'promotions', 'company_news',
+    ]);
+    const reservations = await Promise.all([
+      reserveNewsletterSend(sub.id, 'broadcast-A'),
+      reserveNewsletterSend(sub.id, 'broadcast-B'),
+    ]);
+    expect(reservations.filter(Boolean)).toHaveLength(1);
+    const key = reservations[0] ? 'broadcast-A' : 'broadcast-B';
+    await finishNewsletterSend(sub.id, key, true);
+    expect(await reserveNewsletterSend(sub.id, 'broadcast-C')).toBe(false);
   });
 
   it('resolves links from two successive broadcasts without invalidation', async () => {
