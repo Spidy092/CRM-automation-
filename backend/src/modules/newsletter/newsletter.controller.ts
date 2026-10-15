@@ -1,8 +1,10 @@
+import { AppError } from '../../shared/middleware/errorHandler';
 import { Request, Response, NextFunction } from 'express';
 import { sendSuccess } from '../../shared/utils/response';
 import * as newsletterService from './newsletter.service';
 import { NewsletterSubscriberRow } from './newsletter.types';
 import {
+  addNewsletterContactsSchema,
   subscribeSchema,
   confirmQuerySchema,
   unsubscribeQuerySchema,
@@ -428,6 +430,22 @@ export async function listUncertainRecipientsHandler(
     const result = await newsletterService.listUncertainRecipients(id);
     if (!result.ok) throw result.error;
     sendSuccess(res, result.value.items);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function addNewsletterContactsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const body = addNewsletterContactsSchema.parse(req.body);
+    if (!req.user) throw new AppError('Authentication required', 401);
+    const result = await newsletterService.addNewsletterContacts(body, req.user);
+    if (!result.ok) throw result.error;
+    sendSuccess(res, result.value);
   } catch (err) {
     next(err);
   }

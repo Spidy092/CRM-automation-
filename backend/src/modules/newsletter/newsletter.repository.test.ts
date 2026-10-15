@@ -1,3 +1,4 @@
+import { addConfirmedContact } from './newsletter.repository';
 import { query, queryOne } from '../../shared/utils/db';
 import {
   findSubscriberByEmail,
@@ -581,4 +582,23 @@ describe('newsletter.repository', () => {
     );
     expect(await findBroadcastByIdempotencyKey('k')).toBeNull();
   });
+});
+
+describe('direct contact persistence', () => {
+  beforeEach(() => jest.clearAllMocks());
+  it('uses case-insensitive dedupe and cannot reactivate unsubscribed conflicts', async () => {
+    const input = { email: 'contact@example.com', topics: ['promotions'], frequency: 'weekly' as const, unsubscribeTokenHash: 'hash' };
+    mockQueryOne.mockResolvedValue({ id: 'sub-1' });
+    expect(await addConfirmedContact(input)).toBe(true);
+    expect(mockQueryOne).toHaveBeenCalledWith(expect.stringContaining("WHERE newsletter_subscribers.status = 'pending'"), ['contact@example.com', '["promotions"]', 'weekly', 'hash']);
+    expect(mockQueryOne.mock.calls[0][0]).toContain('ON CONFLICT (lower(email))');
+    mockQueryOne.mockResolvedValue(null);
+    expect(await addConfirmedContact(input)).toBe(false);
+  });
+});
+
+it('confirmation of an older public signup cannot reactivate an unsubscribed contact', async () => {
+  mockQuery.mockResolvedValue([]);
+  await markConfirmed('sub-1');
+  expect(mockQuery).toHaveBeenLastCalledWith(expect.stringContaining("WHERE id = $1 AND status = 'pending'"), ['sub-1']);
 });

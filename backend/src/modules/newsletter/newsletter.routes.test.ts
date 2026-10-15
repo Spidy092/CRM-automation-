@@ -277,3 +277,23 @@ describe('Newsletter Routes', () => {
     expect(res.body.data).toEqual([{ subscriberId: 'sub-u1', email: 'u1@example.com' }]);
   });
 });
+
+describe('admin direct enrollment', () => {
+  beforeEach(() => jest.clearAllMocks());
+  it('validates selected lead IDs and supplies defaults and actor', async () => {
+    mockedService.addNewsletterContacts.mockResolvedValue({ ok: true, value: { added: 1, failed: 0, skipped: 0, failedLeadIds: [] } });
+    const res = await request(app).post('/newsletter/admin/contacts').send({ leadIds: [baseRow.id] });
+    expect(res.status).toBe(200);
+    expect(mockedService.addNewsletterContacts).toHaveBeenCalledWith({ leadIds: [baseRow.id], topics: ['product_updates', 'promotions', 'company_news'], frequency: 'weekly' }, { id: 'admin-1', role: 'admin' });
+  });
+  it('rejects bad IDs before service calls', async () => {
+    const res = await request(app).post('/newsletter/admin/contacts').send({ leadIds: ['bad'] });
+    expect(res.status).toBe(422);
+    expect(mockedService.addNewsletterContacts).not.toHaveBeenCalled();
+  });
+  it('denies marketing access to lead enrollment', async () => {
+    const res = await request(app).post('/newsletter/admin/contacts').set('x-test-role', 'marketing').send({ leadIds: [baseRow.id] });
+    expect(res.status).toBe(403);
+    expect(mockedService.addNewsletterContacts).not.toHaveBeenCalled();
+  });
+});

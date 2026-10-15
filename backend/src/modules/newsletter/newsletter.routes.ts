@@ -4,6 +4,7 @@ import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
 import { authenticatedLimiter, publicLimiter } from '../../shared/middleware/rateLimiter';
 import {
+  addNewsletterContactsHandler,
   subscribeHandler,
   confirmHandler,
   unsubscribeHandler,
@@ -42,6 +43,8 @@ router.patch('/preferences', publicLimiter, wrap(updatePreferencesHandler));
 // ── Admin Routes (authenticated) ─────────────────────────────────────────
 
 router.use('/admin', wrap(authenticate), authenticatedLimiter, authorize('admin', 'marketing'));
+// Lead access is restricted to admins here; marketing cannot browse CRM leads.
+router.post('/admin/contacts', authorize('admin'), wrap(addNewsletterContactsHandler));
 router.get('/admin/subscribers', wrap(listSubscribersHandler));
 router.get('/admin/subscribers/counts', wrap(getSubscriberCountsHandler));
 router.get('/admin/subscribers/export', wrap(exportSubscribersHandler));
