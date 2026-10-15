@@ -57,6 +57,7 @@ jest.mock('../modules/templates/templates.repository', () => ({
 
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findCampaignById: jest.fn(),
+  findCampaignLeadRows: jest.fn(async () => []),
   countSentTodayForCampaign: jest.fn(),
 }));
 
@@ -77,6 +78,7 @@ import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import {
   findCampaignById,
+  findCampaignLeadRows,
   countSentTodayForCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
@@ -101,6 +103,25 @@ describe('handleDispatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (getCampaignMessageSettings as jest.Mock).mockResolvedValue(null);
+    // Execution gate defaults: active campaign, enrolled lead, approved template.
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      id: 'camp1',
+      status: 'active',
+      send_window_enabled: false,
+      send_window_start_hour: 9,
+      send_window_end_hour: 18,
+      send_window_days: [1, 2, 3, 4, 5],
+      send_window_timezone: 'UTC',
+      daily_send_limit: null,
+    });
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead1' }]);
+    (findLogsByLead as jest.Mock).mockResolvedValue([]);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
+    (findTemplateById as jest.Mock).mockResolvedValue({
+      id: 't1',
+      approval_status: 'approved',
+      subject: 'Hi',
+    });
   });
 
   const baseSeq = {
@@ -211,28 +232,30 @@ describe('handleDispatch', () => {
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('throws with 502 when mockMode=false and lead not found', async () => {
+  it('skips quietly when the lead is missing instead of sending', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
-    (createLog as jest.Mock).mockResolvedValue(createdLog);
     (findLeadById as jest.Mock).mockResolvedValue(null);
 
-    await expect(
-      handleDispatch({
-        leadId: 'lead1',
-        campaignId: 'camp1',
-        sequenceId: 'seq1',
-        stepNumber: 1,
-        channel: 'email',
-        templateId: 't1',
-        mockMode: false,
-      }),
-    ).rejects.toMatchObject({ statusCode: 502 });
+    await handleDispatch({
+      leadId: 'lead1',
+      campaignId: 'camp1',
+      sequenceId: 'seq1',
+      stepNumber: 1,
+      channel: 'email',
+      templateId: 't1',
+      mockMode: false,
+    });
+
+    // The gate blocks the send before any log row exists — no failure is
+    // recorded and no provider is touched.
+    expect(createLog).not.toHaveBeenCalled();
+    expect(dispatchOutbound).not.toHaveBeenCalled();
   });
 
   it('throws with 502 when mockMode=false and template not approved', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'rejected' });
 
     await expect(
@@ -254,6 +277,7 @@ describe('handleDispatch', () => {
     (findLeadById as jest.Mock).mockResolvedValue({
       id: 'lead1',
       email: 'no-reply@chain.test',
+      status: 'active',
       source_platform: 'google_business',
     });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved' });
@@ -275,7 +299,7 @@ describe('handleDispatch', () => {
   it('throws with 502 when mockMode=false and lead has no destination', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({
       id: 't1',
       approval_status: 'approved',
@@ -301,7 +325,7 @@ describe('handleDispatch', () => {
     async (enabled) => {
       (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
       (createLog as jest.Mock).mockResolvedValue(createdLog);
-      (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com' });
+      (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', status: 'active' });
       (findTemplateById as jest.Mock).mockResolvedValue({
         id: 't1',
         approval_status: 'approved',
@@ -339,7 +363,7 @@ describe('handleDispatch', () => {
   it('updates log to sent and enqueues follow-up when dispatch succeeds', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({
       id: 't1',
       approval_status: 'approved',
@@ -386,7 +410,7 @@ describe('handleDispatch', () => {
     ];
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({
       id: 't1',
       approval_status: 'approved',
@@ -419,7 +443,7 @@ describe('handleDispatch', () => {
   it('updates log to failed and throws with 502 when dispatchOutbound returns ok:false', async () => {
     (findSequenceByIdIncludingDeleted as jest.Mock).mockResolvedValue(baseSeq);
     (createLog as jest.Mock).mockResolvedValue(createdLog);
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({
       id: 't1',
       approval_status: 'approved',
@@ -454,7 +478,23 @@ describe('handleDispatch', () => {
 });
 
 describe('handleFollowUp', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      id: 'camp1',
+      status: 'active',
+      send_window_enabled: false,
+      send_window_start_hour: 9,
+      send_window_end_hour: 18,
+      send_window_days: [1, 2, 3, 4, 5],
+      send_window_timezone: 'UTC',
+      daily_send_limit: null,
+    });
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead1' }]);
+    (findLogsByLead as jest.Mock).mockResolvedValue([]);
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
+    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't2', approval_status: 'approved' });
+  });
 
   const baseSeq = {
     id: 'seq1',
@@ -559,7 +599,7 @@ describe('handleSendAiReply', () => {
   };
 
   it('sends the draft, creates a log with no template, and marks it sent', async () => {
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-ai-1' });
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
@@ -599,7 +639,7 @@ describe('handleSendAiReply', () => {
   });
 
   it('passes an empty campaignId through to dispatchOutbound when the lead has no active campaign', async () => {
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: true, externalId: 'ext-ai-2' });
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'sent' });
@@ -625,7 +665,7 @@ describe('handleSendAiReply', () => {
   });
 
   it('throws when the lead has no destination for the channel', async () => {
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: '', phone: '', status: 'active' });
 
     await expect(
       handleSendAiReply({ leadId: 'lead1', campaignId: 'camp1', channel: 'email', body: 'Hi.' }),
@@ -634,7 +674,7 @@ describe('handleSendAiReply', () => {
   });
 
   it('marks the log failed and throws with 502 when dispatchOutbound returns ok:false', async () => {
-    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123' });
+    (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', email: 'a@b.com', phone: '123', status: 'active' });
     (createLog as jest.Mock).mockResolvedValue(createdLog);
     (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: false, error: 'Provider error' });
     (updateLogStatus as jest.Mock).mockResolvedValue({ ...createdLog, status: 'failed' });
@@ -715,7 +755,13 @@ describe('handleStopCheck', () => {
 });
 
 describe('handleDispatch — send window / daily cap deferral', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getCampaignMessageSettings as jest.Mock).mockResolvedValue(null);
+    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead1' }]);
+    (findLogsByLead as jest.Mock).mockResolvedValue([]);
+    (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved' });
+  });
 
   const seq = {
     id: 'seq1',
@@ -728,6 +774,7 @@ describe('handleDispatch — send window / daily cap deferral', () => {
 
   const baseCampaign = {
     id: 'camp1',
+    status: 'active',
     send_window_enabled: false,
     send_window_start_hour: 9,
     send_window_end_hour: 18,

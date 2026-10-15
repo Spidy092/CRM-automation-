@@ -293,33 +293,35 @@ describe('campaigns.repository', () => {
   });
 
   describe('getCampaignStats', () => {
-    it('aggregates outreach statuses', async () => {
+    it('counts funnel stages from event timestamps so opened messages stay sent', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([{ total: '10' }]))
         .mockResolvedValueOnce(
           mockQueryResult([
-            { status: 'sent', count: '5' },
-            { status: 'delivered', count: '4' },
-            { status: 'opened', count: '2' },
-            { status: 'replied', count: '1' },
-            { status: 'failed', count: '3' },
+            { sent: '11', delivered: '8', opened: '5', replied: '2', failed: '3' },
           ]),
         );
       const stats = await getCampaignStats('c1');
       expect(stats).toEqual({
         total_leads: 10,
-        sent: 5,
-        delivered: 4,
-        opened: 2,
-        replied: 1,
+        sent: 11,
+        delivered: 8,
+        opened: 5,
+        replied: 2,
         failed: 3,
       });
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('sent_at IS NOT NULL'),
+        ['c1'],
+      );
     });
 
     it('handles no outreach rows', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([{ total: '0' }]))
-        .mockResolvedValueOnce(mockQueryResult([]));
+        .mockResolvedValueOnce(
+          mockQueryResult([{ sent: '0', delivered: '0', opened: '0', replied: '0', failed: '0' }]),
+        );
       const stats = await getCampaignStats('c1');
       expect(stats.total_leads).toBe(0);
       expect(stats.sent).toBe(0);
@@ -328,7 +330,9 @@ describe('campaigns.repository', () => {
     it('handles missing total row', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([]))
-        .mockResolvedValueOnce(mockQueryResult([]));
+        .mockResolvedValueOnce(
+          mockQueryResult([{ sent: '0', delivered: '0', opened: '0', replied: '0', failed: '0' }]),
+        );
       const stats = await getCampaignStats('c1');
       expect(stats.total_leads).toBe(0);
     });

@@ -1,4 +1,4 @@
-import { getLeadEnrollmentOptions } from '../leads/leads.service';
+import { getLeadEnrollmentOptions, getLeadsByIds } from '../leads/leads.service';
 import type { LeadEnrollmentOptions } from '../../shared/types/leadEnrollmentOptions';
 /* eslint-disable @typescript-eslint/no-explicit-any -- TODO: replace with a proper runtime type (legacy debt) */
 import { AppError } from '../../shared/middleware/errorHandler';
@@ -39,7 +39,24 @@ import {
   CampaignStepStats,
   AutomationPreview,
   LaunchCampaignResult,
+  PauseCampaignResult,
+  ResumeCampaignResult,
 } from './campaigns.types';
+import { isCampaignOperationsV2Enabled } from './campaigns.rollout';
+import { firstStepDelayIssue } from './campaigns.scheduling';
+import {
+  enrollWithIntent,
+  publishExecution,
+  createRetryIntent,
+  findPendingExecution,
+  restoreForResume,
+  lookupEnrollment,
+} from './campaigns.execution.service';
+import {
+  hasDurableEnrollments,
+  listActiveEnrollments,
+  pauseCampaignTx,
+} from './campaigns.execution.repository';
 
 interface Actor {
   id: string;
@@ -317,9 +334,14 @@ async function buildAutomationPreview(campaign: Campaign, mockMode = false): Pro
     skippedLeads,
     templateIssues,
     connectorIssues,
+    schedulingIssues: firstStep ? compact([firstStepDelayIssue(firstStep.delayHours)]) : [],
     expectedJobs: eligibleLeads.length,
     mockMode,
   };
+}
+
+function compact(items: Array<string | null>): string[] {
+  return items.filter((item): item is string => item != null);
 }
 
 export async function getCampaignAutomationPreview(id: string): Promise<AutomationPreview> {
@@ -353,40 +375,63 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   }
 
   const preview = await buildAutomationPreview(existing, false);
-  const readinessIssues = [...preview.templateIssues, ...preview.connectorIssues];
+  const readinessIssues = [
+    ...preview.templateIssues,
+    ...preview.connectorIssues,
+    ...preview.schedulingIssues,
+  ];
   if (readinessIssues.length > 0) {
     throw new ValidationError(`Campaign is not ready to launch. ${readinessIssues.join(' ')}`);
   }
 
   const launched = await launchCampaign(id);
-  let enqueued = 0;
-
-  // Auto-enroll eligible leads that are not yet in campaign_leads
+  const durable = isCampaignOperationsV2Enabled();
+  // addLeads enrolls every eligible lead. First-step scheduling has a single
+  // owner per path: the legacy loop below, or the durable intents created by
+  // addLeads plus restoration of previously frozen enrollments on relaunch.
   const leadIdsToInsert = preview.eligibleLeads.map((l) => l.leadId);
-  if (leadIdsToInsert.length > 0) {
-    await addLeads(launched.id, leadIdsToInsert, actor);
-  }
-
-  if (preview.firstStep && launched.sequence_id) {
-    for (const lead of preview.eligibleLeads) {
-      try {
-        await enqueueOutreachDispatch({
-          leadId: lead.leadId,
-          campaignId: launched.id,
-          sequenceId: launched.sequence_id,
-          stepNumber: preview.firstStep.stepNumber,
-          channel: preview.firstStep.channel,
-          templateId: preview.firstStep.templateId,
-          mockMode: preview.mockMode,
-          aiPersonalizationEnabled: launched.ai_personalization_enabled,
-        });
-        enqueued += 1;
-      } catch (enqueueErr) {
-        logger.error('Failed to enqueue outreach dispatch for lead', {
-          campaignId: launched.id,
-          leadId: lead.leadId,
-          error: enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
-        });
+  let enqueued = 0;
+  let schedulingFailures: Array<{ leadId: string; error: string }> = [];
+  if (durable) {
+    if (leadIdsToInsert.length > 0) {
+      const addResult = await addLeads(launched.id, leadIdsToInsert, actor);
+      enqueued = addResult.enqueued;
+      schedulingFailures = addResult.schedulingFailures ?? [];
+    }
+    if (existing.status === 'paused') {
+      // Relaunch resumes frozen enrollments where they left off instead of
+      // restarting completed steps from step 1.
+      const enrollments = await listActiveEnrollments(launched.id).catch(() => []);
+      const { restored } = await restoreForResume({ campaign: launched, enrollments });
+      enqueued += restored;
+    }
+  } else {
+    if (leadIdsToInsert.length > 0) {
+      await addLeads(launched.id, leadIdsToInsert, actor);
+    }
+    if (preview.firstStep && launched.sequence_id) {
+      for (const lead of preview.eligibleLeads) {
+        try {
+          await enqueueOutreachDispatch({
+            leadId: lead.leadId,
+            campaignId: launched.id,
+            sequenceId: launched.sequence_id,
+            stepNumber: preview.firstStep.stepNumber,
+            channel: preview.firstStep.channel,
+            templateId: preview.firstStep.templateId,
+            mockMode: preview.mockMode,
+            aiPersonalizationEnabled: launched.ai_personalization_enabled,
+          });
+          enqueued += 1;
+        } catch (enqueueErr) {
+          const message = enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr);
+          logger.error('Failed to enqueue outreach dispatch for lead', {
+            campaignId: launched.id,
+            leadId: lead.leadId,
+            error: message,
+          });
+          schedulingFailures.push({ leadId: lead.leadId, error: message });
+        }
       }
     }
   }
@@ -407,11 +452,20 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
 
   return {
     campaign: launched,
-    automation: { enqueued, skipped: preview.skippedLeads.length, mockMode: preview.mockMode },
+    automation: {
+      enqueued,
+      skipped: preview.skippedLeads.length,
+      mockMode: preview.mockMode,
+      ...(preview.skippedLeads.length > 0
+        ? { skippedLeads: preview.skippedLeads.slice(0, 100) }
+        : {}),
+      ...(schedulingFailures.length > 0 ? { schedulingFailures } : {}),
+      ...(durable ? { durable } : {}),
+    },
   };
 }
 
-export async function pauseCampaignById(id: string, actor: Actor): Promise<Campaign> {
+export async function pauseCampaignById(id: string, actor: Actor): Promise<PauseCampaignResult> {
   const existing = await findCampaignById(id);
   if (!existing) {
     throw new AppError('Campaign not found', 404);
@@ -421,8 +475,21 @@ export async function pauseCampaignById(id: string, actor: Actor): Promise<Campa
     throw new AppError('Only active campaigns can be paused', 400);
   }
 
-  const paused = await pauseCampaign(id);
-  await cancelPendingOutreachJobs({ campaignId: id });
+  // The status flip and the delay freeze commit atomically (pauseCampaignTx
+  // locks campaigns-then-enrollments, the same order claims use), so no
+  // dispatch claim can slip between them. In-flight provider-accepted
+  // messages cannot be recalled and are reported, not promised away.
+  const durable = isCampaignOperationsV2Enabled() || (await hasDurableEnrollments(id));
+  // `existing` above already guarantees the row exists; a null tx result here
+  // means a concurrent transition won the race, reported as a conflict.
+  const tx = durable ? await pauseCampaignTx(id, new Date().toISOString()) : null;
+  const paused = tx?.campaign ?? (durable ? null : await pauseCampaign(id));
+  if (!paused) {
+    throw new AppError('Only active campaigns can be paused', 400);
+  }
+  const frozen = tx?.frozen ?? 0;
+  const cancelledJobs = await cancelPendingOutreachJobs({ campaignId: id });
+  const inFlight = durable ? await countClaimedExecutions(id) : null;
 
   await writeAuditLog({
     userId: actor.id,
@@ -430,14 +497,14 @@ export async function pauseCampaignById(id: string, actor: Actor): Promise<Campa
     entityType: 'campaign',
     entityId: id,
     oldValue: { status: existing.status },
-    newValue: { status: paused.status },
+    newValue: { status: paused.status, frozen, cancelledJobs, inFlight },
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return paused;
+  return { campaign: paused, operations: { frozen, inFlight, cancelledJobs, durable } };
 }
 
-export async function resumeCampaignById(id: string, actor: Actor): Promise<Campaign> {
+export async function resumeCampaignById(id: string, actor: Actor): Promise<ResumeCampaignResult> {
   const existing = await findCampaignById(id);
   if (!existing) {
     throw new AppError('Campaign not found', 404);
@@ -447,7 +514,14 @@ export async function resumeCampaignById(id: string, actor: Actor): Promise<Camp
     throw new AppError('Only paused campaigns can be resumed', 400);
   }
 
+  const durable = isCampaignOperationsV2Enabled() || (await hasDurableEnrollments(id));
   const resumed = await resumeCampaign(id);
+  // Individually paused enrollments stay paused — resuming the campaign must
+  // not resume a manually paused lead.
+  const enrollments = durable ? await listActiveEnrollments(id) : [];
+  const { restored, unknownTiming } = durable
+    ? await restoreForResume({ campaign: resumed, enrollments })
+    : { restored: 0, unknownTiming: 0 };
 
   await writeAuditLog({
     userId: actor.id,
@@ -455,18 +529,34 @@ export async function resumeCampaignById(id: string, actor: Actor): Promise<Camp
     entityType: 'campaign',
     entityId: id,
     oldValue: { status: existing.status },
-    newValue: { status: resumed.status },
+    newValue: { status: resumed.status, restored, unknownTiming },
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return resumed;
+  return { campaign: resumed, operations: { restored, unknownTiming, durable } };
+}
+
+async function countClaimedExecutions(campaignId: string): Promise<number | null> {
+  try {
+    const { countExecutionsByState } = await import('./campaigns.execution.repository');
+    const rows = await countExecutionsByState(campaignId);
+    return rows
+      .filter((row) => row.state === 'claimed')
+      .reduce((total, row) => total + parseInt(row.count, 10), 0);
+  } catch {
+    return null;
+  }
 }
 
 export async function addLeads(
   campaignId: string,
   leadIds: string[],
   actor: Actor,
-): Promise<{ added: number; enqueued: number }> {
+): Promise<{
+  added: number;
+  enqueued: number;
+  schedulingFailures?: Array<{ leadId: string; error: string }>;
+}> {
   const campaign = await findCampaignById(campaignId);
   if (!campaign) {
     throw new AppError('Campaign not found', 404);
@@ -474,7 +564,11 @@ export async function addLeads(
 
   if (campaign.status === 'active') {
     const readiness = await buildAutomationPreview(campaign, false);
-    const readinessIssues = [...readiness.templateIssues, ...readiness.connectorIssues];
+    const readinessIssues = [
+      ...readiness.templateIssues,
+      ...readiness.connectorIssues,
+      ...readiness.schedulingIssues,
+    ];
     if (readinessIssues.length > 0) {
       throw new ValidationError(
         `Campaign is not ready to contact leads. ${readinessIssues.join(' ')}`,
@@ -484,6 +578,8 @@ export async function addLeads(
 
   const added = await addLeadsToCampaign(campaignId, leadIds);
   let enqueued = 0;
+  const schedulingFailures: Array<{ leadId: string; error: string }> = [];
+  const durable = isCampaignOperationsV2Enabled();
 
   if (campaign.status === 'active' && campaign.sequence_id) {
     const enrolledWithoutOutreach = await findCampaignLeadsWithProgress(campaignId);
@@ -495,26 +591,56 @@ export async function addLeads(
     );
     const preview = await buildAutomationPreview(campaign, false);
     if (preview.firstStep) {
+      const sequence = await findSequenceById(campaign.sequence_id);
+      const steps = Array.isArray(sequence?.steps) ? sequence.steps : [];
       for (const lead of preview.eligibleLeads) {
         if (!pendingLeadIds.has(lead.leadId)) continue;
         try {
-          await enqueueOutreachDispatch({
-            leadId: lead.leadId,
-            campaignId: campaign.id,
-            sequenceId: campaign.sequence_id,
-            stepNumber: preview.firstStep.stepNumber,
-            channel: preview.firstStep.channel,
-            templateId: preview.firstStep.templateId,
-            mockMode: preview.mockMode,
-            aiPersonalizationEnabled: campaign.ai_personalization_enabled,
-          });
+          if (durable && steps.length > 0) {
+            // Single scheduling owner: persist the intent, then publish the
+            // wake-up. Publication failures stay recoverable via the sweep.
+            // The dispatch mode is stored on the intent so recovery, resume,
+            // and retry preserve it instead of converting simulated sends.
+            const intent = await enrollWithIntent({
+              campaign,
+              leadId: lead.leadId,
+              steps,
+              sequenceId: campaign.sequence_id,
+              mockMode: preview.mockMode,
+            });
+            if (intent.durable && intent.dedupeKey) {
+              const enrollment = await lookupEnrollment(campaignId, lead.leadId);
+              const published = await publishExecution({
+                dedupeKey: intent.dedupeKey,
+                leadId: lead.leadId,
+                campaignId: campaign.id,
+                sequenceId: campaign.sequence_id,
+                stepNumber: preview.firstStep.stepNumber,
+                channel: preview.firstStep.channel,
+                templateId: preview.firstStep.templateId,
+                generation: enrollment?.scheduling_generation ?? 0,
+                delayMs: intent.due?.delayMs ?? 0,
+                mockMode: preview.mockMode,
+                aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+              });
+              if (!published.published) {
+                throw new Error('Queue publication failed — intent retained for recovery sweep.');
+              }
+            } else {
+              await enqueueLegacyFirstStep(campaign, lead.leadId, preview);
+            }
+          } else {
+            await enqueueLegacyFirstStep(campaign, lead.leadId, preview);
+          }
           enqueued += 1;
         } catch (enqueueErr) {
+          const message = enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr);
           logger.error('Failed to enqueue outreach dispatch for newly added lead', {
             campaignId: campaign.id,
             leadId: lead.leadId,
-            error: enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
+            error: message,
           });
+          schedulingFailures.push({ leadId: lead.leadId, error: message });
         }
       }
     }
@@ -529,7 +655,29 @@ export async function addLeads(
     ipAddress: actor.ipAddress ?? null,
   });
 
-  return { added: added.length, enqueued };
+  return {
+    added: added.length,
+    enqueued,
+    ...(schedulingFailures.length > 0 ? { schedulingFailures } : {}),
+  };
+}
+
+async function enqueueLegacyFirstStep(
+  campaign: Campaign,
+  leadId: string,
+  preview: PreviewBuild,
+): Promise<void> {
+  if (!preview.firstStep || !campaign.sequence_id) return;
+  await enqueueOutreachDispatch({
+    leadId,
+    campaignId: campaign.id,
+    sequenceId: campaign.sequence_id,
+    stepNumber: preview.firstStep.stepNumber,
+    channel: preview.firstStep.channel,
+    templateId: preview.firstStep.templateId,
+    mockMode: preview.mockMode,
+    aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+  });
 }
 
 export async function removeLead(campaignId: string, leadId: string, actor: Actor): Promise<void> {
@@ -564,17 +712,27 @@ export async function getCampaignLeads(campaignId: string): Promise<any[]> {
  * a config problem the user needs to fix first. Only retries when the latest
  * logged attempt actually failed, and re-validates the template is still
  * approved (a rejected/edited template shouldn't be silently retried).
+ *
+ * A paused campaign cannot send through manual retry: the retry records
+ * nothing and is rejected with an explanation until the campaign resumes.
+ * Opted-out, replied, or otherwise ineligible leads are rejected before
+ * anything is scheduled. On the durable path each intentional retry gets a
+ * fresh attempt identity; concurrent duplicates collapse to the pending
+ * attempt, and uncertain deliveries require review first.
  */
 export async function retryLeadOutreachStep(
   campaignId: string,
   leadId: string,
   actor: Actor,
-): Promise<{ enqueued: boolean }> {
+): Promise<{ enqueued: boolean; duplicate?: boolean; attempt?: number | null }> {
   const campaign = await findCampaignById(campaignId);
   if (!campaign) throw new AppError('Campaign not found', 404);
   if (!campaign.sequence_id) throw new AppError('Campaign has no outreach sequence', 400);
-  if (campaign.status !== 'active' && campaign.status !== 'paused') {
-    throw new AppError('Campaign must be active or paused to retry a send', 400);
+  if (campaign.status === 'paused') {
+    throw new AppError('Campaign is paused — resume it before retrying a send.', 409);
+  }
+  if (campaign.status !== 'active') {
+    throw new AppError('Campaign must be active to retry a send', 400);
   }
 
   const latest = await findLatestOutreachLogForLead(campaignId, leadId);
@@ -588,6 +746,91 @@ export async function retryLeadOutreachStep(
   const template = await findTemplateById(latest.template_id);
   if (!template || template.approval_status !== 'approved') {
     throw new AppError('Template is no longer approved — fix the sequence before retrying', 400);
+  }
+
+  const [lead] = await getLeadsByIds([leadId]);
+  if (!lead || lead.status !== 'active') {
+    throw new AppError(
+      lead?.status === 'opted_out'
+        ? 'Lead has opted out — cannot retry outreach.'
+        : `Lead is ${lead?.status ?? 'missing'} — resolve it before retrying this send.`,
+      400,
+    );
+  }
+
+  if (isCampaignOperationsV2Enabled()) {
+    const enrollment = await lookupEnrollment(campaignId, leadId);
+    if (enrollment) {
+      if (enrollment.enrollment_status === 'paused') {
+        throw new AppError('Enrollment is paused — resume it before retrying.', 409);
+      }
+      if (enrollment.enrollment_status !== 'active') {
+        throw new AppError(`Enrollment is ${enrollment.enrollment_status} — cannot retry.`, 400);
+      }
+    }
+    const generation = enrollment?.scheduling_generation ?? 0;
+    const { findLatestStepExecution } = await import('./campaigns.execution.repository');
+    const latestExec = await findLatestStepExecution(
+      campaignId,
+      leadId,
+      latest.step_number,
+      generation,
+    );
+    if (latestExec?.state === 'uncertain') {
+      throw new AppError(
+        'This send has an uncertain outcome — resolve it in review before retrying.',
+        422,
+      );
+    }
+    const pending = await findPendingExecution(campaignId, leadId, latest.step_number, generation);
+    const intent = await createRetryIntent({
+      campaign,
+      leadId,
+      stepNumber: latest.step_number,
+      channel: latest.channel,
+      templateId: latest.template_id,
+      generation,
+      snapshotId: enrollment?.sequence_snapshot_id ?? null,
+      existingPending: pending,
+    });
+    if (!intent.duplicate) {
+      const published = await publishExecution({
+        dedupeKey: intent.dedupeKey,
+        leadId,
+        campaignId,
+        sequenceId: campaign.sequence_id,
+        stepNumber: latest.step_number,
+        channel: latest.channel,
+        templateId: latest.template_id,
+        generation,
+        delayMs: 0,
+        mockMode: intent.mockMode,
+        aiPersonalizationEnabled: campaign.ai_personalization_enabled,
+      });
+      if (!published.published) {
+        throw new AppError(
+          'Queue publication failed — retry intent retained for recovery sweep.',
+          503,
+        );
+      }
+    }
+    await writeAuditLog({
+      userId: actor.id,
+      action: 'campaign.outreach.retried',
+      entityType: 'campaign',
+      entityId: campaignId,
+      newValue: {
+        leadId,
+        stepNumber: latest.step_number,
+        channel: latest.channel,
+        attempt: intent.attempt,
+        duplicate: intent.duplicate,
+      },
+      ipAddress: actor.ipAddress ?? null,
+    });
+    return intent.duplicate
+      ? { enqueued: false, duplicate: true, attempt: null }
+      : { enqueued: true, duplicate: false, attempt: intent.attempt };
   }
 
   // Unique jobIdSuffix — the original dispatch job for this step already has a

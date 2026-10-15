@@ -490,6 +490,12 @@ async function enqueueNextStepAfterTask(task: TaskRow): Promise<void> {
   const sequence = await findSequenceByIdIncludingDeleted(task.sequence_id);
   if (!sequence) return;
 
+  // Durable enrollment ownership is persisted. Keep using it when the rollout
+  // flag changes, and let errors propagate so a durable row can never fall
+  // through to an untracked legacy send.
+  const durable = await scheduleDurableAfterPhoneTask(task);
+  if (durable) return;
+
   const nextStep = sequence.steps.find((step) => step.stepNumber === (task.step_number ?? 0) + 1);
   if (!nextStep) return;
 
@@ -502,6 +508,27 @@ async function enqueueNextStepAfterTask(task: TaskRow): Promise<void> {
     delayHours: nextStep.delayHours ?? 24,
     mockMode: false,
   });
+}
+
+/**
+ * Phone-call completion on the durable path. Returns true when the
+ * completion was handled durably (scheduled or known duplicate); false when
+ * the caller should use the legacy follow-up instead.
+ */
+async function scheduleDurableAfterPhoneTask(task: TaskRow): Promise<boolean> {
+  const { findCampaignById } = await import('../campaigns/campaigns.repository');
+  const { scheduleAfterPhoneTask } = await import('../campaigns/campaigns.execution.service');
+  if (!task.campaign_id || !task.sequence_id || task.step_number === null) return false;
+  const campaign = await findCampaignById(task.campaign_id);
+  if (!campaign) return false;
+  const result = await scheduleAfterPhoneTask({
+    campaign,
+    leadId: task.lead_id,
+    sequenceId: task.sequence_id,
+    completedStepNumber: task.step_number,
+    completedAt: new Date(),
+  });
+  return result.owned;
 }
 
 function destinationForChannel(

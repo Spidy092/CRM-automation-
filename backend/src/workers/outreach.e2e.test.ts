@@ -61,6 +61,7 @@ jest.mock('../modules/campaigns/campaigns.service', () => ({
 }));
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findCampaignById: jest.fn(),
+  findCampaignLeadRows: jest.fn(),
   countSentTodayForCampaign: jest.fn(),
 }));
 jest.mock('../modules/integrations/dispatch', () => ({
@@ -74,6 +75,7 @@ import { findSequenceByIdIncludingDeleted, findLogsByLead } from '../modules/out
 import { createLog, updateLogStatus, createTask } from '../modules/outreach/outreach.service';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { findLeadById } from '../modules/leads/leads.repository';
+import { findCampaignById, findCampaignLeadRows } from '../modules/campaigns/campaigns.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
@@ -151,6 +153,19 @@ beforeEach(() => {
   (findTemplateById as jest.Mock<any>).mockResolvedValue(MOCK_TEMPLATE);
   (personalizeMessage as jest.Mock<any>).mockResolvedValue({ message: 'Hello Acme' });
   (dispatchOutbound as jest.Mock<any>).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+  // Execution gate defaults: active campaign with the lead enrolled.
+  (findCampaignById as jest.Mock<any>).mockResolvedValue({
+    id: 'camp-e2e',
+    status: 'active',
+    send_window_enabled: false,
+    send_window_start_hour: 9,
+    send_window_end_hour: 18,
+    send_window_days: [1, 2, 3, 4, 5],
+    send_window_timezone: 'UTC',
+    daily_send_limit: null,
+  });
+  (findCampaignLeadRows as jest.Mock<any>).mockResolvedValue([{ id: 'lead-e2e' }]);
+  (findLogsByLead as jest.Mock<any>).mockResolvedValue([]);
 });
 
 // ── Test 1: Full 3-step sequence fires in order ──────────────────────────

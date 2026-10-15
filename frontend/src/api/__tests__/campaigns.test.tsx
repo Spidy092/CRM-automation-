@@ -14,6 +14,12 @@ import {
   useLaunchCampaign,
   usePauseCampaign,
   useResumeCampaign,
+  useCampaignOperations,
+  useCampaignSchedule,
+  useCampaignEnrollments,
+  useCampaignsSummary,
+  usePauseEnrollment,
+  useResumeEnrollment,
   useAddLeadsToCampaign,
   useRetryLeadOutreachStep,
   useAutomationPreview,
@@ -199,26 +205,32 @@ describe('campaigns API hooks', () => {
 
   it('usePauseCampaign POSTs to /campaigns/:id/pause', async () => {
     const campaign = { id: 'c1', status: 'paused' };
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true, data: campaign } });
+    const operations = { frozen: 1, inFlight: 0, cancelledJobs: 2, durable: false };
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { success: true, data: campaign, meta: { operations } },
+    });
 
     const { result } = renderHook(() => usePauseCampaign(), { wrapper });
 
     const res = await result.current.mutateAsync('c1');
 
     expect(apiClient.post).toHaveBeenCalledWith('/campaigns/c1/pause');
-    expect(res).toEqual(campaign);
+    expect(res).toEqual({ campaign, operations });
   });
 
   it('useResumeCampaign POSTs to /campaigns/:id/resume', async () => {
     const campaign = { id: 'c1', status: 'active' };
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true, data: campaign } });
+    const operations = { restored: 1, unknownTiming: 0, durable: false };
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { success: true, data: campaign, meta: { operations } },
+    });
 
     const { result } = renderHook(() => useResumeCampaign(), { wrapper });
 
     const res = await result.current.mutateAsync('c1');
 
     expect(apiClient.post).toHaveBeenCalledWith('/campaigns/c1/resume');
-    expect(res).toEqual(campaign);
+    expect(res).toEqual({ campaign, operations });
   });
 
   it('useAddLeadsToCampaign POSTs lead_ids to /campaigns/:id/leads', async () => {
@@ -241,5 +253,102 @@ describe('campaigns API hooks', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/campaigns/c1/leads/l1/retry');
     expect(res).toEqual({ enqueued: true });
+  });
+});
+
+describe('campaign operations hooks', () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    vi.mocked(apiClient.post).mockReset();
+  });
+
+  it('useCampaignOperations GETs the operations overview', async () => {
+    const overview = { campaignId: 'c1', nextActivity: null, scheduledCount: 0 };
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { success: true, data: overview } });
+
+    const { result } = renderHook(() => useCampaignOperations('c1'), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(overview));
+    expect(apiClient.get).toHaveBeenCalledWith('/campaigns/c1/operations');
+  });
+
+  it('useCampaignSchedule GETs committed and projected work', async () => {
+    const schedule = { committed: [], projected: [], meta: { limit: 50 } };
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { success: true, data: schedule } });
+
+    const { result } = renderHook(() => useCampaignSchedule('c1'), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(schedule));
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/campaigns/c1/schedule',
+      expect.objectContaining({ params: expect.objectContaining({ limit: 50 }) }),
+    );
+  });
+
+  it('useCampaignEnrollments GETs the paged enrollment list', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { success: true, data: [], meta: { hasMore: true, nextCursor: 'cursor-1' } },
+    });
+
+    const { result } = renderHook(() => useCampaignEnrollments('c1', { search: 'acme' }), { wrapper });
+
+    await waitFor(() => expect(result.current.data?.hasMore).toBe(true));
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/campaigns/c1/enrollments',
+      expect.objectContaining({ params: expect.objectContaining({ search: 'acme' }) }),
+    );
+  });
+
+  it('useCampaignsSummary batches ids into a single request', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { success: true, data: [] } });
+
+    const { result } = renderHook(() => useCampaignsSummary(['c2', 'c1']), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual([]));
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/campaigns/operations-summary',
+      expect.objectContaining({ params: expect.objectContaining({ ids: 'c1,c2' }) }),
+    );
+  });
+
+  it('usePauseEnrollment POSTs the optimistic version', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { success: true, data: { enrollmentStatus: 'paused' } },
+    });
+
+    const { result } = renderHook(() => usePauseEnrollment(), { wrapper });
+
+    const res = await result.current.mutateAsync({
+      campaignId: 'c1',
+      leadId: 'l1',
+      expectedGeneration: 2,
+    });
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/campaigns/c1/enrollments/l1/pause',
+      expect.objectContaining({ expectedGeneration: 2 }),
+    );
+    expect(res).toEqual({ enrollmentStatus: 'paused' });
+  });
+
+  it('useResumeEnrollment POSTs an optional explicit schedule', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { success: true, data: { status: 'active', nextDueAt: null } },
+    });
+
+    const { result } = renderHook(() => useResumeEnrollment(), { wrapper });
+
+    const res = await result.current.mutateAsync({
+      campaignId: 'c1',
+      leadId: 'l1',
+      expectedGeneration: 3,
+      nextDueAt: '2026-10-20T09:00:00.000Z',
+    });
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/campaigns/c1/enrollments/l1/resume',
+      expect.objectContaining({ nextDueAt: '2026-10-20T09:00:00.000Z' }),
+    );
+    expect(res).toEqual({ status: 'active', nextDueAt: null });
   });
 });

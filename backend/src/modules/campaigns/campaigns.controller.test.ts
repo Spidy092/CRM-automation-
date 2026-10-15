@@ -135,7 +135,10 @@ describe('campaigns.controller', () => {
 
   describe('pauseCampaignHandler', () => {
     it('returns 200 on success', async () => {
-      mocked.pauseCampaignById.mockResolvedValue({ id: 'c1', status: 'paused' } as never);
+      mocked.pauseCampaignById.mockResolvedValue({
+        campaign: { id: 'c1', status: 'paused' },
+        operations: { frozen: 0, inFlight: null, cancelledJobs: 0, durable: false },
+      } as never);
       const res = mockRes() as Response;
       await pauseCampaignHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
       expect(res.status).toHaveBeenCalledWith(200);
@@ -144,7 +147,10 @@ describe('campaigns.controller', () => {
 
   describe('resumeCampaignHandler', () => {
     it('returns 200 on success', async () => {
-      mocked.resumeCampaignById.mockResolvedValue({ id: 'c1', status: 'active' } as never);
+      mocked.resumeCampaignById.mockResolvedValue({
+        campaign: { id: 'c1', status: 'active' },
+        operations: { restored: 0, unknownTiming: 0, durable: false },
+      } as never);
       const res = mockRes() as Response;
       await resumeCampaignHandler(mockReq({ params: { id: 'c1' } }) as Request, res, mockNext);
       expect(res.status).toHaveBeenCalledWith(200);

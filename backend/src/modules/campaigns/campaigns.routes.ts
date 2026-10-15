@@ -20,6 +20,13 @@ import {
   getCampaignStatsHandler,
   getCampaignStepStatsHandler,
   retryLeadOutreachStepHandler,
+  getCampaignOperationsHandler,
+  getCampaignScheduleHandler,
+  getCampaignActivityHandler,
+  listCampaignEnrollmentsHandler,
+  pauseCampaignEnrollmentHandler,
+  resumeCampaignEnrollmentHandler,
+  getCampaignsSummaryHandler,
 } from './campaigns.controller';
 
 const router = Router();
@@ -31,6 +38,12 @@ router.get(
   '/enrollment-options',
   authorize('admin', 'manager', 'marketing'),
   wrap(enrollmentOptionsHandler),
+);
+// Bulk operational summary — registered before '/:id' so the literal path wins.
+router.get(
+  '/operations-summary',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getCampaignsSummaryHandler),
 );
 router.get('/:id', wrap(getCampaignHandler));
 router.post('/', authorize('admin', 'manager', 'marketing'), wrap(createCampaignHandler));
@@ -55,6 +68,36 @@ router.delete(
 router.get('/:id/leads', wrap(listCampaignLeadsHandler));
 router.get('/:id/stats', wrap(getCampaignStatsHandler));
 router.get('/:id/stats/steps', wrap(getCampaignStepStatsHandler));
+router.get(
+  '/:id/operations',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getCampaignOperationsHandler),
+);
+router.get(
+  '/:id/schedule',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getCampaignScheduleHandler),
+);
+router.get(
+  '/:id/activity',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(getCampaignActivityHandler),
+);
+router.get(
+  '/:id/enrollments',
+  authorize('admin', 'manager', 'sales', 'marketing', 'viewer'),
+  wrap(listCampaignEnrollmentsHandler),
+);
+router.post(
+  '/:id/enrollments/:leadId/pause',
+  authorize('admin', 'manager', 'sales'),
+  wrap(pauseCampaignEnrollmentHandler),
+);
+router.post(
+  '/:id/enrollments/:leadId/resume',
+  authorize('admin', 'manager', 'sales'),
+  wrap(resumeCampaignEnrollmentHandler),
+);
 router.post(
   '/:id/leads/:leadId/retry',
   authorize('admin', 'manager', 'sales'),

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0.0] - 2026-10-15
+
+### Added
+- Campaign operations with durable enrollment snapshots, scheduled step execution, pause/resume controls, recovery, and per-enrollment progress.
+- Campaign sequence previews and operational metrics for delivery, engagement, failures, and funnel progress.
+- Append-only migrations 0084–0086 for durable campaign execution; apply these migrations before enabling `CAMPAIGN_OPERATIONS_V2_ENABLED`.
+
+### Fixed
+- Keep phone-task follow-ups under durable enrollment ownership and use each enrollment's pinned sequence snapshot.
+- Run campaign migration-chain and execution integration tests against isolated PostgreSQL and Redis services in CI.
+
 ## [0.4.0.1] - 2026-10-15
 
 ### Fixed

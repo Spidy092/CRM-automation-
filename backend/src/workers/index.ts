@@ -23,6 +23,7 @@ import {
 import { startNewsletterWorker } from './newsletter.worker';
 import { startWorkflowScheduler, startWorkflowWorker } from './workflow.worker';
 import { startOutboxScheduler, startOutboxWorker } from './outbox.worker';
+import { startCampaignRecoveryScheduler } from './campaignRecovery.worker';
 import { workflowAutomationEnabled } from '../modules/workflows/workflow.config';
 import { startFollowUpNotificationScheduler } from './followUpNotifications.scheduler';
 
@@ -90,6 +91,7 @@ async function startWorkers(): Promise<void> {
   // depend on workflow automation being enabled.
   const outbox = startOutboxWorker();
   startOutboxScheduler();
+  startCampaignRecoveryScheduler();
   startFollowUpNotificationScheduler();
 
   logger.info('Worker process started — listening for jobs', {

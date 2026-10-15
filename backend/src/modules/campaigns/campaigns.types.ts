@@ -151,6 +151,8 @@ export interface AutomationPreview {
   skippedLeads: AutomationSkippedLead[];
   templateIssues: string[];
   connectorIssues: string[];
+  /** Timing policies that block launch (e.g. nonzero first-step delay). */
+  schedulingIssues: string[];
   expectedJobs: number;
   mockMode: boolean;
 }
@@ -159,9 +161,43 @@ export interface AutomationLaunchMeta {
   enqueued: number;
   skipped: number;
   mockMode: boolean;
+  /** Recipients skipped with reasons — surfaced so launch never implies full queueing. */
+  skippedLeads?: AutomationSkippedLead[];
+  /** Per-recipient scheduling failures (transport publish errors). */
+  schedulingFailures?: Array<{ leadId: string; error: string }>;
+  /** True when intents were persisted durably instead of fire-and-forget queueing. */
+  durable?: boolean;
 }
 
 export interface LaunchCampaignResult {
   campaign: Campaign;
   automation: AutomationLaunchMeta;
+}
+
+export interface PauseOperationsResult {
+  /** Enrollments whose remaining delay was frozen (durable path only). */
+  frozen: number;
+  /** Currently claimed executions that may still send — provider-accepted work cannot be recalled. */
+  inFlight: number | null;
+  /** Transport jobs removed. */
+  cancelledJobs: number;
+  durable: boolean;
+}
+
+export interface ResumeOperationsResult {
+  /** Enrollments restored with recomputed due times. */
+  restored: number;
+  /** Enrollments with unrecoverable timing — need an explicit resume schedule. */
+  unknownTiming: number;
+  durable: boolean;
+}
+
+export interface PauseCampaignResult {
+  campaign: Campaign;
+  operations: PauseOperationsResult;
+}
+
+export interface ResumeCampaignResult {
+  campaign: Campaign;
+  operations: ResumeOperationsResult;
 }

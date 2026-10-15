@@ -66,6 +66,8 @@ export interface AutomationPreview {
   skippedLeads: Array<{ leadId: string; businessName: string; reasons: string[] }>;
   templateIssues: string[];
   connectorIssues: string[];
+  /** Timing policies that block launch (e.g. nonzero first-step delay). */
+  schedulingIssues: string[];
   expectedJobs: number;
   mockMode: boolean;
 }
@@ -74,6 +76,9 @@ export interface AutomationLaunchMeta {
   enqueued: number;
   skipped: number;
   mockMode: boolean;
+  skippedLeads?: Array<{ leadId: string; businessName: string; reasons: string[] }>;
+  schedulingFailures?: Array<{ leadId: string; error: string }>;
+  durable?: boolean;
 }
 
 export interface CreateCampaignInput {
@@ -294,13 +299,29 @@ export function useLaunchCampaign() {
   });
 }
 
+export interface PauseOperationsResult {
+  frozen: number;
+  inFlight: number | null;
+  cancelledJobs: number;
+  durable: boolean;
+}
+
+export interface ResumeOperationsResult {
+  restored: number;
+  unknownTiming: number;
+  durable: boolean;
+}
+
 export function usePauseCampaign() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (id: string) => {
       const response = await apiClient.post<ApiResponse<Campaign>>(`/campaigns/${id}/pause`);
-      return response.data.data;
+      return {
+        campaign: response.data.data,
+        operations: response.data.meta?.operations as PauseOperationsResult | undefined,
+      };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
@@ -314,7 +335,10 @@ export function useResumeCampaign() {
   return useMutation({
     mutationFn: async (id: string) => {
       const response = await apiClient.post<ApiResponse<Campaign>>(`/campaigns/${id}/resume`);
-      return response.data.data;
+      return {
+        campaign: response.data.data,
+        operations: response.data.meta?.operations as ResumeOperationsResult | undefined,
+      };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
@@ -350,5 +374,270 @@ export function useCampaignEnrollmentOptions(enabled: boolean) {
       const response = await apiClient.get<ApiResponse<{ sources: string[]; tags: string[] }>>('/campaigns/enrollment-options');
       return response.data.data;
     },
+  });
+}
+
+// ── Campaign operations (phases 1–2) ─────────────────────────────────────────
+// Bounded refresh: poll while the screen is visible, stop when hidden, and
+// invalidate after mutations. Times shown always come from the backend.
+
+/** Refresh cadence for operational panels while the campaign screen is visible. */
+export const OPERATIONS_REFRESH_MS = 15_000;
+
+export type WaitingReason =
+  | 'sequence_delay'
+  | 'outside_sending_hours'
+  | 'daily_limit'
+  | 'campaign_paused'
+  | 'enrollment_paused'
+  | 'manual_task_pending'
+  | 'retry_backoff'
+  | 'sender_unavailable'
+  | 'scheduling_unavailable'
+  | 'review_required';
+
+export interface OperationsNextActivity {
+  kind: 'committed';
+  leadId: string;
+  businessName: string | null;
+  stepNumber: number;
+  channel: string;
+  dueAt: string;
+  dueLabel: string;
+}
+
+export interface CampaignOperations {
+  campaignId: string;
+  status: CampaignStatus;
+  timezone: string;
+  durable: boolean;
+  nextActivity: OperationsNextActivity | null;
+  scheduledCount: number;
+  potentialRemaining: number;
+  sentToday: number;
+  dailyLimit: number | null;
+  capacityRemaining: number | null;
+  attempts: number;
+  failedUnresolved: number;
+  uncertain: number;
+  executionsByState: Array<{ state: string; channel: string; count: number }>;
+  waitingReasons: Array<{ reason: WaitingReason; count: number }>;
+  attention: Array<{ kind: 'failed' | 'uncertain' | 'unknown_timing'; count: number; label: string }>;
+  computedAt: string;
+}
+
+export function useCampaignOperations(id: string) {
+  return useQuery({
+    queryKey: ['campaigns', id, 'operations'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<CampaignOperations>>(
+        `/campaigns/${id}/operations`,
+      );
+      return response.data.data;
+    },
+    enabled: !!id,
+    refetchInterval: OPERATIONS_REFRESH_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export interface ScheduleCommittedItem {
+  leadId: string;
+  businessName: string | null;
+  stepNumber: number;
+  channel: string;
+  state: string;
+  dueAt: string | null;
+  dueLabel: string | null;
+}
+
+export interface ScheduleProjectedItem {
+  leadId: string;
+  stepNumber: number;
+  channel: string;
+  estimatedDueAt: string;
+  estimatedDueLabel: string;
+}
+
+export interface CampaignSchedule {
+  committed: ScheduleCommittedItem[];
+  projected: ScheduleProjectedItem[];
+  meta: { limit: number };
+}
+
+export function useCampaignSchedule(id: string) {
+  return useQuery({
+    queryKey: ['campaigns', id, 'schedule'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<CampaignSchedule>>(
+        `/campaigns/${id}/schedule`,
+        { params: { limit: 50 } },
+      );
+      return response.data.data;
+    },
+    enabled: !!id,
+    refetchInterval: OPERATIONS_REFRESH_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export interface ActivityItem {
+  id: string;
+  kind: string;
+  leadId: string | null;
+  stepNumber: number | null;
+  channel: string | null;
+  status: string | null;
+  createdAt: string;
+}
+
+export function useCampaignActivity(id: string) {
+  return useQuery({
+    queryKey: ['campaigns', id, 'activity'],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<ActivityItem[]>>(
+        `/campaigns/${id}/activity`,
+        { params: { limit: 25 } },
+      );
+      return {
+        items: response.data.data ?? [],
+        hasMore: (response.data.meta?.hasMore as boolean | undefined) ?? false,
+        nextCursor: (response.data.meta?.nextCursor as string | undefined) ?? null,
+      };
+    },
+    enabled: !!id,
+    refetchInterval: OPERATIONS_REFRESH_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export interface EnrollmentProgressItem {
+  leadId: string;
+  businessName: string | null;
+  contactName: string | null;
+  leadStatus: string;
+  enrollmentStatus: string;
+  completedSteps: number;
+  totalSteps: number | null;
+  nextAction: {
+    kind: 'committed' | 'projected';
+    stepNumber: number;
+    channel: string;
+    dueAt: string | null;
+    dueLabel: string | null;
+  } | null;
+  waitingReason: WaitingReason | null;
+  waitingDetail: string | null;
+  terminalReason: string | null;
+  lastActivity: { at: string; status: string } | null;
+  openTasks: number;
+  schedulingGeneration: number;
+  timingUnknown: boolean;
+  actions: { pause: boolean; resume: boolean; retry: boolean; reschedule: boolean };
+}
+
+export function useCampaignEnrollments(
+  campaignId: string,
+  filters?: { search?: string; enrollmentStatus?: string; cursor?: string },
+) {
+  return useQuery({
+    queryKey: ['campaigns', campaignId, 'enrollments', filters],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<EnrollmentProgressItem[]>>(
+        `/campaigns/${campaignId}/enrollments`,
+        { params: { limit: 25, ...filters } },
+      );
+      return {
+        items: response.data.data ?? [],
+        hasMore: (response.data.meta?.hasMore as boolean | undefined) ?? false,
+        nextCursor: (response.data.meta?.nextCursor as string | undefined) ?? null,
+      };
+    },
+    enabled: Boolean(campaignId),
+    refetchInterval: OPERATIONS_REFRESH_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function usePauseEnrollment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      campaignId,
+      leadId,
+      reason,
+      expectedGeneration,
+    }: {
+      campaignId: string;
+      leadId: string;
+      reason?: string;
+      expectedGeneration: number;
+    }) => {
+      const response = await apiClient.post<ApiResponse<{ enrollmentStatus: string }>>(
+        `/campaigns/${campaignId}/enrollments/${leadId}/pause`,
+        { reason, expectedGeneration },
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { campaignId }) => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'enrollments'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'operations'] });
+    },
+  });
+}
+
+export function useResumeEnrollment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      campaignId,
+      leadId,
+      expectedGeneration,
+      nextDueAt,
+    }: {
+      campaignId: string;
+      leadId: string;
+      expectedGeneration: number;
+      nextDueAt?: string;
+    }) => {
+      const response = await apiClient.post<ApiResponse<{ status: string; nextDueAt: string | null }>>(
+        `/campaigns/${campaignId}/enrollments/${leadId}/resume`,
+        { expectedGeneration, nextDueAt },
+      );
+      return response.data.data;
+    },
+    onSuccess: (_, { campaignId }) => {
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'enrollments'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId, 'operations'] });
+    },
+  });
+}
+
+export interface CampaignSummaryRow {
+  campaignId: string;
+  scheduled: number;
+  failed: number;
+  uncertain: number;
+  nextDueAt: string | null;
+}
+
+/**
+ * One bulk request for every visible campaign — never a request per
+ * campaign. Disabled when there is nothing to summarize.
+ */
+export function useCampaignsSummary(campaignIds: string[]) {
+  const key = [...campaignIds].sort().join(',');
+  return useQuery({
+    queryKey: ['campaigns', 'operations-summary', key],
+    queryFn: async () => {
+      const response = await apiClient.get<ApiResponse<CampaignSummaryRow[]>>(
+        '/campaigns/operations-summary',
+        { params: { ids: [...campaignIds].sort().join(',') } },
+      );
+      return response.data.data ?? [];
+    },
+    enabled: campaignIds.length > 0,
+    refetchInterval: OPERATIONS_REFRESH_MS,
+    refetchIntervalInBackground: false,
   });
 }

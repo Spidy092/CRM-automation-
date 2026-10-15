@@ -7,6 +7,7 @@ import {
   usePauseCampaign,
   useResumeCampaign,
   useDeleteCampaign,
+  useCampaignsSummary,
 } from '@/api/campaigns';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +36,10 @@ export function CampaignsPage() {
   const [previewCampaignId, setPreviewCampaignId] = useState<string | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [attentionFilter, setAttentionFilter] = useState<'all' | 'attention'>('all');
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const previewCloseRef = useRef<HTMLButtonElement>(null);
   const { data: preview, isLoading: isPreviewLoading } = useAutomationPreview(
     previewCampaignId ?? '',
@@ -50,6 +55,26 @@ export function CampaignsPage() {
   useEffect(() => {
     setPage(0);
   }, [campaigns?.length]);
+
+  // One bulk operational summary for every campaign — never a request per
+  // campaign. The backend caps the batch; larger fleets page through it.
+  const allIds = campaigns ? campaigns.map((campaign) => campaign.id) : [];
+  const { data: summaries = [] } = useCampaignsSummary(allIds);
+  const summaryById = new Map(summaries.map((row) => [row.campaignId, row]));
+
+  const filteredCampaigns = (campaigns ?? []).filter((campaign) => {
+    if (statusFilter !== 'all' && campaign.status !== statusFilter) return false;
+    if (search.trim()) {
+      const needle = search.trim().toLowerCase();
+      const haystack = `${campaign.name} ${(campaign.target_industries ?? []).join(' ')}`.toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    if (attentionFilter === 'attention') {
+      const summary = summaryById.get(campaign.id);
+      if (!summary || summary.failed + summary.uncertain === 0) return false;
+    }
+    return true;
+  });
 
   // Focus trap and Escape key for launch preview modal
   useEffect(() => {
@@ -105,8 +130,8 @@ export function CampaignsPage() {
     }
   }, [deleteTargetId, deleteCampaign, showToast]);
 
-  const pagedCampaigns = campaigns ? campaigns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : [];
-  const totalPages = campaigns ? Math.max(1, Math.ceil(campaigns.length / PAGE_SIZE)) : 1;
+  const pagedCampaigns = filteredCampaigns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredCampaigns.length / PAGE_SIZE));
   const canPrev = page > 0;
   const canNext = page + 1 < totalPages;
 
@@ -177,9 +202,9 @@ export function CampaignsPage() {
                   </div>
                 </div>
 
-                {[...preview.templateIssues, ...preview.connectorIssues].length > 0 && (
+                {[...preview.templateIssues, ...preview.connectorIssues, ...(preview.schedulingIssues ?? [])].length > 0 && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                    {[...preview.templateIssues, ...preview.connectorIssues].map((issue) => (
+                    {[...preview.templateIssues, ...preview.connectorIssues, ...(preview.schedulingIssues ?? [])].map((issue) => (
                       <div key={issue}>{issue}</div>
                     ))}
                     <p className="mt-2">
@@ -218,11 +243,14 @@ export function CampaignsPage() {
                     disabled={
                       launchCampaign.isPending ||
                       preview.templateIssues.length > 0 ||
-                      preview.connectorIssues.length > 0
+                      preview.connectorIssues.length > 0 ||
+                      (preview.schedulingIssues ?? []).length > 0
                     }
                   >
                     <Play className="mr-2 h-4 w-4" />
-                    {preview.templateIssues.length > 0 || preview.connectorIssues.length > 0
+                    {preview.templateIssues.length > 0 ||
+                    preview.connectorIssues.length > 0 ||
+                    (preview.schedulingIssues ?? []).length > 0
                       ? 'Fix setup to launch'
                       : `Launch ${preview.eligibleLeads.length}`}
                   </Button>
@@ -253,6 +281,136 @@ export function CampaignsPage() {
         </Card>
       ) : campaigns && campaigns.length > 0 ? (
         <>
+          {/* Search, filters, and view modes */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <label htmlFor="campaign-search" className="sr-only">
+              Search campaigns
+            </label>
+            <input
+              id="campaign-search"
+              type="search"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+              placeholder="Search campaigns…"
+              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm sm:max-w-xs"
+            />
+            <div className="flex flex-wrap gap-2">
+              <label htmlFor="campaign-status-filter" className="sr-only">
+                Filter by status
+              </label>
+              <select
+                id="campaign-status-filter"
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setPage(0);
+                }}
+                className="rounded-md border border-slate-200 px-2 py-2 text-sm"
+              >
+                <option value="all">All statuses</option>
+                <option value="draft">Draft</option>
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+                <option value="completed">Completed</option>
+                <option value="archived">Archived</option>
+              </select>
+              <Button
+                variant={attentionFilter === 'attention' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setAttentionFilter(attentionFilter === 'attention' ? 'all' : 'attention');
+                  setPage(0);
+                }}
+                aria-pressed={attentionFilter === 'attention'}
+              >
+                Needs attention
+              </Button>
+              <div role="group" aria-label="View mode" className="flex overflow-hidden rounded-md border border-slate-200">
+                <Button
+                  variant={viewMode === 'cards' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="rounded-none"
+                  onClick={() => setViewMode('cards')}
+                  aria-pressed={viewMode === 'cards'}
+                >
+                  Cards
+                </Button>
+                <Button
+                  variant={viewMode === 'table' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="rounded-none"
+                  onClick={() => setViewMode('table')}
+                  aria-pressed={viewMode === 'table'}
+                >
+                  Table
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {filteredCampaigns.length === 0 ? (
+            <EmptyState
+              icon={<BarChart3 className="h-6 w-6" />}
+              title="No campaigns match"
+              description="Adjust the search or filters to see campaigns."
+            />
+          ) : viewMode === 'table' ? (
+            <Card>
+              <CardContent className="pt-5">
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th scope="col" className="px-4 py-3 font-medium">Campaign</th>
+                        <th scope="col" className="px-4 py-3 font-medium">Status</th>
+                        <th scope="col" className="px-4 py-3 font-medium">Scheduled</th>
+                        <th scope="col" className="px-4 py-3 font-medium">Failed</th>
+                        <th scope="col" className="px-4 py-3 font-medium">Next send</th>
+                        <th scope="col" className="px-4 py-3 font-medium">
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {pagedCampaigns.map((campaign) => {
+                        const summary = summaryById.get(campaign.id);
+                        return (
+                          <tr key={campaign.id} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-3">
+                              <Link to={`/campaigns/${campaign.id}`} className="font-medium text-indigo-600 hover:underline">
+                                {campaign.name}
+                              </Link>
+                            </td>
+                            <td className="px-4 py-3">
+                              <StatusBadge tone={statusTones[campaign.status]}>{campaign.status}</StatusBadge>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">{summary ? summary.scheduled : '—'}</td>
+                            <td className={`px-4 py-3 ${summary && summary.failed > 0 ? 'font-medium text-red-600' : 'text-slate-600'}`}>
+                              {summary ? summary.failed : '—'}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">
+                              {summary?.nextDueAt ? new Date(summary.nextDueAt).toLocaleString() : '—'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <Button variant="outline" size="sm" asChild>
+                                <Link to={`/campaigns/${campaign.id}`}>
+                                  <BarChart3 className="mr-1 h-3 w-3" />
+                                  Open
+                                </Link>
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {pagedCampaigns.map((campaign) => (
               <Card key={campaign.id} className="hover:shadow-md transition-shadow">
@@ -277,6 +435,25 @@ export function CampaignsPage() {
                         </span>
                       )}
                     </div>
+
+                    {(() => {
+                      const summary = summaryById.get(campaign.id);
+                      if (!summary) return null;
+                      return (
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500" aria-label="Scheduling summary">
+                          <span>{summary.scheduled} scheduled</span>
+                          {summary.failed > 0 && (
+                            <span className="font-medium text-red-600">{summary.failed} failed</span>
+                          )}
+                          {summary.uncertain > 0 && (
+                            <span className="font-medium text-amber-600">{summary.uncertain} uncertain</span>
+                          )}
+                          {summary.nextDueAt && (
+                            <span>Next: {new Date(summary.nextDueAt).toLocaleString()}</span>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     <div className="flex justify-end space-x-2">
                       {campaign.status === 'draft' && (
@@ -345,6 +522,7 @@ export function CampaignsPage() {
               </Card>
             ))}
           </div>
+          )}
 
           {/* Pagination */}
           {totalPages > 1 && (

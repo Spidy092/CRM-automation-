@@ -24,7 +24,24 @@ import {
   createCampaignSchema,
   updateCampaignSchema,
   addLeadsSchema,
+  campaignIdParamSchema,
+  campaignLeadParamSchema,
+  operationsSummaryQuerySchema,
+  scheduleQuerySchema,
+  activityQuerySchema,
+  enrollmentsQuerySchema,
+  pauseEnrollmentSchema,
+  resumeEnrollmentSchema,
 } from './campaigns.schema';
+import {
+  getCampaignOperations,
+  getCampaignSchedule,
+  getCampaignActivity,
+  getCampaignEnrollments,
+  pauseCampaignEnrollment,
+  resumeCampaignEnrollment,
+  getCampaignsSummary,
+} from './campaigns.operations.service';
 
 function actorFromReq(req: Request) {
   if (!req.user) throw new AppError('Unauthorized', 401);
@@ -131,8 +148,9 @@ export async function pauseCampaignHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const campaign = await pauseCampaignById(req.params.id, actorFromReq(req));
-    sendSuccess(res, campaign);
+    const result = await pauseCampaignById(req.params.id, actorFromReq(req));
+    // data stays the campaign for compatibility; operational counts ride in meta.
+    sendSuccess(res, result.campaign, 200, { operations: result.operations });
   } catch (err) {
     next(err);
   }
@@ -144,8 +162,8 @@ export async function resumeCampaignHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const campaign = await resumeCampaignById(req.params.id, actorFromReq(req));
-    sendSuccess(res, campaign);
+    const result = await resumeCampaignById(req.params.id, actorFromReq(req));
+    sendSuccess(res, result.campaign, 200, { operations: result.operations });
   } catch (err) {
     next(err);
   }
@@ -238,6 +256,131 @@ export async function enrollmentOptionsHandler(
   try {
     enrollmentOptionsQuerySchema.parse(req.query);
     sendSuccess(res, await getCampaignEnrollmentOptions());
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaignOperationsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignIdParamSchema.parse(req.params);
+    const overview = await getCampaignOperations(params.id, actorFromReq(req));
+    sendSuccess(res, overview);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaignScheduleHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignIdParamSchema.parse(req.params);
+    const query = scheduleQuerySchema.parse(req.query);
+    const schedule = await getCampaignSchedule(params.id, actorFromReq(req), {
+      limit: query.limit ?? 25,
+      includeProjected: query.includeProjected,
+    });
+    sendSuccess(res, schedule);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaignActivityHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignIdParamSchema.parse(req.params);
+    const query = activityQuerySchema.parse(req.query);
+    const activity = await getCampaignActivity(params.id, actorFromReq(req), {
+      limit: query.limit ?? 25,
+      cursor: query.cursor,
+    });
+    sendSuccess(res, activity.items, 200, {
+      hasMore: activity.meta.hasMore,
+      nextCursor: activity.meta.nextCursor ?? undefined,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listCampaignEnrollmentsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignIdParamSchema.parse(req.params);
+    const query = enrollmentsQuerySchema.parse(req.query);
+    const page = await getCampaignEnrollments(params.id, actorFromReq(req), {
+      limit: query.limit ?? 25,
+      cursor: query.cursor,
+      enrollmentStatus: query.enrollmentStatus,
+      search: query.search,
+    });
+    sendSuccess(res, page.items, 200, {
+      hasMore: page.meta.hasMore,
+      nextCursor: page.meta.nextCursor ?? undefined,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function pauseCampaignEnrollmentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignLeadParamSchema.parse(req.params);
+    const body = pauseEnrollmentSchema.parse(req.body);
+    const status = await pauseCampaignEnrollment(params.id, params.leadId, actorFromReq(req), body);
+    sendSuccess(res, { enrollmentStatus: status });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resumeCampaignEnrollmentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const params = campaignLeadParamSchema.parse(req.params);
+    const body = resumeEnrollmentSchema.parse(req.body);
+    const result = await resumeCampaignEnrollment(
+      params.id,
+      params.leadId,
+      actorFromReq(req),
+      body,
+    );
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaignsSummaryHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const query = operationsSummaryQuerySchema.parse(req.query);
+    const summary = await getCampaignsSummary(query.ids, actorFromReq(req));
+    sendSuccess(res, summary);
   } catch (err) {
     next(err);
   }
