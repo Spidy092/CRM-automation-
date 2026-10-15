@@ -82,10 +82,17 @@ describe('Newsletter Routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('GET /newsletter/unsubscribe unsubscribes with a valid token', async () => {
+  it('POST /newsletter/unsubscribe unsubscribes with a valid token', async () => {
     mockedService.unsubscribe.mockResolvedValue({ ok: true, value: { message: 'You have been unsubscribed.' } });
-    const res = await request(app).get('/newsletter/unsubscribe?token=raw-token');
+    const res = await request(app).post('/newsletter/unsubscribe?token=raw-token');
     expect(res.status).toBe(200);
+    expect(mockedService.unsubscribe).toHaveBeenCalledWith('raw-token');
+  });
+
+  it('does not change subscription state through a GET unsubscribe request', async () => {
+    const res = await request(app).get('/newsletter/unsubscribe?token=raw-token');
+    expect(res.status).toBe(404);
+    expect(mockedService.unsubscribe).not.toHaveBeenCalled();
   });
 
   it('GET /newsletter/preferences returns current preferences', async () => {

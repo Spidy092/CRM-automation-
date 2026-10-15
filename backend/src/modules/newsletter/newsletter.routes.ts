@@ -23,7 +23,7 @@ const router = Router();
 
 router.post('/subscribe', publicLimiter, wrap(subscribeHandler));
 router.get('/confirm', publicLimiter, wrap(confirmHandler));
-router.get('/unsubscribe', publicLimiter, wrap(unsubscribeHandler));
+router.post('/unsubscribe', publicLimiter, wrap(unsubscribeHandler));
 router.get('/preferences', publicLimiter, wrap(getPreferencesHandler));
 router.patch('/preferences', publicLimiter, wrap(updatePreferencesHandler));
 

@@ -45,10 +45,6 @@ export function PublicNewsletterActionPage() {
       confirmSub.mutateAsync(token)
         .then(() => setActionDone(true))
         .catch((err) => setActionError(getApiErrorMessage(err, 'Failed to confirm subscription')));
-    } else if (action === 'unsubscribe') {
-      unsubscribe.mutateAsync(token)
-        .then(() => setActionDone(true))
-        .catch((err) => setActionError(getApiErrorMessage(err, 'Failed to unsubscribe')));
     }
     // Preferences is handled via useQuery
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,7 +75,58 @@ export function PublicNewsletterActionPage() {
     );
   }
 
-  if (action === 'confirm' || action === 'unsubscribe') {
+  if (action === 'unsubscribe') {
+    const tokenLooksValid = /^[a-f0-9]{64}$/i.test(token);
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <Card className="w-full max-w-md">
+          <CardContent className="p-8 text-center">
+            {actionDone ? (
+              <>
+                <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
+                <h1 className="mt-4 text-xl font-semibold text-slate-900">Unsubscribed Successfully</h1>
+                <p className="mt-2 text-sm text-slate-600">You have been removed from our newsletter list.</p>
+                <Button asChild variant="link" className="mt-4">
+                  <Link to="/subscribe">Subscribe again</Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <MailOpen className="mx-auto h-12 w-12 text-slate-500" />
+                <h1 className="mt-4 text-xl font-semibold text-slate-900">Unsubscribe from our newsletter?</h1>
+                <p className="mt-2 text-sm text-slate-600">
+                  Confirm to stop receiving newsletter emails at this address.
+                </p>
+                {!tokenLooksValid ? (
+                  <p role="alert" className="mt-4 text-sm text-red-600">
+                    This unsubscribe link is invalid or incomplete. Use the link from the newsletter email you received.
+                  </p>
+                ) : actionError ? (
+                  <p role="alert" className="mt-4 text-sm text-red-600">{actionError}</p>
+                ) : null}
+                {tokenLooksValid && (
+                  <Button
+                    className="mt-5"
+                    disabled={unsubscribe.isPending}
+                    onClick={() => {
+                      setActionError(null);
+                      unsubscribe.mutateAsync(token)
+                        .then(() => setActionDone(true))
+                        .catch((err) => setActionError(getApiErrorMessage(err, 'Failed to unsubscribe')));
+                    }}
+                  >
+                    {unsubscribe.isPending ? 'Unsubscribing...' : 'Confirm unsubscribe'}
+                  </Button>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (action === 'confirm') {
     if (actionError) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
@@ -108,18 +155,11 @@ export function PublicNewsletterActionPage() {
           <CardContent className="p-8 text-center">
             <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
             <h1 className="mt-4 text-xl font-semibold text-slate-900">
-              {action === 'confirm' ? 'Subscription Confirmed!' : 'Unsubscribed Successfully'}
+              Subscription Confirmed!
             </h1>
             <p className="mt-2 text-sm text-slate-600">
-              {action === 'confirm' 
-                ? 'Your email has been confirmed. You will start receiving our newsletter.' 
-                : 'You have been successfully removed from our newsletter list.'}
+              Your email has been confirmed. You will start receiving our newsletter.
             </p>
-            {action === 'unsubscribe' && (
-              <Button asChild variant="link" className="mt-4">
-                <Link to="/subscribe">Subscribe again</Link>
-              </Button>
-            )}
           </CardContent>
         </Card>
       </div>
