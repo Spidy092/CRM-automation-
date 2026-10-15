@@ -134,7 +134,7 @@ export function useConfirmSubscription() {
 export function useUnsubscribe() {
   return useMutation({
     mutationFn: async (token: string) => {
-      const response = await apiClient.get<ApiResponse<NewsletterSubscriber>>(`/newsletter/unsubscribe?token=${token}`);
+      const response = await apiClient.post<ApiResponse<{ message: string }>>(`/newsletter/unsubscribe?token=${encodeURIComponent(token)}`);
       return response.data.data;
     },
   });
