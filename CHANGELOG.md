@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0.1] - 2026-10-15
+
+### Fixed
+- Clear notification timers on dismissal and unmount to prevent a frontend test teardown error from blocking deployment of newsletter contact enrollment.
+
 ## [0.4.0.0] - 2026-10-15
 
 ### Added
