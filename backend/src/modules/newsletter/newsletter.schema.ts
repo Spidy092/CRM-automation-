@@ -18,6 +18,10 @@ export const unsubscribeQuerySchema = z.object({
   token: z.string().min(1, 'token is required'),
 });
 
+export const publicUnsubscribeSchema = z.object({
+  email: z.string().email('email must be a valid email address').max(255),
+});
+
 export const preferencesQuerySchema = z.object({
   token: z.string().min(1, 'token is required'),
 });
@@ -35,15 +39,74 @@ export const listSubscribersQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   status: z.enum(NEWSLETTER_SUBSCRIBER_STATUSES).optional(),
+  search: z.string().max(255).optional(),
+  topic: z.enum(NEWSLETTER_TOPICS).optional(),
+  source: z.string().max(50).optional(),
+  frequency: z.enum(NEWSLETTER_FREQUENCIES).optional(),
 });
 
 export const subscriberIdParamSchema = z.object({
   id: z.string().uuid(),
 });
 
+/** Broadcast ids are DB uuids once durable, BullMQ job ids on the Redis path. */
+export const broadcastIdParamSchema = z.object({
+  id: z.string().min(1, 'broadcast id is required').max(128),
+});
+
+/**
+ * Operator opt-in for retrying UNKNOWN outcomes. Uncertain sends are never
+ * retried automatically: the operator reviews them first (via the
+ * uncertain-recipients endpoint) and accepts the possible-duplicate risk
+ * explicitly by setting this flag.
+ */
+export const retryBroadcastBodySchema = z.object({
+  includeUncertain: z.boolean().optional().default(false),
+});
+
 export const broadcastBodySchema = z.object({
   subject: z.string().min(1, 'subject is required').max(255),
   htmlBody: z.string().min(1, 'htmlBody is required'),
+  // Optional creation-workflow fields. All optional so existing callers
+  // sending only { subject, htmlBody } keep working unchanged.
+  previewText: z.string().max(300).optional(),
+  topics: z.array(z.enum(NEWSLETTER_TOPICS)).optional(),
+  frequency: z.enum(NEWSLETTER_FREQUENCIES).optional(),
+  scheduledAt: z.string().datetime({ offset: true }).optional(),
+  // Wall-clock time from `<input type="datetime-local">` plus IANA zone.
+  // The backend converts this pair to the correct UTC instant (see
+  // newsletter.timezone.ts); the zone affects scheduling, not just display.
+  scheduledAtLocal: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, 'scheduledAtLocal must be YYYY-MM-DDTHH:mm')
+    .optional(),
+  timezone: z.string().max(64).optional(),
+  idempotencyKey: z.string().max(128).optional(),
+  templateId: z.string().uuid().optional(),
+});
+
+export const eligibleCountQuerySchema = z.object({
+  topics: z
+    .union([z.enum(NEWSLETTER_TOPICS), z.array(z.enum(NEWSLETTER_TOPICS))])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : Array.isArray(v) ? v : [v])),
+  frequency: z.enum(NEWSLETTER_FREQUENCIES).optional(),
+});
+
+export const testSendSchema = z.object({
+  to: z.string().email('to must be a valid email address'),
+  subject: z.string().min(1, 'subject is required').max(255),
+  htmlBody: z.string().min(1, 'htmlBody is required'),
+  previewText: z.string().max(300).optional(),
+});
+
+export const digestDraftSchema = z.object({
+  subject: z.string().min(1, 'subject is required').max(255),
+  htmlBody: z.string().min(1, 'htmlBody is required'),
+});
+
+export const digestAutoSendSchema = z.object({
+  autoSend: z.boolean(),
 });
 
 export const automatedDigestToggleSchema = z.object({
@@ -58,6 +121,7 @@ export const updateDigestConfigSchema = z.object({
 });
 
 export type SubscribeBody = z.infer<typeof subscribeSchema>;
+export type PublicUnsubscribeBody = z.infer<typeof publicUnsubscribeSchema>;
 export type UpdatePreferencesBody = z.infer<typeof updatePreferencesBodySchema>;
 export type ListSubscribersQuery = z.infer<typeof listSubscribersQuerySchema>;
 export type BroadcastBody = z.infer<typeof broadcastBodySchema>;
