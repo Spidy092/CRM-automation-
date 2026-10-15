@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0.0] - 2026-10-15
+
+### Added
+- Admins can select CRM leads and add them directly to the newsletter audience, with immediate enrollment and unsubscribe links in future emails.
+
 ## [0.3.2.1] - 2026-10-14
 
 ### Added
