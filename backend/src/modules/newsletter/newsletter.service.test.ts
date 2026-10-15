@@ -1184,7 +1184,10 @@ describe('newsletter.service', () => {
       expect(opt.value.retrying).toBe(1);
       expect(opt.value.retryingUncertain).toBe(1);
       expect(enqueueNewsletterBroadcast).toHaveBeenLastCalledWith(
-        expect.objectContaining({ recipientIds: ['sub-9', 'sub-u1'] }),
+        expect.objectContaining({
+          recipientIds: ['sub-9', 'sub-u1'],
+          uncertainRecipientIds: ['sub-u1'],
+        }),
       );
     });
 

@@ -872,12 +872,22 @@ const SENDABLE_NOW_SQL = `(newsletter_reserved_until IS NULL OR newsletter_reser
   AND (newsletter_last_accepted_at IS NULL OR newsletter_last_accepted_at <= now() - (${ROLLING_LIMIT_SQL}))`;
 
 /** Atomic cross-broadcast reservation, held conservatively on unknown outcomes. */
-export async function reserveNewsletterSend(subscriberId: string, key: string): Promise<boolean> {
+export async function reserveNewsletterSend(
+  subscriberId: string,
+  key: string,
+  allowUncertainRetryFrom?: string,
+): Promise<boolean> {
   const row = await queryOne<{ id: string }>(
     `UPDATE newsletter_subscribers SET newsletter_reservation_key = $2,
       newsletter_reserved_until = now() + interval '720 hours'
-     WHERE id = $1 AND status = 'confirmed' AND ${SENDABLE_NOW_SQL} RETURNING id`,
-    [subscriberId, key],
+     WHERE id = $1 AND status = 'confirmed'
+       AND (newsletter_last_accepted_at IS NULL OR newsletter_last_accepted_at <= now() - (${ROLLING_LIMIT_SQL}))
+       AND (
+         newsletter_reserved_until IS NULL OR newsletter_reserved_until <= now()
+         OR ($3::text IS NOT NULL AND newsletter_reservation_key = $3 AND newsletter_reserved_until > now())
+       )
+     RETURNING id`,
+    [subscriberId, key, allowUncertainRetryFrom ?? null],
   );
   return row !== null;
 }

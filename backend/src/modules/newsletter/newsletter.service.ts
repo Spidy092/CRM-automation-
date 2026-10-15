@@ -1437,6 +1437,7 @@ export async function retryFailedRecipients(
         idempotencyKey: retryKey,
         ...(retryRecordId ? { broadcastRecordId: retryRecordId } : {}),
         recipientIds: retryIds,
+        ...(uncertainIds.length > 0 ? { uncertainRecipientIds: uncertainIds } : {}),
         retryOf: broadcastId,
       });
     } catch (err) {

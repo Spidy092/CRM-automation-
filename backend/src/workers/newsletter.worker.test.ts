@@ -130,8 +130,35 @@ describe('newsletter worker delivery accounting', () => {
     const result = await processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }));
     expect(result).toMatchObject({ attempted: 0, accepted: 0, skipped: 1 });
     expect(mockedRepo.reserveNewsletterSend).toHaveBeenCalledWith('limited', 'job-1');
+    expect(newsletterService.mintBroadcastToken).not.toHaveBeenCalled();
     expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
     expect(mockedSmtp.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('reclaims only an operator-approved uncertain reservation during a targeted retry', async () => {
+    mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
+    mockedSendgrid.sendEmail.mockResolvedValue({ ok: true, status: 202, data: {}, latencyMs: 1 } as any);
+    const result = await processBroadcast(
+      job(
+        {
+          subject: 'S',
+          htmlBody: '<p>B</p>',
+          broadcastRecordId: 'retry-record',
+          recipientIds: ['a', 'b'],
+          uncertainRecipientIds: ['a'],
+          retryOf: 'source-record',
+        },
+        'retry-job',
+      ),
+    );
+    expect(result.accepted).toBe(2);
+    expect(mockedRepo.reserveNewsletterSend).toHaveBeenNthCalledWith(
+      1,
+      'a',
+      'retry-record',
+      'source-record',
+    );
+    expect(mockedRepo.reserveNewsletterSend).toHaveBeenNthCalledWith(2, 'b', 'retry-record');
   });
 
   it('fails closed when the rolling-limit storage is unavailable', async () => {
@@ -392,6 +419,7 @@ describe('newsletter worker delivery accounting', () => {
     (newsletterService.mintBroadcastToken as jest.Mock).mockRejectedValueOnce(new Error('DB unavailable'));
     await expect(processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }, 'prepare')))
       .rejects.toThrow('DB unavailable');
+    expect(mockedRepo.finishNewsletterSend).toHaveBeenCalledWith('a', 'prepare', false);
     expect(mockedRedis.del).toHaveBeenCalledWith('newsletter:broadcast:claim:prepare:a');
     expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
     mockedRepo.findEligibleSubscribers.mockResolvedValueOnce([confirmedRow('a')]).mockResolvedValueOnce([]);

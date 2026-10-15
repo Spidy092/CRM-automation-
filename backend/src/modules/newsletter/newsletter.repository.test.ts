@@ -164,7 +164,17 @@ describe('newsletter.repository', () => {
     expect(sql).toContain("interval '720 hours'");
     expect(sql).toContain("status = 'confirmed'");
     expect(sql).toContain('newsletter_reserved_until <= now()');
-    expect(params).toEqual(['sub-1', 'broadcast-1']);
+    expect(params).toEqual(['sub-1', 'broadcast-1', null]);
+  });
+
+  it('only reclaims the matching held reservation for an explicitly opted-in uncertain retry', async () => {
+    mockQueryOne.mockResolvedValue({ id: 'sub-1' });
+    expect(await reserveNewsletterSend('sub-1', 'retry-1', 'source-1')).toBe(true);
+    const [sql, params] = mockQueryOne.mock.calls[0];
+    expect(sql).toContain('newsletter_reservation_key = $3');
+    expect(sql).toContain('newsletter_reserved_until > now()');
+    expect(sql).toContain('newsletter_last_accepted_at IS NULL OR');
+    expect(params).toEqual(['sub-1', 'retry-1', 'source-1']);
   });
 
   it('records accepted sends and releases a known-failed reservation', async () => {

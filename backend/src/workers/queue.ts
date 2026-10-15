@@ -495,6 +495,8 @@ export interface NewsletterBroadcastJob {
   broadcastRecordId?: string;
   /** Targeted retry: only these subscriber ids are (re)processed. */
   recipientIds?: string[];
+  /** Uncertain recipients explicitly approved by the operator for a risky retry. */
+  uncertainRecipientIds?: string[];
   /** When set, this job retries failures of an earlier broadcast. */
   retryOf?: string;
 }
