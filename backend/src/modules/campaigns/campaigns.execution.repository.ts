@@ -553,7 +553,7 @@ export async function reserveDailyCapacity(
     `INSERT INTO campaign_day_capacity (campaign_id, local_date, send_limit, reserved)
        VALUES ($1, $2::date, $3, 0)
      ON CONFLICT (campaign_id, local_date)
-       DO UPDATE SET send_limit = GREATEST(campaign_day_capacity.send_limit, $3)
+       DO UPDATE SET send_limit = EXCLUDED.send_limit
      RETURNING reserved`,
     [campaignId, localDate, sendLimit],
   );
@@ -568,6 +568,53 @@ export async function reserveDailyCapacity(
     [campaignId, localDate],
   );
   return (claimed.rows[0]?.ok ?? null) === '1';
+}
+
+/** Existing durable enrollments must not be re-created during a campaign relaunch. */
+export async function findExistingEnrollmentLeadIds(
+  campaignId: string,
+  leadIds: string[],
+): Promise<string[]> {
+  if (leadIds.length === 0) return [];
+  const result = await pool.query<{ lead_id: string }>(
+    `SELECT lead_id
+       FROM campaign_leads
+      WHERE campaign_id = $1 AND lead_id = ANY($2::uuid[])`,
+    [campaignId, leadIds],
+  );
+  return result.rows.map((row) => row.lead_id);
+}
+
+/** Complete a final phone task against its current durable enrollment state. */
+export async function completeEnrollmentAfterPhoneTaskTx(input: {
+  campaignId: string;
+  leadId: string;
+  completedStepNumber: number;
+  expectedGeneration: number;
+  completedSteps: number;
+}): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE campaign_leads
+        SET enrollment_status = 'completed',
+            next_step_number = NULL,
+            next_due_at = NULL,
+            delay_remaining_ms = NULL,
+            completed_steps = GREATEST(completed_steps, $5),
+            stop_reason = 'sequence_completed',
+            execution_updated_at = NOW()
+      WHERE campaign_id = $1 AND lead_id = $2
+        AND enrollment_status IN ('active', 'paused')
+        AND next_step_number = $3
+        AND scheduling_generation = $4`,
+    [
+      input.campaignId,
+      input.leadId,
+      input.completedStepNumber,
+      input.expectedGeneration,
+      input.completedSteps,
+    ],
+  );
+  return result.rowCount === 1;
 }
 
 /** Release a reservation after a definite failure so the slot is reusable. */

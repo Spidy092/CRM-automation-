@@ -529,6 +529,20 @@ describe('atomic daily capacity under concurrency', () => {
     );
     expect(stored.rows[0].reserved).toBe(2);
   });
+
+  it('honors a lower same-day limit without revoking existing reservations', async () => {
+    const campaignId = randomUUID();
+    await Promise.all(
+      Array.from({ length: 3 }, () => execRepo.reserveDailyCapacity(campaignId, '2026-10-13', 10)),
+    );
+
+    await expect(execRepo.reserveDailyCapacity(campaignId, '2026-10-13', 2)).resolves.toBe(false);
+    const stored = await pool.query(
+      'SELECT send_limit, reserved FROM campaign_day_capacity WHERE campaign_id = $1',
+      [campaignId],
+    );
+    expect(stored.rows[0]).toMatchObject({ send_limit: 2, reserved: 3 });
+  });
 });
 
 describe('real BullMQ publication with permitted IDs', () => {
@@ -777,6 +791,44 @@ describe('enrollment pause → resume → dispatch', () => {
       explicitDueAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
     expect(explicit.status).toBe('active');
+  });
+});
+
+describe('final phone-task completion', () => {
+  it('marks a durable enrollment complete and clears its pending timing', async () => {
+    const campaignId = await seedCampaign();
+    const leadId = await seedLead();
+    const sequenceId = randomUUID();
+    const templateId = await seedTemplate();
+    const snapshot = await execRepo.ensureSequenceSnapshot(campaignId, sequenceId, [
+      { stepNumber: 1, channel: 'phone_call', delayHours: 0, templateId },
+    ]);
+    await execRepo.upsertEnrollmentState(campaignId, leadId, {
+      enrollmentStatus: 'active',
+      sequenceSnapshotId: snapshot.id,
+      nextStepNumber: 1,
+      nextDueAt: new Date(Date.now() + 60_000).toISOString(),
+      completedSteps: 0,
+    });
+    const campaign = (await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+
+    await expect(
+      execService.scheduleAfterPhoneTask({
+        campaign,
+        leadId,
+        sequenceId,
+        completedStepNumber: 1,
+      }),
+    ).resolves.toEqual({ owned: true, scheduled: false, duplicate: false });
+    const enrollment = await execRepo.getEnrollmentState(campaignId, leadId);
+    expect(enrollment).toMatchObject({
+      enrollment_status: 'completed',
+      next_step_number: null,
+      next_due_at: null,
+      delay_remaining_ms: null,
+      completed_steps: 1,
+      stop_reason: 'sequence_completed',
+    });
   });
 });
 

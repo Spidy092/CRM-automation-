@@ -345,6 +345,15 @@ describe('pause / resume enrollment', () => {
     ).rejects.toMatchObject({ statusCode: 422 });
   });
 
+  it('keeps an enrollment paused until its campaign has resumed', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...campaign, status: 'paused' });
+    await expect(
+      resumeCampaignEnrollment('camp-1', 'lead-1', actor, { expectedGeneration: 2 }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(getEnrollmentState).not.toHaveBeenCalled();
+    expect(resumeEnrollmentTx).not.toHaveBeenCalled();
+  });
+
   it('resumes with an explicit schedule and a current-generation execution', async () => {
     (getEnrollmentState as jest.Mock).mockResolvedValue({
       campaign_id: 'camp-1',

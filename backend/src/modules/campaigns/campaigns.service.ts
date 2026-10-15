@@ -54,6 +54,7 @@ import {
 } from './campaigns.execution.service';
 import {
   hasDurableEnrollments,
+  findExistingEnrollmentLeadIds,
   listActiveEnrollments,
   pauseCampaignTx,
 } from './campaigns.execution.repository';
@@ -389,7 +390,12 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
   // addLeads enrolls every eligible lead. First-step scheduling has a single
   // owner per path: the legacy loop below, or the durable intents created by
   // addLeads plus restoration of previously frozen enrollments on relaunch.
-  const leadIdsToInsert = preview.eligibleLeads.map((l) => l.leadId);
+  const previewLeadIds = preview.eligibleLeads.map((l) => l.leadId);
+  const existingEnrollmentIds =
+    durable && existing.status === 'paused'
+      ? new Set(await findExistingEnrollmentLeadIds(launched.id, previewLeadIds))
+      : new Set<string>();
+  const leadIdsToInsert = previewLeadIds.filter((leadId) => !existingEnrollmentIds.has(leadId));
   let enqueued = 0;
   let schedulingFailures: Array<{ leadId: string; error: string }> = [];
   if (durable) {
@@ -400,8 +406,9 @@ export async function launchCampaignById(id: string, actor: Actor): Promise<Laun
     }
     if (existing.status === 'paused') {
       // Relaunch resumes frozen enrollments where they left off instead of
-      // restarting completed steps from step 1.
-      const enrollments = await listActiveEnrollments(launched.id).catch(() => []);
+      // restarting completed steps from step 1. Durable rows were excluded
+      // from addLeads above, so their frozen intents cannot be overwritten.
+      const enrollments = await listActiveEnrollments(launched.id);
       const { restored } = await restoreForResume({ campaign: launched, enrollments });
       enqueued += restored;
     }

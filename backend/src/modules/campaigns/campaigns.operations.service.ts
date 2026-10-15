@@ -10,7 +10,6 @@
 import { AppError } from '../../shared/middleware/errorHandler';
 import { writeAuditLog } from '../../shared/utils/audit';
 import { decodeCursor, encodeCursor } from '../../shared/utils/pagination';
-import { logger } from '../../shared/utils/logger';
 import {
   countExecutionsByState,
   countAttentionItems,
@@ -630,19 +629,13 @@ export async function resumeCampaignEnrollment(
 ): Promise<{ status: string; nextDueAt: string | null }> {
   const campaign = await loadCampaign(campaignId);
   await assertEnrollmentAccess(campaignId, leadId, actor);
+  if (campaign.status !== 'active') {
+    throw new AppError('Resume the campaign before resuming an individual enrollment.', 409);
+  }
   const current = await getEnrollmentState(campaignId, leadId).catch(() => null);
   if (!current) throw new AppError('Enrollment not found', 404);
   if (current.scheduling_generation !== input.expectedGeneration) {
     throw new AppError('Enrollment changed — reload and retry with the latest version.', 409);
-  }
-  if (campaign.status === 'paused' && !input.nextDueAt) {
-    logger.info(
-      'enrollment resumed while campaign paused — stays unscheduled until campaign resumes',
-      {
-        campaignId,
-        leadId,
-      },
-    );
   }
   // State transition, restored timing, and current-generation execution
   // commit atomically inside resumeSingleEnrollment; transport publication

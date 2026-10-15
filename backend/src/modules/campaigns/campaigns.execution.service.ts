@@ -22,6 +22,7 @@ import { isCampaignOperationsV2Enabled } from './campaigns.rollout';
 import {
   buildDedupeKey,
   claimDueStepExecutionTx,
+  completeEnrollmentAfterPhoneTaskTx,
   enrollIntentTx,
   findExpiredLeaseExecutions,
   findLatestSnapshot,
@@ -884,11 +885,7 @@ export async function scheduleAfterPhoneTask(input: {
   if (!owned) return { owned: false, scheduled: false, duplicate: false };
 
   const enrollment = await getEnrollmentState(input.campaign.id, input.leadId);
-  if (
-    !enrollment ||
-    enrollment.enrollment_status !== 'active' ||
-    input.campaign.status !== 'active'
-  ) {
+  if (!enrollment || !['active', 'paused'].includes(enrollment.enrollment_status)) {
     return { owned: true, scheduled: false, duplicate: false };
   }
   if (!enrollment.sequence_snapshot_id) {
@@ -901,7 +898,19 @@ export async function scheduleAfterPhoneTask(input: {
   const next = [...snapshot.steps]
     .sort((a, b) => a.stepNumber - b.stepNumber)
     .find((step) => step.stepNumber === input.completedStepNumber + 1);
-  if (!next) return { owned: true, scheduled: false, duplicate: false };
+  if (!next) {
+    const completed = await completeEnrollmentAfterPhoneTaskTx({
+      campaignId: input.campaign.id,
+      leadId: input.leadId,
+      completedStepNumber: input.completedStepNumber,
+      expectedGeneration: enrollment.scheduling_generation,
+      completedSteps: Math.max(enrollment.completed_steps, input.completedStepNumber),
+    });
+    return { owned: true, scheduled: false, duplicate: !completed };
+  }
+  if (enrollment.enrollment_status !== 'active' || input.campaign.status !== 'active') {
+    return { owned: true, scheduled: false, duplicate: false };
+  }
 
   const generation = enrollment.scheduling_generation;
   const completedAt = input.completedAt ?? new Date();

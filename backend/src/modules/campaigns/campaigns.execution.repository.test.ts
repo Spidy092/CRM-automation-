@@ -147,6 +147,24 @@ describe('reserveDailyCapacity', () => {
       .mockResolvedValueOnce(mockQueryResult([{ reserved: 50 }]))
       .mockResolvedValueOnce(mockQueryResult([]));
     await expect(reserveDailyCapacity('camp-1', '2026-10-13', 50)).resolves.toBe(false);
+    expect(mockPoolQuery.mock.calls[2][0]).toContain('DO UPDATE SET send_limit = EXCLUDED.send_limit');
+  });
+
+  it('completes a final phone-task enrollment only when its current step and generation match', async () => {
+    const { completeEnrollmentAfterPhoneTaskTx } = await import('./campaigns.execution.repository');
+    mockPoolQuery.mockResolvedValueOnce(mockQueryResult([{ lead_id: 'lead-1' }]));
+    await expect(
+      completeEnrollmentAfterPhoneTaskTx({
+        campaignId: 'camp-1',
+        leadId: 'lead-1',
+        completedStepNumber: 3,
+        expectedGeneration: 4,
+        completedSteps: 3,
+      }),
+    ).resolves.toBe(true);
+    expect(mockPoolQuery.mock.calls[0][0]).toContain("enrollment_status IN ('active', 'paused')");
+    expect(mockPoolQuery.mock.calls[0][0]).toContain('scheduling_generation = $4');
+    expect(mockPoolQuery.mock.calls[0][0]).toContain('next_step_number = $3');
   });
 
   it('releases a slot after a definite failure', async () => {

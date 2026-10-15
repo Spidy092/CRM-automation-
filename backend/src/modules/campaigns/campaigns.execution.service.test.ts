@@ -24,6 +24,7 @@ jest.mock('./campaigns.repository', () => ({
 jest.mock('./campaigns.execution.repository', () => ({
   buildDedupeKey: jest.requireActual('./campaigns.execution.repository').buildDedupeKey,
   claimDueStepExecutionTx: jest.fn(),
+  completeEnrollmentAfterPhoneTaskTx: jest.fn(),
   enrollIntentTx: jest.fn(),
   findExpiredLeaseExecutions: jest.fn(),
   findLatestSnapshot: jest.fn(),
@@ -68,6 +69,7 @@ import {
 } from './campaigns.repository';
 import {
   claimDueStepExecutionTx,
+  completeEnrollmentAfterPhoneTaskTx,
   enrollIntentTx,
   ensureSequenceSnapshot,
   findExpiredLeaseExecutions,
@@ -910,7 +912,7 @@ describe('scheduleAfterPhoneTask', () => {
     expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
   });
 
-  it('does nothing when the task was the final step', async () => {
+  it('marks the enrollment complete when the task was the final step', async () => {
     (hasDurableEnrollment as jest.Mock).mockResolvedValue(true);
     (getEnrollmentState as jest.Mock).mockResolvedValue({
       enrollment_status: 'active',
@@ -920,6 +922,7 @@ describe('scheduleAfterPhoneTask', () => {
       mock_mode: false,
     });
     (findSnapshotById as jest.Mock).mockResolvedValue({ id: 'snap-1', steps });
+    (completeEnrollmentAfterPhoneTaskTx as jest.Mock).mockResolvedValue(true);
     await expect(
       scheduleAfterPhoneTask({
         campaign: activeCampaign as never,
@@ -928,6 +931,14 @@ describe('scheduleAfterPhoneTask', () => {
         completedStepNumber: 2,
       }),
     ).resolves.toEqual({ owned: true, scheduled: false, duplicate: false });
+    expect(completeEnrollmentAfterPhoneTaskTx).toHaveBeenCalledWith({
+      campaignId: 'camp-1',
+      leadId: 'lead-1',
+      completedStepNumber: 2,
+      expectedGeneration: 0,
+      completedSteps: 2,
+    });
+    expect(restoreIntentTx).not.toHaveBeenCalled();
   });
 });
 
