@@ -1530,12 +1530,19 @@ export async function addNewsletterContacts(
     const values = addNewsletterContactsSchema.parse(input);
     // Resolve through the leads service, preserving ownership/soft-delete checks.
     const { getLeadById } = await import('../leads/leads.service');
-    const leads = await Promise.all(
-      [...new Set(values.leadIds)].map((id) => getLeadById(id, actor)),
+    const uniqueLeadIds = [...new Set(values.leadIds)];
+    const lookupResults = await Promise.allSettled(
+      uniqueLeadIds.map((id) => getLeadById(id, actor)),
     );
     let added = 0;
     let failed = 0;
     const failedLeadIds: string[] = [];
+    const leads = lookupResults.flatMap((result, index) => {
+      if (result.status === 'fulfilled') return [result.value];
+      failed += 1;
+      failedLeadIds.push(uniqueLeadIds[index]);
+      return [];
+    });
     const seen = new Set<string>();
     for (const lead of leads) {
       const email = (lead.email ?? '').trim().toLowerCase();

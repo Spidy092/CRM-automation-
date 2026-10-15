@@ -1361,6 +1361,22 @@ describe('direct contact enrollment', () => {
       value: { added: 1, failed: 1, skipped: 0, failedLeadIds: [secondId] },
     });
   });
+  it('continues enrolling available leads when another lead lookup fails', async () => {
+    const missingId = '550e8400-e29b-41d4-a716-446655440001';
+    jest.mocked(getLeadById)
+      .mockRejectedValueOnce(new Error('Lead not found'))
+      .mockResolvedValueOnce(lead);
+    mockedRepo.addConfirmedContact.mockResolvedValue(true);
+
+    expect(await addNewsletterContacts({ ...input, leadIds: [missingId, id] }, actor)).toEqual({
+      ok: true,
+      value: { added: 1, failed: 1, skipped: 0, failedLeadIds: [missingId] },
+    });
+    expect(mockedRepo.addConfirmedContact).toHaveBeenCalledTimes(1);
+    expect(mockedRepo.addConfirmedContact).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'lead@example.com',
+    }));
+  });
   it('rejects marketing before accessing CRM leads', async () => {
     const result = await addNewsletterContacts(input, { ...actor, role: 'marketing' });
     expect(result.ok).toBe(false);
