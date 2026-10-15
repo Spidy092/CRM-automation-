@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0.0] - 2026-10-15
+
+### Added
+- Persist newsletter composer drafts on the server, with revision-safe editing, duplication, deletion, and retryable sends.
+- Enforce rolling 24-hour, 7-day, and 30-day newsletter send limits per subscriber.
+- Default newsletter scheduling to India Standard Time and select all three newsletter topics after email confirmation.
+
 ## [0.4.0.1] - 2026-10-15
 
 ### Fixed
