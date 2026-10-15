@@ -91,10 +91,12 @@ app.use(helmet());
 app.use(
   cors({
     origin: (origin, callback) => {
-      const allowedOrigins = [
-        process.env.CORS_ORIGIN ?? 'http://localhost:5173',
-        'https://claude.ai',
-      ];
+      const configuredOrigins = process.env.CORS_ORIGINS?.trim()
+        ? process.env.CORS_ORIGINS.split(',')
+            .map((configuredOrigin) => configuredOrigin.trim())
+            .filter(Boolean)
+        : [process.env.CORS_ORIGIN ?? 'http://localhost:5173'];
+      const allowedOrigins = [...new Set([...configuredOrigins, 'https://claude.ai'])];
       // Allow requests with no origin (like mobile apps or curl) or allowed origins
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);

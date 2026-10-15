@@ -1026,7 +1026,8 @@ All configuration is via environment variables. See `.env.example` for reference
 
 | Variable | Description | Default |
 |---|---|---|
-| `CORS_ORIGIN` | Allowed origin | `http://localhost:5173` |
+| `CORS_ORIGINS` | Comma-separated allowed browser origins. Takes precedence over `CORS_ORIGIN` when non-empty. | Falls back to `CORS_ORIGIN`, then `http://localhost:5173` |
+| `CORS_ORIGIN` | Legacy single allowed browser origin | `http://localhost:5173` |
 
 ---
 
