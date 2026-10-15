@@ -165,7 +165,8 @@ REDIS_URL=redis://localhost:6379
 |---|---|
 | `NODE_ENV` | `development` |
 | `PORT` | `3000` |
-| `CORS_ORIGIN` | `http://localhost:5173` |
+| `CORS_ORIGINS` | Comma-separated browser origins, for example `http://localhost:5173,https://yourname.github.io` |
+| `CORS_ORIGIN` | Legacy single-origin fallback when `CORS_ORIGINS` is unset; defaults to `http://localhost:5173` |
 | `OPENAI_API_KEY` | Your real key, or leave blank (AI features degrade gracefully) |
 | `SENTRY_DSN` | Leave blank for local dev |
 | `S3_ENDPOINT` | Leave as-is (file uploads won't work without MinIO, skip for now) |
@@ -340,7 +341,7 @@ cd frontend && npm run lint
 | `ts-node-dev not found` | `npm install` not run | `cd backend && npm install` |
 | Port 3000 already in use | Another process on 3000 | `sudo lsof -i :3000` → kill the PID |
 | Port 5173 already in use | Another Vite server | `sudo lsof -i :5173` → kill the PID |
-| CORS error in browser | `CORS_ORIGIN` wrong in `.env` | Set `CORS_ORIGIN=http://localhost:5173` |
+| CORS error in browser | `CORS_ORIGINS` or `CORS_ORIGIN` does not include the page origin | Add the origin (scheme and host only) to `CORS_ORIGINS`, separated by commas |
 
 ---
 
