@@ -984,16 +984,18 @@ identity (`campaign_sequence_snapshots`, `campaign_leads` execution columns,
 ### Rollout
 
 `CAMPAIGN_OPERATIONS_V2_ENABLED` (default **off**). Enabling requires
-migrations `0084` through `0086` to have run. While off, all safety fixes without new-table
-dependencies are active (gate, retry guard, reporting, first-step policy)
-and scheduling follows the legacy transport path. Never enable legacy and
-durable dispatch for the same enrollment simultaneously — the flag selects
-the single scheduling owner. Rollback: turn the flag off; durable rows are
-retained for reconciliation, never dropped.
+migrations `0084` through `0086` to have run. The flag controls durable
+campaign operations; once an enrollment has durable execution state, that
+state remains its scheduling owner even if the flag is turned off. Durable
+jobs are parked while disabled and can be swept again after re-enabling.
+Enrollments without durable ownership continue through the legacy path.
+Never allow both paths to schedule the same enrollment. Rollback turns the
+flag off while retaining durable rows for reconciliation; it does not hand
+durable enrollments back to legacy dispatch.
 
-Legacy paused campaigns with unrecoverable timing resume as
-`timing_unknown`: the UI shows unknown timing and requires an explicit
-resume schedule instead of guessing a historical due time.
+Legacy paused campaigns are not automatically backfilled by this release.
+Recovering their lost due times and a guided resume schedule are deferred;
+do not claim that the current UI reconstructs timing for those campaigns.
 
 ### New API surface (all Zod-validated, explicit RBAC, same envelope)
 
@@ -1026,8 +1028,8 @@ stale states are covered by tests.
 
 ## 14b. Corrective Review Fixes (2026-10-15, findings 1–9)
 
-A targeted review (`docs/campaign-operations-implementation-review-2026-10-15.md`)
-found 9 defects in the first implementation. All 9 are fixed below; each fix
+A targeted implementation review found 9 defects in the first implementation.
+All 9 are fixed below; each fix
 names its regression proof. Mocked unit tests plus isolated scratch
 PostgreSQL/Redis integration tests
 (`backend/src/modules/campaigns/campaigns.durable.integration.test.ts`,

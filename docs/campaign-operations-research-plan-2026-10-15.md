@@ -10,7 +10,7 @@ Keep the existing modular monolith, PostgreSQL, BullMQ, React, and TanStack Quer
 
 ## What I Found
 
-### Verified local behavior
+### Verified baseline before implementation
 
 | Finding | Source evidence | Consequence |
 |---|---|---|
@@ -26,7 +26,7 @@ Keep the existing modular monolith, PostgreSQL, BullMQ, React, and TanStack Quer
 | A durable event outbox and recovery sweep exist, but the publisher accepts lead-event types. | `backend/src/shared/events/*`, `backend/src/workers/outbox.worker.ts` | Reuse the persistence pattern; campaign scheduling needs an explicit supported publisher path, not an unsupported event dropped into the current worker. |
 | Phone-call task completion already schedules the next sequence step. | Outreach service | Preserve manual-task progression in the new execution model. |
 
-The working tree has substantial pre-existing changes. Implementation must isolate this scope and preserve other work. No live database, queue, deployed commit, provider configuration, or production incident was inspected.
+These observations describe the pre-implementation baseline. The implementation in this PR addresses the operational gaps described below. No live database, queue, deployed commit, provider configuration, or production incident was inspected.
 
 ### Web and GitHub research
 
@@ -47,11 +47,11 @@ These are design references and source observations, not recommendations to copy
 
 ## Assumptions Made (list any — must be zero for production tasks)
 
-No assumptions about live state. All names, contracts, states, timing policies, targets, and rollout steps below are proposals, not claims that they already exist. Proposed defaults remain reviewable before implementation.
+No assumptions about live state. The implementation status below is verified against this PR's source. No live database, queue, deployment, or provider state was inspected.
 
 ## Skill Used (which skill was applied, or why none matched)
 
-The local `.agents` directory contains no reusable skill files. Previously loaded Impeccable Operate guidance informs the product layout. This deliverable is source-backed research and a proposed implementation plan; no formal engineering-review skill run or review clearance is claimed. No application implementation was performed.
+The local `.agents/skills` tree and configured global skills tree contained no campaign or documentation implementation skill. The plan informed the implementation in this PR; no formal engineering-review skill clearance is claimed.
 
 ## Fix / Changes
 
@@ -126,7 +126,13 @@ Do not claim exactly-once email delivery. If a provider accepts a send but the p
 
 Campaign pause invalidates unclaimed generations and freezes pending delay state. Active dispatch claims are surfaced as in-flight. Removal and opt-out invalidate future executions. Recovery cannot revive terminal or paused enrollments.
 
-### 4. Proposed API and frontend contract
+### 4. Target API and frontend contract
+
+This is the design target recorded before implementation, not a claim that
+every item shipped. The implemented routes and UI are documented in
+`docs/CAMPAIGNS_MODULE.md` §14a. In particular, the committed schedule endpoint
+is not cursor-paginated, and future-step projections remain indicative rather
+than using pinned snapshots and shared send-window calculations.
 
 Preserve existing `/api/v1/campaigns` routes and response envelope. Add Zod-validated contracts; the following paths are proposals:
 
@@ -176,19 +182,16 @@ Rollback disables new dispatch while retaining durable state and records. Do not
 
 ## Files Changed
 
-This plan is the only file added by this task. Application changes below are planned, not made:
+The implementation is in this PR. Migrations `0084`–`0086` are additive and have not been run. The implementation covers durable campaign execution, pause/resume and recovery, operational APIs, and campaign detail/list visibility. The following planned items remain outside this PR:
 
-- Campaign module service/repository/controller/routes/schema and existing tests.
-- Outreach module execution/scheduling services and own repository/schema/tests; new files named after schema review.
-- Outreach worker, queue helpers, worker registration, and targeted recovery worker/tests.
-- Shared outbox publisher routing only if the explicit scheduling dispatcher design is selected.
-- New append-only migration, after approval; existing migration files remain untouched.
-- `frontend/src/api/campaigns.ts`, `frontend/src/pages/CampaignDetailPage.tsx`, `CampaignsPage.tsx`, `CampaignFormPage.tsx`, sequence editor, and related tests.
-- `docs/CAMPAIGNS_MODULE.md` and API/runbook documentation.
+- Cursor pagination for the committed schedule endpoint.
+- Projection based on pinned sequence snapshots and the shared send-window/delay calculation; current projections are indicative and use the live sequence and configured delays.
+- Legacy campaign enrollment backfill and guided recovery for old paused campaigns whose due time was lost.
+- Minute-based delays, sender rotation, meeting-based stops, and out-of-office snoozing.
 
 ## Commands to Run
 
-Planning-only work does not require a build or test run. During implementation, use the verified package scripts from the correct directory:
+For this PR, the following targeted validation was run; full repository test suites remain a CI check:
 
 ```bash
 npm --prefix backend run typecheck
@@ -202,7 +205,7 @@ npm --prefix frontend run test:coverage
 npm --prefix frontend run build
 ```
 
-Start with targeted campaign/outreach tests while developing; run full checks before a PR. Integration tests require isolated PostgreSQL and Redis with a recording connector, not real outreach. Do not read `.env*`, start production Compose, install packages, push, or run migrations as part of this plan.
+Integration tests use isolated PostgreSQL and Redis with a recording connector; they do not send real outreach. No production database was accessed and no migration was run.
 
 ## Verification Steps
 
