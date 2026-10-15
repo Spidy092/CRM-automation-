@@ -84,6 +84,15 @@ export async function unsubscribeHandler(
   }
 }
 
+/** Keep the legacy GET URL safe while handing recipients to the confirm UI. */
+export function unsubscribeHandoffHandler(req: Request, res: Response): void {
+  const { token } = unsubscribeQuerySchema.parse(req.query);
+  const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+  const confirmationUrl = new URL('/newsletter/unsubscribe', frontendUrl);
+  confirmationUrl.searchParams.set('token', token);
+  res.redirect(303, confirmationUrl.toString());
+}
+
 export async function getPreferencesHandler(
   req: Request,
   res: Response,

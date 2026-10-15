@@ -17,6 +17,7 @@ jest.mock('./newsletter.repository', () => ({
   createSubscriberToken: jest.fn(),
   isMissingRelationError: jest.fn((err: unknown) => (err as { code?: string })?.code === '42P01'),
   isTokenTableAvailable: jest.fn(),
+  isSendLimitStorageAvailable: jest.fn(),
   createBroadcast: jest.fn(),
   findBroadcastById: jest.fn(),
   findBroadcastByIdempotencyKey: jest.fn(),
@@ -112,6 +113,7 @@ describe('newsletter.service', () => {
     // Durable-path defaults (migrations applied). Degraded-path tests
     // override createBroadcast with a 42P01 rejection.
     mockedRepo.isTokenTableAvailable.mockResolvedValue(true);
+    mockedRepo.isSendLimitStorageAvailable.mockResolvedValue(true);
     mockedRepo.findBroadcastFrequencies.mockResolvedValue({});
     mockedRepo.hasRecipientOutcomes.mockResolvedValue(false);
     mockedRepo.findBroadcastContent.mockResolvedValue(null);
@@ -951,6 +953,21 @@ describe('newsletter.service', () => {
       expect(mockedRepo.createBroadcast).not.toHaveBeenCalled();
     });
 
+    it('refuses to enqueue with an actionable setup error when migration 0084 is absent', async () => {
+      const { enqueueNewsletterBroadcast } = jest.requireMock('../../workers/queue');
+      mockedRepo.isSendLimitStorageAvailable.mockResolvedValue(false);
+      const result = await triggerBroadcast('Subject', '<p>Hi</p>', {
+        subject: 'Subject',
+        htmlBody: '<p>Hi</p>',
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.statusCode).toBe(503);
+      expect(result.error.message).toMatch(/migration 0084/);
+      expect(enqueueNewsletterBroadcast).not.toHaveBeenCalled();
+      expect(mockedRepo.createBroadcast).not.toHaveBeenCalled();
+    });
+
     it('reports 503 (not 500) when the queue/Redis is unreachable', async () => {
       const { enqueueNewsletterBroadcast } = jest.requireMock('../../workers/queue');
       (enqueueNewsletterBroadcast as jest.Mock).mockRejectedValue(
@@ -1184,7 +1201,10 @@ describe('newsletter.service', () => {
       expect(opt.value.retrying).toBe(1);
       expect(opt.value.retryingUncertain).toBe(1);
       expect(enqueueNewsletterBroadcast).toHaveBeenLastCalledWith(
-        expect.objectContaining({ recipientIds: ['sub-9', 'sub-u1'] }),
+        expect.objectContaining({
+          recipientIds: ['sub-9', 'sub-u1'],
+          uncertainRecipientIds: ['sub-u1'],
+        }),
       );
     });
 

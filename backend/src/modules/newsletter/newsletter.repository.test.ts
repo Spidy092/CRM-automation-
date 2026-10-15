@@ -33,6 +33,9 @@ import {
   listUncertainRecipientIdsForBroadcasts,
   findBroadcastFrequencies,
   isTokenTableAvailable,
+  isSendLimitStorageAvailable,
+  reserveNewsletterSend,
+  finishNewsletterSend,
 } from './newsletter.repository';
 
 jest.mock('../../shared/utils/db', () => ({
@@ -149,7 +152,39 @@ describe('newsletter.repository', () => {
     await markConfirmed('sub-1');
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).toContain("status = 'confirmed'");
-    expect(params).toEqual(['sub-1']);
+    expect(params).toEqual(['sub-1', JSON.stringify(['product_updates', 'promotions', 'company_news'])]);
+    expect(sql).toContain("status = 'pending'");
+  });
+
+  it('reserves subscriber delivery using the rolling window and persisted preferences', async () => {
+    mockQueryOne.mockResolvedValue({ id: 'sub-1' });
+    expect(await reserveNewsletterSend('sub-1', 'broadcast-1')).toBe(true);
+    const [sql, params] = mockQueryOne.mock.calls[0];
+    expect(sql).toContain("interval '24 hours'");
+    expect(sql).toContain("interval '168 hours'");
+    expect(sql).toContain("interval '720 hours'");
+    expect(sql).toContain("status = 'confirmed'");
+    expect(sql).toContain('newsletter_reserved_until <= now()');
+    expect(params).toEqual(['sub-1', 'broadcast-1', null]);
+  });
+
+  it('only reclaims the matching held reservation for an explicitly opted-in uncertain retry', async () => {
+    mockQueryOne.mockResolvedValue({ id: 'sub-1' });
+    expect(await reserveNewsletterSend('sub-1', 'retry-1', 'source-1')).toBe(true);
+    const [sql, params] = mockQueryOne.mock.calls[0];
+    expect(sql).toContain('newsletter_reservation_key = $3');
+    expect(sql).toContain('newsletter_reserved_until > now()');
+    expect(sql).toContain('newsletter_last_accepted_at IS NULL OR');
+    expect(params).toEqual(['sub-1', 'retry-1', 'source-1']);
+  });
+
+  it('records accepted sends and releases a known-failed reservation', async () => {
+    mockQuery.mockResolvedValue([]);
+    await finishNewsletterSend('sub-1', 'broadcast-1', true);
+    expect(mockQuery.mock.calls[0][0]).toContain('newsletter_last_accepted_at');
+    expect(mockQuery.mock.calls[0][1]).toEqual(['sub-1', 'broadcast-1', true]);
+    await finishNewsletterSend('sub-1', 'broadcast-1', false);
+    expect(mockQuery.mock.calls[1][1]).toEqual(['sub-1', 'broadcast-1', false]);
   });
 
   it('markUnsubscribed issues an update query', async () => {
@@ -284,6 +319,18 @@ describe('newsletter.repository', () => {
     await expect(isTokenTableAvailable()).resolves.toBe(false);
     mockQueryOne.mockRejectedValueOnce(new Error('connection refused'));
     await expect(isTokenTableAvailable()).rejects.toThrow('connection refused');
+  });
+
+  it('isSendLimitStorageAvailable rejects pre-0084 schemas and propagates unrelated failures', async () => {
+    mockQuery.mockResolvedValue([]);
+    await expect(isSendLimitStorageAvailable()).resolves.toBe(true);
+    expect(mockQuery.mock.calls[0][0]).toContain('newsletter_reserved_until');
+    mockQuery.mockRejectedValueOnce(
+      Object.assign(new Error('column newsletter_reserved_until does not exist'), { code: '42703' }),
+    );
+    await expect(isSendLimitStorageAvailable()).resolves.toBe(false);
+    mockQuery.mockRejectedValueOnce(new Error('connection refused'));
+    await expect(isSendLimitStorageAvailable()).rejects.toThrow('connection refused');
   });
 
   it('listUncertainRecipientIds queries the uncertain state only', async () => {
@@ -600,5 +647,5 @@ describe('direct contact persistence', () => {
 it('confirmation of an older public signup cannot reactivate an unsubscribed contact', async () => {
   mockQuery.mockResolvedValue([]);
   await markConfirmed('sub-1');
-  expect(mockQuery).toHaveBeenLastCalledWith(expect.stringContaining("WHERE id = $1 AND status = 'pending'"), ['sub-1']);
+  expect(mockQuery).toHaveBeenLastCalledWith(expect.stringContaining("WHERE id = $1 AND status = 'pending'"), ['sub-1', JSON.stringify(['product_updates', 'promotions', 'company_news'])]);
 });

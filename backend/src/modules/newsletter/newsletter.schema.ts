@@ -135,3 +135,35 @@ export const addNewsletterContactsSchema = z.object({
   frequency: z.enum(NEWSLETTER_FREQUENCIES).default('weekly'),
 });
 export type AddNewsletterContactsInput = z.infer<typeof addNewsletterContactsSchema>;
+
+export const newsletterDraftContentSchema = broadcastBodySchema
+  .omit({ idempotencyKey: true })
+  .partial()
+  .extend({
+    subject: z.string().max(255).default(''),
+    htmlBody: z.string().max(500000).default(''),
+    editMode: z.enum(['blocks', 'html']).optional(),
+    blocks: z
+      .array(
+        z.object({
+          id: z.string().max(128),
+          type: z.enum(['heading', 'paragraph', 'bullets', 'button']),
+          text: z.string().max(100000),
+          items: z.array(z.string().max(10000)).max(1000),
+          url: z.string().max(2048),
+        }),
+      )
+      .max(100)
+      .optional(),
+  });
+export const saveNewsletterDraftSchema = z.object({
+  content: newsletterDraftContentSchema,
+  revision: z.number().int().positive().optional(),
+});
+export const draftRevisionSchema = z.object({ revision: z.number().int().positive() });
+export const draftIdParamSchema = z.object({ id: z.string().uuid() });
+export const listNewsletterDraftsSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type NewsletterDraftContent = z.infer<typeof newsletterDraftContentSchema>;

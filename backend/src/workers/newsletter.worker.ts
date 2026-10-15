@@ -6,6 +6,8 @@ import { incJobsProcessed, incJobsFailed, observeJobDuration } from '../shared/u
 import { moveToDLQ } from '../lib/dlq';
 import { Sentry } from '../shared/utils/sentry';
 import {
+  reserveNewsletterSend,
+  finishNewsletterSend,
   findEligibleSubscribers,
   findSubscriberById,
   updateBroadcastStatus,
@@ -265,9 +267,14 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
     timezone,
     broadcastRecordId,
     recipientIds,
+    uncertainRecipientIds,
     retryOf,
   } = job.data;
   const broadcastId = (job.id ?? `${Date.now()}`).toString();
+  // Durable broadcasts reserve by their stable DB id so an explicitly
+  // approved retry can identify and reclaim only its own uncertain hold.
+  const reservationKey = broadcastRecordId ?? broadcastId;
+  const uncertainRecipientSet = new Set(uncertainRecipientIds ?? []);
   const broadcastLabel = (job.data.idempotencyKey ?? broadcastId).toString().slice(0, 128);
   const baseUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
@@ -415,9 +422,29 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
           continue;
         }
       }
-      // Per-send token from the append-only table (migration 0081). Missing
-      // table throws an actionable setup error here — before any send, with
-      // no rotation and no invalidation of older links.
+      let reserved: boolean;
+      try {
+        const uncertainRetryFrom = uncertainRecipientSet.has(sub.id) ? retryOf : undefined;
+        reserved = uncertainRetryFrom
+          ? await reserveNewsletterSend(sub.id, reservationKey, uncertainRetryFrom)
+          : await reserveNewsletterSend(sub.id, reservationKey);
+      } catch (err) {
+        await releaseClaim(broadcastId, sub.id);
+        throw err; // Fail closed if migration/storage is unavailable.
+      }
+      if (!reserved) {
+        skipped += 1;
+        await releaseClaim(broadcastId, sub.id);
+        await recordDbOutcome(broadcastRecordId, dbAvailable, {
+          subscriberId: sub.id,
+          status: 'skipped',
+          error: 'rolling sending limit reached or another newsletter is in flight',
+        });
+        continue;
+      }
+
+      // Reserve before appending a token: frequency-capped recipients must
+      // not accumulate token rows for emails that will never be attempted.
       let html: string;
       let text: string;
       try {
@@ -430,8 +457,9 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
           unsubUrl,
         }));
       } catch (err) {
-        // Preparation never contacted a provider: release the claim so a
-        // retry can safely send. Actual process crashes still leave claims.
+        // Preparation never contacted a provider: release both holds so a
+        // safe worker retry can reserve again without leaving stale capacity.
+        await finishNewsletterSend(sub.id, reservationKey, false);
         await releaseClaim(broadcastId, sub.id);
         throw err;
       }
@@ -444,6 +472,9 @@ export async function processBroadcast(job: Job<NewsletterBroadcastJob>): Promis
         html,
         text,
       });
+      // Persist the shared cap before receipts. A crash/error leaves the
+      // reservation held, so another broadcast cannot send through the gap.
+      await finishNewsletterSend(sub.id, reservationKey, result.outcome === 'accepted');
       if (result.outcome === 'accepted') {
         accepted += 1;
         // Receipt FIRST-class: the known outcome is persisted immediately.

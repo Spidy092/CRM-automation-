@@ -16,6 +16,8 @@ jest.mock('bullmq', () => {
   };
 });
 jest.mock('../modules/newsletter/newsletter.repository', () => ({
+  reserveNewsletterSend: jest.fn().mockResolvedValue(true),
+  finishNewsletterSend: jest.fn().mockResolvedValue(undefined),
   findEligibleSubscribers: jest.fn(),
   findSubscriberById: jest.fn(),
   findSubscribers: jest.fn(),
@@ -94,6 +96,8 @@ function job(data: Record<string, unknown>, id = 'job-1'): any {
 describe('newsletter worker delivery accounting', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedRepo.reserveNewsletterSend.mockReset().mockResolvedValue(true);
+    mockedRepo.finishNewsletterSend.mockReset().mockResolvedValue(undefined);
     // Hermetic mocks: `clearAllMocks` does NOT drain `mockResolvedValueOnce`
     // queues, so reset the queue-sensitive mocks and re-establish defaults.
     // Otherwise a test that throws mid-page leaves a trailing `[]` that
@@ -116,6 +120,53 @@ describe('newsletter worker delivery accounting', () => {
     const result = await processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }));
     expect(result).toEqual({ attempted: 2, accepted: 2, failed: 0, skipped: 0, uncertain: 0 });
     expect(mockedSmtp.sendEmail).not.toHaveBeenCalled();
+  });
+
+
+  it('skips a subscriber when the cross-broadcast rolling limit reservation fails', async () => {
+    mockedRepo.findEligibleSubscribers.mockResolvedValueOnce([confirmedRow('limited')]).mockResolvedValueOnce([]);
+    mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
+    mockedRepo.reserveNewsletterSend.mockResolvedValueOnce(false);
+    const result = await processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }));
+    expect(result).toMatchObject({ attempted: 0, accepted: 0, skipped: 1 });
+    expect(mockedRepo.reserveNewsletterSend).toHaveBeenCalledWith('limited', 'job-1');
+    expect(newsletterService.mintBroadcastToken).not.toHaveBeenCalled();
+    expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
+    expect(mockedSmtp.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('reclaims only an operator-approved uncertain reservation during a targeted retry', async () => {
+    mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
+    mockedSendgrid.sendEmail.mockResolvedValue({ ok: true, status: 202, data: {}, latencyMs: 1 } as any);
+    const result = await processBroadcast(
+      job(
+        {
+          subject: 'S',
+          htmlBody: '<p>B</p>',
+          broadcastRecordId: 'retry-record',
+          recipientIds: ['a', 'b'],
+          uncertainRecipientIds: ['a'],
+          retryOf: 'source-record',
+        },
+        'retry-job',
+      ),
+    );
+    expect(result.accepted).toBe(2);
+    expect(mockedRepo.reserveNewsletterSend).toHaveBeenNthCalledWith(
+      1,
+      'a',
+      'retry-record',
+      'source-record',
+    );
+    expect(mockedRepo.reserveNewsletterSend).toHaveBeenNthCalledWith(2, 'b', 'retry-record');
+  });
+
+  it('fails closed when the rolling-limit storage is unavailable', async () => {
+    mockedRepo.findEligibleSubscribers.mockResolvedValueOnce([confirmedRow('limited')]);
+    mockedRepo.findSubscriberById.mockImplementation(async (id: string) => confirmedRow(id));
+    mockedRepo.reserveNewsletterSend.mockRejectedValueOnce(Object.assign(new Error('missing migration'), { code: '42703' }));
+    await expect(processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }))).rejects.toThrow('missing migration');
+    expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
   });
 
   it('falls back to SMTP when SendGrid returns ok:false and surfaces SMTP failure', async () => {
@@ -368,6 +419,7 @@ describe('newsletter worker delivery accounting', () => {
     (newsletterService.mintBroadcastToken as jest.Mock).mockRejectedValueOnce(new Error('DB unavailable'));
     await expect(processBroadcast(job({ subject: 'S', htmlBody: '<p>B</p>' }, 'prepare')))
       .rejects.toThrow('DB unavailable');
+    expect(mockedRepo.finishNewsletterSend).toHaveBeenCalledWith('a', 'prepare', false);
     expect(mockedRedis.del).toHaveBeenCalledWith('newsletter:broadcast:claim:prepare:a');
     expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
     mockedRepo.findEligibleSubscribers.mockResolvedValueOnce([confirmedRow('a')]).mockResolvedValueOnce([]);
@@ -612,6 +664,8 @@ describe('startNewsletterWorker routing (preserved)', () => {  function makeJob(
 describe('processAutomatedDigest review-by-default (updated behavior)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedRepo.reserveNewsletterSend.mockReset().mockResolvedValue(true);
+    mockedRepo.finishNewsletterSend.mockReset().mockResolvedValue(undefined);
     mockedRedis.get.mockResolvedValue(null);
     mockedRedis.set.mockResolvedValue('OK');
   });
