@@ -79,10 +79,24 @@ function stripToText(html: string): string {
     .slice(0, 2000);
 }
 
-function loadDraft(): Partial<FormValues> | null {
+interface SavedBroadcastDraft {
+  values: Partial<FormValues>;
+  idempotencyKey?: string;
+}
+
+function loadDraft(): SavedBroadcastDraft | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
-    return raw ? (JSON.parse(raw) as Partial<FormValues>) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<FormValues> & { idempotencyKey?: unknown; values?: unknown };
+    // Read the legacy flat draft shape while preserving newer identity metadata.
+    const values = parsed.values && typeof parsed.values === 'object'
+      ? parsed.values as Partial<FormValues>
+      : parsed;
+    return {
+      values,
+      ...(typeof parsed.idempotencyKey === 'string' ? { idempotencyKey: parsed.idempotencyKey } : {}),
+    };
   } catch {
     return null;
   }
@@ -91,7 +105,8 @@ function loadDraft(): Partial<FormValues> | null {
 export function NewsletterBroadcastModal({ onClose }: Props) {
   const titleId = useId();
   const dialogRef = useModalFocus(onClose);
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [savedDraft] = useState(loadDraft);
+  const [idempotencyKey] = useState(() => savedDraft?.idempotencyKey ?? crypto.randomUUID());
   const [step, setStep] = useState(0);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   const [sendState, setSendState] = useState<'idle' | 'pending' | 'success' | 'failure'>('idle');
@@ -114,7 +129,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
       timezone: 'UTC',
       scheduledAt: '',
       testEmail: '',
-      ...loadDraft(),
+      ...savedDraft?.values,
     },
   });
 
@@ -136,7 +151,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
 
   const persistDraft = () => {
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(form.getValues()));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ values: form.getValues(), idempotencyKey }));
       showToast('Draft saved. Reopen to continue editing.', 'success');
     } catch {
       showToast('Could not save draft in this browser.', 'error');
@@ -196,6 +211,13 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
     setSendState('pending');
     setSendError(null);
     try {
+      // Keep the same request identity and exact draft across modal remounts if
+      // the server accepts the request but the response is lost.
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ values: form.getValues(), idempotencyKey }));
+      } catch {
+        // Storage can be unavailable; keep the request usable in this mount.
+      }
       // Send the wall-clock value plus the selected IANA zone; the backend
       // converts the pair to the correct UTC instant (the zone affects the
       // scheduled moment, not just its label). DST gaps are rejected server-side.
@@ -241,7 +263,11 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
   const topicOptions: NewsletterTopic[] = ['product_updates', 'promotions', 'company_news'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="presentation"
+      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
       <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <h2 id={titleId} className="text-xl font-bold">Create newsletter</h2>
         <ol className="mt-2 flex gap-2 text-xs" aria-label="Creation steps">

@@ -1,5 +1,5 @@
 import { useModalFocus } from '@/hooks/useModalFocus';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from './button';
 import { Input } from './input';
 import { Textarea } from './textarea';
@@ -43,14 +43,18 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
   const [draftDirty, setDraftDirty] = useState(false);
   const [configDirty, setConfigDirty] = useState(false);
   const [draftEdits, setDraftEdits] = useState({ subject: '', htmlBody: '' });
+  const draftEditsRef = useRef(draftEdits);
+  const draftTouchedRef = useRef(false);
 
   useEffect(() => {
     if (config && !configDirty) setFormData(config);
   }, [config, configDirty]);
 
   useEffect(() => {
-    if (draftState?.draft && !draftDirty) {
-      setDraftEdits({ subject: draftState.draft.subject, htmlBody: draftState.draft.htmlBody });
+    if (draftState?.draft && !draftDirty && !draftTouchedRef.current) {
+      const edits = { subject: draftState.draft.subject, htmlBody: draftState.draft.htmlBody };
+      draftEditsRef.current = edits;
+      setDraftEdits(edits);
     }
   }, [draftState?.draft, draftDirty]);
 
@@ -72,9 +76,13 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
   };
 
   const handleSaveDraftEdits = async () => {
+    const submitted = { ...draftEditsRef.current };
     try {
-      await saveDraftMutation.mutateAsync(draftEdits);
-      setDraftDirty(false);
+      await saveDraftMutation.mutateAsync(submitted);
+      const current = draftEditsRef.current;
+      if (current.subject === submitted.subject && current.htmlBody === submitted.htmlBody) {
+        setDraftDirty(false);
+      }
       showToast('Draft saved for review.');
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Failed to save draft.'), 'error');
@@ -91,7 +99,11 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="presentation"
+      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
       <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-lg bg-primary/10 text-primary">
@@ -143,11 +155,23 @@ export function NewsletterDigestConfigModal({ onClose }: Props) {
               <p className="text-xs text-slate-500">Status: {draftState.draft.status} · Updated {new Date(draftState.draft.updatedAt).toLocaleString()}</p>
               <div>
                 <label htmlFor="digest-draft-subject" className="mb-1 block text-sm font-medium text-slate-700">Subject</label>
-                <Input id="digest-draft-subject" value={draftEdits.subject} onChange={(e) => { setDraftDirty(true); setDraftEdits({ ...draftEdits, subject: e.target.value }); }} />
+                <Input id="digest-draft-subject" value={draftEdits.subject} onChange={(e) => {
+                  const next = { ...draftEditsRef.current, subject: e.target.value };
+                  draftTouchedRef.current = true;
+                  draftEditsRef.current = next;
+                  setDraftDirty(true);
+                  setDraftEdits(next);
+                }} />
               </div>
               <div>
                 <label htmlFor="digest-draft-body" className="mb-1 block text-sm font-medium text-slate-700">Content</label>
-                <Textarea id="digest-draft-body" rows={6} value={draftEdits.htmlBody} onChange={(e) => { setDraftDirty(true); setDraftEdits({ ...draftEdits, htmlBody: e.target.value }); }} />
+                <Textarea id="digest-draft-body" rows={6} value={draftEdits.htmlBody} onChange={(e) => {
+                  const next = { ...draftEditsRef.current, htmlBody: e.target.value };
+                  draftTouchedRef.current = true;
+                  draftEditsRef.current = next;
+                  setDraftDirty(true);
+                  setDraftEdits(next);
+                }} />
               </div>
               {draftDirty && <p className="text-sm text-amber-800" role="status">Save edits before approving this draft.</p>}
               <div className="flex gap-2">

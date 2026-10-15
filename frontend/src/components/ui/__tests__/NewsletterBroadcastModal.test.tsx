@@ -78,7 +78,7 @@ describe('NewsletterBroadcastModal editing workflow', () => {
   });
   it('reuses the composition key when an ambiguous request is retried', async () => {
     mockMutateAsync.mockRejectedValueOnce(new Error('Network timeout')).mockResolvedValueOnce({ enqueued: true });
-    renderWithProviders(<NewsletterBroadcastModal onClose={() => undefined} />);
+    const first = renderWithProviders(<NewsletterBroadcastModal onClose={() => undefined} />);
     fireEvent.change(screen.getByLabelText(/subject/i), { target: { value: 'Retry subject' } });
     fireEvent.change(screen.getByLabelText(/paragraph text/i), { target: { value: 'Content' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
@@ -87,11 +87,29 @@ describe('NewsletterBroadcastModal editing workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
     await screen.findByRole('alert');
+    const firstKey = mockMutateAsync.mock.calls[0][0].idempotencyKey;
+    first.unmount();
+    renderWithProviders(<NewsletterBroadcastModal onClose={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('group', { name: /preview device/i });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
     await screen.findByText('Broadcast enqueued.');
     expect(mockMutateAsync.mock.calls).toHaveLength(2);
     expect(mockMutateAsync.mock.calls[0][0].idempotencyKey).toBe(mockMutateAsync.mock.calls[1][0].idempotencyKey);
+    expect(mockMutateAsync.mock.calls[1][0].idempotencyKey).toBe(firstKey);
     expect(mockMutateAsync.mock.calls[0][0].idempotencyKey).not.toContain('Retry subject');
+  });
+
+  it('closes only when the broadcast backdrop itself is clicked', () => {
+    const onClose = vi.fn();
+    renderWithProviders(<NewsletterBroadcastModal onClose={onClose} />);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(dialog.parentElement!);
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('focuses its content, wraps Tab, and restores the opener', () => {
