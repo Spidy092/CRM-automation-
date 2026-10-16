@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0.0] - 2026-10-16
+
+### Changed
+- Make newsletter audience eligibility and subscriber preferences easier to understand, including topic targeting, frequency limits, send holds, and next-eligible times in India Standard Time.
+- Let admins update a subscriber’s newsletter topics and maximum sending frequency from subscriber details.
+- Show clear explanations when contacts cannot receive a newsletter, and prevent sending when no recipients are eligible or the eligibility check is unavailable.
+
+### Fixed
+- Default subscriptions with no selected topics to all newsletter topics when the email address is confirmed, while preserving explicit topic choices.
+- Provide retry and unsubscribe guidance on public preference links, and show each recipient’s current subscription state.
+
 ## [0.5.0.0] - 2026-10-15
 
 ### Added
