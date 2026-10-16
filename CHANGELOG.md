@@ -3,7 +3,7 @@
 ## [0.6.0.2] - 2026-10-16
 
 ### Fixed
-- Add variable pickers to custom HTML email subjects, preheaders, and content, with guidance for personal unsubscribe links.
+- Insert personalization variables without typing tokens by using **Variables** beside custom HTML email subjects, preheaders, and content. The HTML editor also shows the `{{unsubscribe_link}}` markup.
 
 ## [0.6.0.1] - 2026-10-16
 
