@@ -1,3 +1,4 @@
+import { NEWSLETTER_TOPIC_LABELS, formatNewsletterDate } from '@/lib/newsletterPresentation';
 import { useModalFocus } from '@/hooks/useModalFocus';
 import { useId, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -150,7 +151,11 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
     }),
     [watched.topics, watched.frequency]
   );
-  const { data: eligible, isLoading: eligibleLoading } = useEligibleCount(targeting);
+  const eligibilityQuery = useEligibleCount(targeting);
+  const { data: eligible, isLoading: eligibleLoading } = eligibilityQuery;
+  const recipientsUnavailable = eligibleLoading || eligibilityQuery.isFetching || !!eligibilityQuery.error || !eligible;
+  const noRecipients = !recipientsUnavailable && eligible.eligible === 0;
+  const recoveringSend = serverDraft?.status === 'sending' || sendState === 'failure';
 
 
 
@@ -227,6 +232,7 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
   };
 
   const handleSubmit = async (values: FormValues) => {
+    if (!recoveringSend && (recipientsUnavailable || noRecipients)) return;
     setSendState('pending');
     setSendError(null);
     try {
@@ -269,8 +275,8 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
       setSendState('success');
       showToast(
         res.scheduledAt
-          ? `Broadcast scheduled for ${new Date(res.scheduledAt).toLocaleString(undefined, { timeZone: values.timezone })} (${values.timezone}).`
-          : 'Broadcast enqueued.',
+          ? `Newsletter scheduled for ${new Date(res.scheduledAt).toLocaleString(undefined, { timeZone: values.timezone })} (${values.timezone}).`
+          : 'Newsletter queued for sending.',
       );
       onClose();
     } catch (err) {
@@ -290,6 +296,11 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
 
   const steps = ['Content', 'Preview & test', 'Recipients', 'Review & send'];
   const topicOptions: NewsletterTopic[] = ['product_updates', 'promotions', 'company_news'];
+  const stepClassName = (index: number): string => {
+    if (index === step) return 'bg-slate-900 text-white';
+    if (index < step) return 'bg-green-100 text-green-800';
+    return 'bg-slate-100 text-slate-500';
+  };
 
   return (
     <div
@@ -299,9 +310,9 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
     >
       <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <h2 id={titleId} className="text-xl font-bold">Create newsletter</h2>
-        <ol className="mt-2 flex gap-2 text-xs" aria-label="Creation steps">
+        <ol className="mt-2 flex flex-wrap gap-2 text-xs" aria-label="Creation steps">
           {steps.map((label, i) => (
-            <li key={label} aria-current={i === step ? 'step' : undefined} className={`rounded-full px-2 py-1 ${i === step ? 'bg-slate-900 text-white' : i < step ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-500'}`}>
+            <li key={label} aria-current={i === step ? 'step' : undefined} className={`rounded-full px-2 py-1 ${stepClassName(i)}`}>
               {i + 1}. {label}
             </li>
           ))}
@@ -436,7 +447,8 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
           {step === 2 && (
             <div className="space-y-4">
               <fieldset>
-                <legend className="text-sm font-medium text-slate-700">Topics (optional targeting)</legend>
+                <legend className="text-sm font-medium text-slate-700">Who should receive this newsletter?</legend>
+                <p className="mt-1 text-sm text-slate-600">All subscribed contacts by default. Select topics to send only to people interested in at least one of them.</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {topicOptions.map((topic) => (
                     <label key={topic} className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs">
@@ -448,45 +460,67 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
                           form.setValue('topics', e.target.checked ? [...current, topic] : current.filter((t) => t !== topic));
                         }}
                       />
-                      {topic}
+                      {NEWSLETTER_TOPIC_LABELS[topic]}
                     </label>
                   ))}
                 </div>
               </fieldset>
-              <div>
-                <label htmlFor="nl-frequency" className="mb-1 block text-sm font-medium text-slate-700">Frequency (optional targeting)</label>
+              <details>
+                <summary className="cursor-pointer text-sm font-medium">Advanced audience filter{watched.frequency ? ` · ${watched.frequency} subscribers only` : ''}</summary>
+                <label htmlFor="nl-frequency" className="mb-1 block text-sm font-medium text-slate-700">Only include subscribers with this sending preference</label>
                 <select
                   id="nl-frequency"
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                   value={form.watch('frequency') ?? ''}
                   onChange={(e) => form.setValue('frequency', (e.target.value || undefined) as NewsletterFrequency | undefined)}
                 >
-                  <option value="">All frequencies (manual broadcast default)</option>
+                  <option value="">All subscribers (recommended)</option>
                   <option value="daily">daily</option>
                   <option value="weekly">weekly</option>
                   <option value="monthly">monthly</option>
                 </select>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3 text-sm" role="status" aria-live="polite">
-                {eligibleLoading ? 'Counting eligible recipients…' : (
-                  <>
-                    <strong>{eligible?.eligible ?? 0}</strong> eligible recipient(s) — confirmed subscribers only.
-                    Pending, unsubscribed, and suppressed recipients are always excluded and rechecked before dispatch.
-                    Every newsletter respects rolling limits: Daily = 24 hours, Weekly = 7 days, Monthly = 30 days. Recipients who reached their limit are skipped at dispatch, including manual sends and AI digests.
-                  </>
-                )}
-              </div>
+              </details>
+              <p className="text-sm text-slate-600">Each person’s sending limit applies automatically: daily means at most one email every 24 hours, weekly every 7 days, and monthly every 30 days. This does not schedule emails.</p>
+              {eligibilityQuery.error ? (
+                <div role="alert" className="rounded-lg border border-red-200 p-3 text-sm">
+                  <p className="font-medium">Couldn’t check recipients.</p>
+                  <p className="mt-1">Retry the check before sending. You can still save your draft.</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-2" disabled={eligibilityQuery.isFetching} onClick={() => void eligibilityQuery.refetch()}>Retry recipient check</Button>
+                </div>
+              ) : (
+                <div className="rounded-lg bg-slate-50 p-3 text-sm" role="status" aria-live="polite">
+                  {recipientsUnavailable ? 'Checking who can receive this newsletter…' : eligible && (
+                    <>
+                      <p className="font-semibold">{eligible.eligible > 0 ? `${eligible.eligible} ${eligible.eligible === 1 ? 'person can' : 'people can'} receive this newsletter now` : 'Nobody can receive this newsletter right now'}</p>
+                      <ul className="mt-2 space-y-1 text-slate-600">
+                        {!!eligible.pending && <li>{eligible.pending} awaiting email confirmation</li>}
+                        {!!eligible.unsubscribed && <li>{eligible.unsubscribed} unsubscribed</li>}
+                        {!!eligible.topicMismatch && <li>{eligible.topicMismatch} don’t match the selected topics</li>}
+                        {!!eligible.frequencyMismatch && <li>{eligible.frequencyMismatch} don’t match the advanced audience filter</li>}
+                        {!!eligible.waiting && <li>{eligible.waiting} received a newsletter recently</li>}
+                        {!!eligible.reserved && <li>{eligible.reserved} have a send in progress or awaiting review</li>}
+                      </ul>
+                      {eligible.nextEligibleAt && <p className="mt-2">Next sending limit expires: {formatNewsletterDate(eligible.nextEligibleAt)}.</p>}
+                      {noRecipients && <p className="mt-2">Check the selected topics or save your draft and return later.</p>}
+                      <p className="mt-2 text-slate-600">Recipients are checked again when sending, including scheduled newsletters.</p>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {step === 3 && (
             <div className="space-y-4 text-sm">
               <dl className="grid gap-2 rounded-lg border p-4">
-                <div className="flex justify-between gap-4"><dt className="text-slate-500">From</dt><dd className="text-right">Configured SendGrid/SMTP default sender</dd></div>
-                <div className="flex justify-between gap-4"><dt className="text-slate-500">Recipients</dt><dd className="text-right">{eligibleLoading ? '…' : `${eligible?.eligible ?? 0} eligible (confirmed only)`}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-slate-500">From</dt><dd className="text-right">Default newsletter sender</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-slate-500">Recipients</dt><dd className="text-right">{recipientsUnavailable ? 'Recipient check unavailable' : `${eligible?.eligible} ready now`}</dd></div>
                 <div className="flex justify-between gap-4"><dt className="text-slate-500">Subject</dt><dd className="text-right font-medium">{watched.subject || '—'}</dd></div>
-                <div className="flex justify-between gap-4"><dt className="text-slate-500">Timing</dt><dd className="text-right">{watched.scheduledAt ? `${new Date(watched.scheduledAt).toLocaleString()} (${watched.timezone})` : 'Send now'}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-slate-500">Timing</dt><dd className="text-right">{watched.scheduledAt ? `${watched.scheduledAt.replace('T', ' at ')} (${watched.timezone})` : 'Send now'}</dd></div>
               </dl>
+              <p className="text-slate-600">{watched.topics?.length ? `Topics: ${watched.topics.map((topic) => NEWSLETTER_TOPIC_LABELS[topic]).join(', ')}` : 'Audience: all subscribed contacts'}. Sending limits apply automatically.</p>
+              <p className="text-slate-600">This is the current recipient estimate. Eligibility is checked again at send time.</p>
+              {(recipientsUnavailable || noRecipients) && <p role="alert" className="text-amber-800">{recipientsUnavailable ? 'Return to Recipients and retry the check before sending.' : 'Nobody is ready to receive this newsletter. Return to Recipients to see why, or save your draft.'}</p>}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="nl-schedule" className="mb-1 block text-sm font-medium text-slate-700">Schedule (optional)</label>
@@ -525,8 +559,8 @@ export function NewsletterBroadcastModal({ onClose, draft }: Props) {
                 </Button>
               )}
               {step === 3 && (
-                <Button type="submit" disabled={sendState === 'pending' || broadcastMutation.isPending || sendDraftMutation.isPending || saveDraftMutation.isPending}>
-                  {sendState === 'pending' ? 'Sending…' : watched.scheduledAt ? 'Schedule broadcast' : 'Send now'}
+                <Button type="submit" disabled={sendState === 'pending' || broadcastMutation.isPending || sendDraftMutation.isPending || saveDraftMutation.isPending || (!recoveringSend && (recipientsUnavailable || noRecipients))}>
+                  {sendState === 'pending' ? 'Sending…' : watched.scheduledAt ? `Schedule for ${eligible?.eligible ?? 0} subscribers` : `Send to ${eligible?.eligible ?? 0} subscribers`}
                 </Button>
               )}
             </div>

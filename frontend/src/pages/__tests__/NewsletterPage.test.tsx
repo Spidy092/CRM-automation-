@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, within } from '@testing-library/react';
 import { renderWithProviders } from '@/lib/test-utils';
 import { NewsletterPage } from '../NewsletterPage';
-import { useDigestDraft, useBroadcasts } from '@/api/newsletter';
+import { useDigestDraft, useBroadcasts, useSubscribers, useSubscriber, useUpdateSubscriberPreferences } from '@/api/newsletter';
 
 const authState = vi.hoisted(() => ({ role: null as string | null }));
 vi.mock('@/store/authStore', () => ({
@@ -24,6 +24,7 @@ vi.mock('@/api/newsletter', () => ({
     refetch: vi.fn(),
   }),
   useSubscriber: vi.fn().mockReturnValue({ data: undefined, isLoading: false, error: null, refetch: vi.fn() }),
+  useUpdateSubscriberPreferences: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
   useBroadcasts: vi.fn().mockReturnValue({
     data: [],
     isLoading: false,
@@ -100,11 +101,11 @@ describe('NewsletterPage workspace', () => {
     renderWithProviders(<NewsletterPage />);
     const tablist = screen.getByRole('tablist', { name: /newsletter workspace/i });
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Overview', 'Subscribers', 'Drafts', 'Broadcasts', 'AI Digest']);
-    fireEvent.click(screen.getByRole('tab', { name: 'Broadcasts' }));
-    expect(screen.getByText(/broadcast history/i)).toBeDefined();
+    expect(tabs.map((t) => t.textContent)).toEqual(['Overview', 'Subscribers', 'Drafts', 'Send history', 'AI Digest']);
+    fireEvent.click(screen.getByRole('tab', { name: 'Send history' }));
+    expect(screen.getByRole('heading', { name: 'Send history' })).toBeDefined();
     // ArrowRight moves focus/selection to the next tab.
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Broadcasts' }), { key: 'ArrowRight' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Send history' }), { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: 'AI Digest' }).getAttribute('aria-selected')).toBe('true');
   });
 
@@ -116,6 +117,114 @@ describe('NewsletterPage workspace', () => {
     expect(screen.getByRole('button', { name: /copy signup link/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /export/i })).toBeDefined();
     expect(screen.getByText(/no subscribers found/i)).toBeDefined();
+  });
+
+  it('lets an admin edit a subscriber topic selection and frequency', async () => {
+    const subscriber = {
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      email: 'person@example.com',
+      status: 'confirmed' as const,
+      topics: ['product_updates', 'promotions', 'company_news'],
+      frequency: 'weekly' as const,
+      send_limits_available: true,
+      last_sent_at: '2026-10-15T00:00:00.000Z',
+      next_eligible_at: '2099-10-22T00:00:00.000Z',
+      source: 'website',
+      confirmed_at: '2026-10-15T00:00:00.000Z',
+      unsubscribed_at: null,
+      created_at: '2026-10-14T00:00:00.000Z',
+      updated_at: '2026-10-14T00:00:00.000Z',
+    };
+    const savePreferences = vi.fn().mockResolvedValue({ ...subscriber, topics: ['company_news'], frequency: 'monthly' });
+    vi.mocked(useSubscribers).mockReturnValue({
+      data: { data: [subscriber], meta: { limit: 25, offset: 0, total: 1 } },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useSubscribers>);
+    vi.mocked(useSubscriber).mockReturnValue({ data: subscriber, isLoading: false, error: null, refetch: vi.fn() } as ReturnType<typeof useSubscriber>);
+    vi.mocked(useUpdateSubscriberPreferences).mockReturnValue({ mutateAsync: savePreferences, isPending: false } as unknown as ReturnType<typeof useUpdateSubscriberPreferences>);
+    authState.role = 'admin';
+
+    renderWithProviders(<NewsletterPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Subscribers' }));
+    expect(screen.getByText('Last newsletter sent')).toBeInTheDocument();
+    expect(screen.getByText('Next eligible')).toBeInTheDocument();
+    expect(screen.getByText(/2099.*IST/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View details for person@example.com' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit preferences' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Product updates' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Promotions' }));
+    fireEvent.change(screen.getByLabelText('Maximum sending frequency'), { target: { value: 'monthly' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    expect(await screen.findByText('Subscriber preferences updated.')).toBeDefined();
+    expect(savePreferences).toHaveBeenCalledWith({
+      id: subscriber.id,
+      preferences: { topics: ['company_news'], frequency: 'monthly' },
+    });
+  });
+
+  it('preserves in-progress edits during a detail refresh and resets when another subscriber is selected', () => {
+    const firstSubscriber = {
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      email: 'first@example.com',
+      status: 'confirmed' as const,
+      topics: ['product_updates', 'promotions'],
+      frequency: 'weekly' as const,
+      send_limits_available: true,
+      last_sent_at: null,
+      next_eligible_at: null,
+      source: 'website',
+      confirmed_at: '2026-10-15T00:00:00.000Z',
+      unsubscribed_at: null,
+      created_at: '2026-10-14T00:00:00.000Z',
+      updated_at: '2026-10-14T00:00:00.000Z',
+    };
+    const secondSubscriber = {
+      ...firstSubscriber,
+      id: '650e8400-e29b-41d4-a716-446655440001',
+      email: 'second@example.com',
+      topics: ['company_news'],
+      frequency: 'monthly' as const,
+    };
+    let detailById = { [firstSubscriber.id]: firstSubscriber, [secondSubscriber.id]: secondSubscriber };
+    vi.mocked(useSubscribers).mockReturnValue({
+      data: { data: [firstSubscriber, secondSubscriber], meta: { limit: 25, offset: 0, total: 2 } },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useSubscribers>);
+    vi.mocked(useSubscriber).mockImplementation((id) => ({
+      data: detailById[id],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }) as ReturnType<typeof useSubscriber>);
+    authState.role = 'admin';
+
+    const { rerender } = renderWithProviders(<NewsletterPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Subscribers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details for first@example.com' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit preferences' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Product updates' }));
+    fireEvent.change(screen.getByLabelText('Maximum sending frequency'), { target: { value: 'daily' } });
+
+    detailById = {
+      ...detailById,
+      [firstSubscriber.id]: { ...firstSubscriber, updated_at: '2026-10-16T00:00:00.000Z' },
+    };
+    rerender(<NewsletterPage />);
+
+    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Product updates' })).not.toBeChecked();
+    expect(screen.getByLabelText('Maximum sending frequency')).toHaveValue('daily');
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details for second@example.com' }));
+    const subscriberDetails = within(screen.getByRole('dialog', { name: 'Subscriber details' }));
+    expect(subscriberDetails.getByRole('button', { name: 'Edit preferences' })).toBeInTheDocument();
+    expect(subscriberDetails.getByText('Company news')).toBeInTheDocument();
+    expect(subscriberDetails.getByText('monthly')).toBeInTheDocument();
   });
 
   it('shows uncertain sends with review UI and an explicit opt-in retry', async () => {
@@ -158,8 +267,8 @@ describe('NewsletterPage workspace', () => {
       isPending: false,
     });
     renderWithProviders(<NewsletterPage />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Broadcasts' }));
-    fireEvent.click(screen.getByRole('button', { name: /view broadcast october update/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Send history' }));
+    fireEvent.click(screen.getByRole('button', { name: /view newsletter october update/i }));
     // Uncertain state is explicit: count, review list, no auto-resend.
     expect(screen.getByText(/1 recipient\(s\) have an unknown send outcome/i)).toBeDefined();
     expect(screen.getByText('u1@example.com')).toBeDefined();
@@ -178,9 +287,9 @@ describe('NewsletterPage workspace', () => {
     vi.mocked(useDigestDraft).mockReturnValue({ data: { draft: { subject: 'Approved draft', status: 'approved' }, autoSend: false }, isLoading: false } as ReturnType<typeof useDigestDraft>);
     vi.mocked(useBroadcasts).mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useBroadcasts>);
     renderWithProviders(<NewsletterPage />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Broadcasts' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Send history' }));
     expect(screen.queryByText(/AI draft awaiting review/)).toBeNull();
-    expect(screen.getByText('No broadcasts yet')).toBeDefined();
+    expect(screen.getByText('No newsletters sent yet')).toBeDefined();
   });
 
 });

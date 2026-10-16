@@ -12,6 +12,10 @@ export interface NewsletterSubscriber {
   status: NewsletterSubscriberStatus;
   topics: string[];
   frequency: NewsletterFrequency;
+  last_sent_at?: string | null;
+  next_eligible_at?: string | null;
+  delivery_reserved?: boolean;
+  send_limits_available?: boolean;
   source: string | null;
   confirmed_at: string | null;
   unsubscribed_at: string | null;
@@ -95,6 +99,35 @@ export function useSubscriber(id: string) {
   });
 }
 
+export function useUpdateSubscriberPreferences() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; preferences: UpdatePreferencesInput }) => {
+      const response = await apiClient.patch<ApiResponse<NewsletterSubscriber>>(
+        `/newsletter/admin/subscribers/${input.id}/preferences`,
+        input.preferences,
+      );
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['newsletter-subscribers'] });
+      queryClient.invalidateQueries({ queryKey: ['newsletter-eligible-count'] });
+    },
+  });
+}
+
+export interface NewsletterEligibilitySummary {
+  eligible: number;
+  total: number;
+  pending: number;
+  unsubscribed: number;
+  topicMismatch: number;
+  frequencyMismatch: number;
+  waiting: number;
+  reserved: number;
+  nextEligibleAt: string | null;
+}
+
 export function useEligibleCount(targeting?: { topics?: string[]; frequency?: NewsletterFrequency }) {
   return useQuery({
     queryKey: ['newsletter-eligible-count', targeting],
@@ -103,7 +136,7 @@ export function useEligibleCount(targeting?: { topics?: string[]; frequency?: Ne
       for (const t of targeting?.topics ?? []) params.append('topics', t);
       if (targeting?.frequency) params.append('frequency', targeting.frequency);
       const qs = params.toString();
-      const response = await apiClient.get<ApiResponse<{ eligible: number }>>(
+      const response = await apiClient.get<ApiResponse<NewsletterEligibilitySummary>>(
         `/newsletter/admin/eligible-count${qs ? `?${qs}` : ''}`
       );
       return response.data.data;
@@ -140,14 +173,14 @@ export function useUnsubscribe() {
   });
 }
 
-export function useNewsletterPreferences(token: string) {
+export function useNewsletterPreferences(token: string, enabled = true) {
   return useQuery({
     queryKey: ['newsletter-preferences', token],
     queryFn: async () => {
-      const response = await apiClient.get<ApiResponse<NewsletterSubscriber>>(`/newsletter/preferences?token=${token}`);
+      const response = await apiClient.get<ApiResponse<Pick<NewsletterSubscriber, 'topics' | 'frequency' | 'status'>>>(`/newsletter/preferences?token=${token}`);
       return response.data.data;
     },
-    enabled: !!token,
+    enabled: enabled && !!token,
   });
 }
 

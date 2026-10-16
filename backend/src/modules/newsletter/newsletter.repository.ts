@@ -6,10 +6,26 @@ import {
   NewsletterSubscriberRow,
   NewsletterSubscriberStatus,
   NewsletterFrequency,
+  NewsletterEligibilitySummary,
 } from './newsletter.types';
 
 const SUBSCRIBER_COLS = `id, email, status, topics, frequency, unsubscribe_token_hash, source,
   confirmed_at, unsubscribed_at, created_at, updated_at`;
+
+/** Fixed elapsed hours, independent of calendar boundaries and timezone/DST. */
+const ROLLING_LIMIT_SQL = `CASE frequency
+  WHEN 'daily' THEN interval '24 hours'
+  WHEN 'weekly' THEN interval '168 hours'
+  ELSE interval '720 hours' END`;
+// JSON extraction keeps the subscriber list readable before migration 0084.
+// Missing storage is explicitly reported to the UI, never treated as ready.
+const ADMIN_DELIVERY_COLS = `
+  (to_jsonb(newsletter_subscribers) ? 'newsletter_last_accepted_at') AS send_limits_available,
+  to_jsonb(newsletter_subscribers)->>'newsletter_last_accepted_at' AS last_sent_at,
+  ((to_jsonb(newsletter_subscribers)->>'newsletter_last_accepted_at')::timestamptz
+    + (${ROLLING_LIMIT_SQL})) AS next_eligible_at,
+  COALESCE((to_jsonb(newsletter_subscribers)->>'newsletter_reserved_until')::timestamptz > now(), false)
+    AS delivery_reserved`;
 
 function parseTopics(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw as string[];
@@ -39,7 +55,7 @@ export async function findSubscriberByEmail(
 
 export async function findSubscriberById(id: string): Promise<NewsletterSubscriberRow | null> {
   const row = await queryOne<NewsletterSubscriberRow & { topics: unknown }>(
-    `SELECT ${SUBSCRIBER_COLS} FROM newsletter_subscribers WHERE id = $1`,
+    `SELECT ${SUBSCRIBER_COLS}, ${ADMIN_DELIVERY_COLS} FROM newsletter_subscribers WHERE id = $1`,
     [id],
   );
   return row ? mapRow(row) : null;
@@ -289,7 +305,9 @@ export async function resetToPending(
 export async function markConfirmed(id: string): Promise<void> {
   await query(
     `UPDATE newsletter_subscribers
-     SET status = 'confirmed', topics = $2::jsonb, confirmed_at = now(), updated_at = now()
+     SET status = 'confirmed',
+         topics = CASE WHEN jsonb_array_length(topics) = 0 THEN $2::jsonb ELSE topics END,
+         confirmed_at = now(), updated_at = now()
      WHERE id = $1 AND status = 'pending'`,
     [id, JSON.stringify(NEWSLETTER_TOPICS)],
   );
@@ -341,7 +359,7 @@ export async function findSubscribers(
   const { clause, params } = buildSubscriberFilterWhere(merged);
   // Params for LIMIT/OFFSET follow filter params to keep indexes stable.
   const rows = await query<NewsletterSubscriberRow & { topics: unknown }>(
-    `SELECT ${SUBSCRIBER_COLS} FROM newsletter_subscribers
+    `SELECT ${SUBSCRIBER_COLS}, ${ADMIN_DELIVERY_COLS} FROM newsletter_subscribers
      ${clause} ORDER BY created_at DESC, id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset],
   );
@@ -461,6 +479,56 @@ export async function countEligibleSubscribers(targeting?: EligibleTargeting): P
     params,
   );
   return parseInt(row?.total ?? '0', 10);
+}
+
+/** Disjoint reasons: every subscriber appears in exactly one count. */
+export async function getRecipientEligibility(
+  targeting?: EligibleTargeting,
+): Promise<NewsletterEligibilitySummary> {
+  const params: unknown[] = [];
+  let topicMatch = 'TRUE';
+  let frequencyMatch = 'TRUE';
+  if (targeting?.topics?.length) {
+    params.push(targeting.topics);
+    topicMatch = `topics ?| $${params.length}::text[]`;
+  }
+  if (targeting?.frequency) {
+    params.push(Array.isArray(targeting.frequency) ? targeting.frequency : [targeting.frequency]);
+    frequencyMatch = `frequency::text = ANY($${params.length}::text[])`;
+  }
+  const row = await queryOne<NewsletterEligibilitySummary>(
+    `WITH audience AS (
+      SELECT status, ${topicMatch} AS topic_match, ${frequencyMatch} AS frequency_match,
+        COALESCE(newsletter_reserved_until > now(), false) AS held,
+        COALESCE(newsletter_last_accepted_at > now() - (${ROLLING_LIMIT_SQL}), false) AS recent,
+        newsletter_last_accepted_at + (${ROLLING_LIMIT_SQL}) AS next_at
+      FROM newsletter_subscribers
+    )
+    SELECT COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+      COUNT(*) FILTER (WHERE status = 'unsubscribed')::int AS unsubscribed,
+      COUNT(*) FILTER (WHERE status = 'confirmed' AND NOT frequency_match)::int AS "frequencyMismatch",
+      COUNT(*) FILTER (WHERE status = 'confirmed' AND frequency_match AND NOT topic_match)::int AS "topicMismatch",
+      COUNT(*) FILTER (WHERE status = 'confirmed' AND frequency_match AND topic_match AND held)::int AS reserved,
+      COUNT(*) FILTER (WHERE status = 'confirmed' AND frequency_match AND topic_match AND NOT held AND recent)::int AS waiting,
+      COUNT(*) FILTER (WHERE status = 'confirmed' AND frequency_match AND topic_match AND NOT held AND NOT recent)::int AS eligible,
+      MIN(next_at) FILTER (WHERE status = 'confirmed' AND frequency_match AND topic_match AND NOT held AND recent) AS "nextEligibleAt"
+    FROM audience`,
+    params,
+  );
+  return (
+    row ?? {
+      eligible: 0,
+      total: 0,
+      pending: 0,
+      unsubscribed: 0,
+      topicMismatch: 0,
+      frequencyMismatch: 0,
+      waiting: 0,
+      reserved: 0,
+      nextEligibleAt: null,
+    }
+  );
 }
 
 // ── Durable broadcast persistence (migrations 0079 + 0082, both pending) ────
@@ -877,11 +945,6 @@ export async function addConfirmedContact(data: {
   return row !== null;
 }
 
-/** Fixed elapsed hours, independent of calendar boundaries and timezone/DST. */
-const ROLLING_LIMIT_SQL = `CASE frequency
-  WHEN 'daily' THEN interval '24 hours'
-  WHEN 'weekly' THEN interval '168 hours'
-  ELSE interval '720 hours' END`;
 const SENDABLE_NOW_SQL = `(newsletter_reserved_until IS NULL OR newsletter_reserved_until <= now())
   AND (newsletter_last_accepted_at IS NULL OR newsletter_last_accepted_at <= now() - (${ROLLING_LIMIT_SQL}))`;
 
