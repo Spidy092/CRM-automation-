@@ -1,11 +1,15 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { NEWSLETTER_TOPIC_LABELS } from '@/lib/newsletterPresentation';
 import { useSearchParams, useParams, Link } from 'react-router-dom';
 import {
   useConfirmSubscription,
   useUnsubscribe,
   useNewsletterPreferences,
   useUpdateNewsletterPreferences,
-  type NewsletterFrequency,
+  type NewsletterTopic,
 } from '@/api/newsletter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,6 +18,12 @@ import { useToast } from '@/components/ui/Toast';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { CheckCircle, MailOpen, AlertCircle } from 'lucide-react';
 import { getApiErrorMessage } from '@/lib/apiError';
+
+const preferencesSchema = z.object({
+  topics: z.array(z.enum(['product_updates', 'promotions', 'company_news'])),
+  frequency: z.enum(['daily', 'weekly', 'monthly']),
+});
+type Preferences = z.infer<typeof preferencesSchema>;
 
 export function PublicNewsletterActionPage() {
   const { action } = useParams<{ action: 'confirm' | 'unsubscribe' | 'preferences' }>();
@@ -28,15 +38,15 @@ export function PublicNewsletterActionPage() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   // For preferences
-  const { data: preferences, isLoading: prefsLoading, error: prefsError } = useNewsletterPreferences(token ?? '');
+  const { data: preferences, isLoading: prefsLoading, error: prefsError, refetch: retryPreferences } = useNewsletterPreferences(token ?? '', action === 'preferences');
   const updatePrefs = useUpdateNewsletterPreferences();
-  const [frequency, setFrequency] = useState<NewsletterFrequency>('weekly');
+  const preferencesForm = useForm<Preferences>({ resolver: zodResolver(preferencesSchema), defaultValues: { topics: [], frequency: 'weekly' } });
 
   useEffect(() => {
     if (preferences) {
-      setFrequency(preferences.frequency);
+      preferencesForm.reset({ topics: preferences.topics as NewsletterTopic[], frequency: preferences.frequency });
     }
-  }, [preferences]);
+  }, [preferences, preferencesForm]);
 
   useEffect(() => {
     if (!token) return;
@@ -50,11 +60,10 @@ export function PublicNewsletterActionPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, token]);
 
-  const handleUpdatePreferences = async (e: FormEvent) => {
-    e.preventDefault();
+  const handleUpdatePreferences = async (values: Preferences) => {
     if (!token) return;
     try {
-      await updatePrefs.mutateAsync({ token, input: { frequency } });
+      await updatePrefs.mutateAsync({ token, input: values });
       showToast('Preferences updated successfully', 'success');
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Failed to update preferences'), 'error');
@@ -182,10 +191,23 @@ export function PublicNewsletterActionPage() {
             <CardContent className="p-8 text-center">
               <AlertCircle className="mx-auto h-12 w-12 text-red-500" />
               <h1 className="mt-4 text-xl font-semibold text-slate-900">Error</h1>
-              <p className="mt-2 text-sm text-slate-600">Failed to load your preferences. The link might be expired.</p>
+              <p className="mt-2 text-sm text-slate-600">Couldn’t load your preferences. Retry, or open the preference link from a newsletter email.</p>
+              <Button className="mt-4" onClick={() => void retryPreferences()}>Retry</Button>
             </CardContent>
           </Card>
         </div>
+      );
+    }
+
+    if (preferences.status === 'unsubscribed') {
+      return (
+        <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+          <Card className="w-full max-w-md"><CardContent className="p-8 text-center">
+            <h1 className="text-xl font-semibold">You’re unsubscribed</h1>
+            <p className="mt-2 text-sm text-slate-600">You won’t receive newsletter emails. Subscribe again if you’d like to rejoin.</p>
+            <Button asChild variant="link" className="mt-4"><Link to="/subscribe">Subscribe again</Link></Button>
+          </CardContent></Card>
+        </main>
       );
     }
 
@@ -200,25 +222,36 @@ export function PublicNewsletterActionPage() {
                 </div>
                 <h1 className="text-2xl font-semibold text-slate-950">Update Preferences</h1>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Manage your newsletter subscription for {preferences.email}
+                  Choose which newsletters you receive and how often. You can unsubscribe at any time.
                 </p>
               </div>
 
-              <form onSubmit={handleUpdatePreferences} className="space-y-5">
+              <form onSubmit={preferencesForm.handleSubmit(handleUpdatePreferences)} className="space-y-5">
+                <fieldset className="space-y-2" disabled={updatePrefs.isPending}>
+                  <legend className="text-sm font-medium">Topics you want to receive</legend>
+                  {Object.entries(NEWSLETTER_TOPIC_LABELS).map(([topic, label]) => (
+                    <label key={topic} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" value={topic} {...preferencesForm.register('topics')} />
+                      {label}
+                    </label>
+                  ))}
+                  <p className="text-sm text-slate-600">Selecting no topics excludes you from topic-targeted emails. Use Unsubscribe to stop all newsletters.</p>
+                </fieldset>
                 <div className="space-y-2">
-                  <Label htmlFor="frequency">Frequency</Label>
+                  <Label htmlFor="frequency">Maximum sending frequency</Label>
                   <select
                     id="frequency"
-                    value={frequency}
-                    onChange={(e) => setFrequency(e.target.value as NewsletterFrequency)}
+                    {...preferencesForm.register('frequency')}
+                    disabled={updatePrefs.isPending}
                     className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition-colors focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
+                    <option value="daily">Daily — at most every 24 hours</option>
+                    <option value="weekly">Weekly — at most every 7 days</option>
+                    <option value="monthly">Monthly — at most every 30 days</option>
                   </select>
                 </div>
 
+                <p className="text-sm text-slate-600">This is a limit across all newsletters, not a promise of an email on that schedule.</p>
                 <div className="flex gap-3 pt-2">
                   <Button type="submit" disabled={updatePrefs.isPending} className="flex-1">
                     {updatePrefs.isPending ? 'Saving...' : 'Save Preferences'}

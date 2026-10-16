@@ -76,19 +76,20 @@ export function PublicSubscribePage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="frequency">Frequency</Label>
+                <Label htmlFor="frequency">Maximum sending frequency</Label>
                 <select
                   id="frequency"
                   value={frequency}
                   onChange={(e) => setFrequency(e.target.value as NewsletterFrequency)}
                   className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition-colors focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
                 >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
+                  <option value="daily">Daily — at most every 24 hours</option>
+                  <option value="weekly">Weekly — at most every 7 days</option>
+                  <option value="monthly">Monthly — at most every 30 days</option>
                 </select>
               </div>
 
+              <p className="text-sm text-slate-600">All three topics are included by default. Your sending limit applies across all newsletters; it does not guarantee an email on that schedule.</p>
               <Button type="submit" disabled={subscribe.isPending} className="w-full">
                 <Send className="mr-2 h-4 w-4" />
                 {subscribe.isPending ? 'Subscribing...' : 'Subscribe'}

@@ -1,10 +1,14 @@
 import { NewsletterDraftsPanel } from '@/components/ui/NewsletterDraftsPanel';
 import { NewsletterContactsModal } from '@/components/ui/NewsletterContactsModal';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   useSubscribers,
   useSubscriberCounts,
   useSubscriber,
+  useUpdateSubscriberPreferences,
   useBroadcasts,
   useDigestStatus,
   useDigestDraft,
@@ -31,6 +35,7 @@ import { Input } from '@/components/ui/input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
 import { useAuthStore } from '@/store/authStore';
+import { formatNewsletterDate, NEWSLETTER_TOPIC_LABELS, newsletterDeliveryLabel } from '@/lib/newsletterPresentation';
 
 const statusTones: Record<NewsletterSubscriberStatus, StatusTone> = {
   confirmed: 'green',
@@ -51,6 +56,11 @@ type Tab = 'overview' | 'subscribers' | 'drafts' | 'broadcasts' | 'digest';
 
 const TOPICS: NewsletterTopic[] = ['product_updates', 'promotions', 'company_news'];
 const FREQUENCIES: NewsletterFrequency[] = ['daily', 'weekly', 'monthly'];
+const subscriberPreferencesSchema = z.object({
+  topics: z.array(z.enum(['product_updates', 'promotions', 'company_news'])),
+  frequency: z.enum(['daily', 'weekly', 'monthly']),
+});
+type SubscriberPreferences = z.infer<typeof subscriberPreferencesSchema>;
 
 export function NewsletterPage() {
   const canAddContacts = useAuthStore((s) => s.user?.role === 'admin');
@@ -65,6 +75,7 @@ export function NewsletterPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingPreferences, setEditingPreferences] = useState(false);
   const [selectedBroadcastId, setSelectedBroadcastId] = useState<string | null>(null);
   const [includeUncertain, setIncludeUncertain] = useState(false);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
@@ -83,6 +94,11 @@ export function NewsletterPage() {
     ...(frequencyFilter ? { frequency: frequencyFilter } : {}),
   });
   const detailQuery = useSubscriber(selectedId ?? '');
+  const preferencesForm = useForm<SubscriberPreferences>({
+    resolver: zodResolver(subscriberPreferencesSchema),
+    defaultValues: { topics: [], frequency: 'weekly' },
+  });
+  const updateSubscriberPreferences = useUpdateSubscriberPreferences();
   const broadcastsQuery = useBroadcasts();
   const digestStatusQuery = useDigestStatus();
   const digestDraftQuery = useDigestDraft();
@@ -93,6 +109,26 @@ export function NewsletterPage() {
   const subscribers = subsQuery.data?.data ?? [];
   const total = (subsQuery.data?.meta?.total as number | undefined) ?? subscribers.length;
   const counts = countsQuery.data;
+
+  useEffect(() => {
+    if (!detailQuery.data) return;
+    preferencesForm.reset({
+      topics: detailQuery.data.topics as NewsletterTopic[],
+      frequency: detailQuery.data.frequency,
+    });
+    setEditingPreferences(false);
+  }, [detailQuery.data, preferencesForm]);
+
+  const saveSubscriberPreferences = async (values: SubscriberPreferences) => {
+    if (!selectedId) return;
+    try {
+      await updateSubscriberPreferences.mutateAsync({ id: selectedId, preferences: values });
+      setEditingPreferences(false);
+      showToast('Subscriber preferences updated.');
+    } catch {
+      showToast('Could not update subscriber preferences.', 'error');
+    }
+  };
 
   const handleToggleDigest = async () => {
     const newState = !(digestStatusQuery.data?.enabled ?? false);
@@ -153,7 +189,7 @@ export function NewsletterPage() {
     { id: 'overview', label: 'Overview' },
     { id: 'subscribers', label: 'Subscribers' },
     { id: 'drafts', label: 'Drafts' },
-    { id: 'broadcasts', label: 'Broadcasts' },
+    { id: 'broadcasts', label: 'Send history' },
     { id: 'digest', label: 'AI Digest' },
   ];
 
@@ -201,7 +237,7 @@ export function NewsletterPage() {
               disabled={toggleDigestMutation.isPending || digestStatusQuery.isLoading}
             >
               <Sparkles className="h-4 w-4" />
-              {digestStatusQuery.data?.enabled ? 'AI Digest Enabled' : 'Enable AI Digest'}
+              {digestStatusQuery.data?.enabled ? 'Pause AI digest' : 'Enable AI digest'}
             </Button>
             <Button className="gap-2" onClick={() => setIsBroadcastModalOpen(true)}>
               <Send className="h-4 w-4" />
@@ -252,12 +288,12 @@ export function NewsletterPage() {
               {counts && (
                 <dl className="grid grid-cols-2 gap-3 text-sm">
                   <div className="rounded-lg bg-slate-50 p-3"><dt className="text-slate-500">Total</dt><dd className="text-xl font-bold">{counts.total}</dd></div>
-                  <div className="rounded-lg bg-green-50 p-3"><dt className="text-slate-500">Confirmed</dt><dd className="text-xl font-bold">{counts.confirmed}</dd></div>
-                  <div className="rounded-lg bg-amber-50 p-3"><dt className="text-slate-500">Pending</dt><dd className="text-xl font-bold">{counts.pending}</dd></div>
+                  <div className="rounded-lg bg-green-50 p-3"><dt className="text-green-900">Confirmed</dt><dd className="text-xl font-bold">{counts.confirmed}</dd></div>
+                  <div className="rounded-lg bg-amber-50 p-3"><dt className="text-amber-900">Pending</dt><dd className="text-xl font-bold">{counts.pending}</dd></div>
                   <div className="rounded-lg bg-slate-100 p-3"><dt className="text-slate-500">Unsubscribed</dt><dd className="text-xl font-bold">{counts.unsubscribed}</dd></div>
                 </dl>
               )}
-              <p className="mt-3 text-xs text-slate-500">Counts are audience-wide, independent of list filters/page.</p>
+              <p className="mt-3 text-xs text-slate-500">Confirmed means the person verified their email. Sending limits can still make them temporarily ineligible. Counts ignore list filters.</p>
             </CardContent>
           </Card>
           <Card>
@@ -359,12 +395,14 @@ export function NewsletterPage() {
             {!subsQuery.isLoading && !subsQuery.error && subscribers.length > 0 && (
               <>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="min-w-[1050px] w-full text-sm">
                     <thead>
                       <tr className="border-b">
                         <th className="pb-3 pr-3 text-left font-medium text-slate-500">Email</th>
                         <th className="pb-3 text-left font-medium text-slate-500">Status</th>
                         <th className="pb-3 text-left font-medium text-slate-500">Frequency</th>
+                        <th className="pb-3 text-left font-medium text-slate-500">Last newsletter sent</th>
+                        <th className="pb-3 text-left font-medium text-slate-500">Next eligible</th>
                         <th className="pb-3 text-left font-medium text-slate-500">Topics</th>
                         <th className="pb-3 text-left font-medium text-slate-500">Source</th>
                         <th className="pb-3 text-left font-medium text-slate-500">Date Added</th>
@@ -380,11 +418,13 @@ export function NewsletterPage() {
                           </td>
                           <td className="py-3"><StatusBadge tone={statusTones[subscriber.status]}>{subscriber.status}</StatusBadge></td>
                           <td className="py-3 text-slate-700 capitalize">{subscriber.frequency}</td>
+                          <td className="py-3 text-slate-600">{formatNewsletterDate(subscriber.last_sent_at)}</td>
+                          <td className="py-3 text-slate-600">{newsletterDeliveryLabel(subscriber)}</td>
                           <td className="py-3">
                             <div className="flex flex-wrap gap-1">
                               {subscriber.topics?.length ? subscriber.topics.map((topic) => (
-                                <span key={topic} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">{topic}</span>
-                              )) : <span className="text-xs text-slate-400">—</span>}
+                                <span key={topic} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">{NEWSLETTER_TOPIC_LABELS[topic] ?? topic}</span>
+                              )) : <span className="text-xs text-slate-500">No topics selected</span>}
                             </div>
                           </td>
                           <td className="py-3 text-slate-500">{subscriber.source || '—'}</td>
@@ -416,15 +456,60 @@ export function NewsletterPage() {
                 {detailQuery.isLoading && <LoadingSpinner />}
                 {detailQuery.error && <ErrorState message={(detailQuery.error as Error).message} onRetry={() => detailQuery.refetch()} />}
                 {detailQuery.data && (
-                  <dl className="mt-2 grid gap-1 text-sm">
-                    <div className="flex justify-between"><dt className="text-slate-500">Email</dt><dd className="font-medium">{detailQuery.data.email}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-500">Status</dt><dd>{detailQuery.data.status}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-500">Topics</dt><dd>{detailQuery.data.topics.join(', ') || '—'}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-500">Frequency</dt><dd>{detailQuery.data.frequency}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-500">Confirmed at</dt><dd>{detailQuery.data.confirmed_at ? new Date(detailQuery.data.confirmed_at).toLocaleString() : '—'}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-500">Unsubscribed at</dt><dd>{detailQuery.data.unsubscribed_at ? new Date(detailQuery.data.unsubscribed_at).toLocaleString() : '—'}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-500">Created</dt><dd>{new Date(detailQuery.data.created_at).toLocaleString()}</dd></div>
-                  </dl>
+                  <>
+                    <dl className="mt-2 grid gap-1 text-sm">
+                      <div className="flex justify-between"><dt className="text-slate-500">Email</dt><dd className="font-medium">{detailQuery.data.email}</dd></div>
+                      <div className="flex justify-between"><dt className="text-slate-500">Status</dt><dd>{detailQuery.data.status}</dd></div>
+                      {!editingPreferences && <div className="flex justify-between"><dt className="text-slate-500">Topics</dt><dd>{detailQuery.data.topics.map((topic) => NEWSLETTER_TOPIC_LABELS[topic] ?? topic).join(', ') || 'No topics selected'}</dd></div>}
+                      {!editingPreferences && <div className="flex justify-between"><dt className="text-slate-500">Maximum sending frequency</dt><dd className="capitalize">{detailQuery.data.frequency}</dd></div>}
+                      <div className="flex justify-between"><dt className="text-slate-500">Last newsletter sent</dt><dd>{formatNewsletterDate(detailQuery.data.last_sent_at)}</dd></div>
+                      <div className="flex justify-between"><dt className="text-slate-500">Next eligible</dt><dd>{newsletterDeliveryLabel(detailQuery.data)}</dd></div>
+                      <div className="flex justify-between"><dt className="text-slate-500">Confirmed at</dt><dd>{detailQuery.data.confirmed_at ? new Date(detailQuery.data.confirmed_at).toLocaleString() : '—'}</dd></div>
+                      <div className="flex justify-between"><dt className="text-slate-500">Unsubscribed at</dt><dd>{detailQuery.data.unsubscribed_at ? new Date(detailQuery.data.unsubscribed_at).toLocaleString() : '—'}</dd></div>
+                      <div className="flex justify-between"><dt className="text-slate-500">Created</dt><dd>{new Date(detailQuery.data.created_at).toLocaleString()}</dd></div>
+                    </dl>
+                    {editingPreferences ? (
+                      <form onSubmit={preferencesForm.handleSubmit(saveSubscriberPreferences)} className="mt-4 space-y-4 border-t pt-4">
+                        <fieldset className="space-y-2">
+                          <legend className="text-sm font-medium">Newsletter topics</legend>
+                          <p className="text-xs text-slate-600">Choose which updates this contact can receive. No topics means topic-targeted sends are skipped.</p>
+                          {TOPICS.map((topic) => (
+                            <label key={topic} className="flex items-center gap-2 text-sm capitalize">
+                              <input
+                                type="checkbox"
+                                checked={preferencesForm.watch('topics').includes(topic)}
+                                onChange={(event) => {
+                                  const current = preferencesForm.getValues('topics');
+                                  preferencesForm.setValue(
+                                    'topics',
+                                    event.target.checked ? [...current, topic] : current.filter((value) => value !== topic),
+                                    { shouldDirty: true, shouldValidate: true },
+                                  );
+                                }}
+                              />
+                              {NEWSLETTER_TOPIC_LABELS[topic]}
+                            </label>
+                          ))}
+                        </fieldset>
+                        <label htmlFor="subscriber-frequency" className="block text-sm font-medium">Maximum sending frequency</label>
+                        <select id="subscriber-frequency" {...preferencesForm.register('frequency')} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
+                          {FREQUENCIES.map((frequency) => <option key={frequency} value={frequency}>{frequency[0].toUpperCase() + frequency.slice(1)} — at most once every {frequency === 'daily' ? '24 hours' : frequency === 'weekly' ? '7 days' : '30 days'}</option>)}
+                        </select>
+                        <div className="flex gap-2">
+                          <Button type="submit" size="sm" disabled={updateSubscriberPreferences.isPending}>
+                            {updateSubscriberPreferences.isPending ? 'Saving…' : 'Save preferences'}
+                          </Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => { preferencesForm.reset(); setEditingPreferences(false); }}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </form>
+                    ) : (
+                      <Button type="button" className="mt-3" size="sm" variant="outline" onClick={() => setEditingPreferences(true)}>
+                        Edit preferences
+                      </Button>
+                    )}
+                  </>
                 )}
                 <p className="mt-2 text-xs text-slate-500">Consent history: only persisted lifecycle timestamps above are shown. Full consent trails are unavailable — timestamps are never fabricated or inferred from CRM lead membership.</p>
               </div>
@@ -439,7 +524,7 @@ export function NewsletterPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Broadcast history</h3>
+              <h3 className="font-semibold">Send history</h3>
               <Button size="sm" className="gap-2" onClick={() => setIsBroadcastModalOpen(true)}><Send className="h-3.5 w-3.5" /> Create newsletter</Button>
             </div>
           </CardHeader>
@@ -454,7 +539,7 @@ export function NewsletterPage() {
             {broadcastsQuery.isLoading && <LoadingTable />}
             {broadcastsQuery.error && <ErrorState message={(broadcastsQuery.error as Error).message} onRetry={() => broadcastsQuery.refetch()} />}
             {!broadcastsQuery.isLoading && !broadcastsQuery.error && (broadcastsQuery.data ?? []).length === 0 && digestDraftQuery.data?.draft?.status !== 'draft' && (
-              <EmptyState icon={<InboxIcon className="h-6 w-6" />} title="No broadcasts yet" description="Create your first newsletter to see history here." />
+                <EmptyState icon={<InboxIcon className="h-6 w-6" />} title="No newsletters sent yet" description="Sent newsletters and their results will appear here." />
             )}
             {!broadcastsQuery.isLoading && !broadcastsQuery.error && (broadcastsQuery.data ?? []).length > 0 && (
               <div className="overflow-x-auto">
@@ -475,7 +560,7 @@ export function NewsletterPage() {
                     {broadcastsQuery.data!.map((b) => (
                       <tr key={b.id} className="border-b hover:bg-slate-50">
                         <td className="py-3 pr-3">
-                          <button type="button" onClick={() => setSelectedBroadcastId(b.id)} className="font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900" aria-label={`View broadcast ${b.subject}`}>
+                          <button type="button" onClick={() => setSelectedBroadcastId(b.id)} className="font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900" aria-label={`View newsletter ${b.subject}`}>
                             {b.subject}
                           </button>
                         </td>
@@ -500,7 +585,7 @@ export function NewsletterPage() {
                 </div>
                 <dl className="mt-2 grid gap-1">
                   <div className="flex justify-between"><dt className="text-slate-500">Status</dt><dd>{selectedBroadcast.status.replace('_', ' ')}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Audience</dt><dd>{selectedBroadcast.topics.length ? selectedBroadcast.topics.join(', ') : 'All confirmed'} · {selectedBroadcast.frequencies?.length ? selectedBroadcast.frequencies.join(' + ') : (selectedBroadcast.frequency ?? 'any frequency')}</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-500">Audience</dt><dd>{selectedBroadcast.topics.length ? selectedBroadcast.topics.map((topic) => NEWSLETTER_TOPIC_LABELS[topic] ?? topic).join(', ') : 'All confirmed subscribers'} · {selectedBroadcast.frequencies?.length ? selectedBroadcast.frequencies.join(' + ') : (selectedBroadcast.frequency ?? 'all sending frequencies')}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Creator</dt><dd>{selectedBroadcast.createdBy ?? (selectedBroadcast.source === 'redis' ? 'Not recorded (pre-persistence history)' : 'System')}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Finished</dt><dd>{new Date(selectedBroadcast.finishedAt).toLocaleString()} ({selectedBroadcast.timezone})</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Accepted / Failed</dt><dd>{selectedBroadcast.accepted} / {selectedBroadcast.failed} (attempted {selectedBroadcast.attempted}, skipped {selectedBroadcast.skipped})</dd></div>

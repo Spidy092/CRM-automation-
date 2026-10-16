@@ -1,3 +1,4 @@
+import { NEWSLETTER_TOPIC_LABELS } from '@/lib/newsletterPresentation';
 import { useId, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -69,14 +70,14 @@ export function NewsletterContactsModal({ onClose }: { onClose: () => void }) {
             <p className="text-base">{selected.length} selected · Maximum 100 per addition</p>
             {form.formState.errors.leadIds && <p role="alert" className="text-sm text-red-700">{form.formState.errors.leadIds.message}</p>}
             <div>
-              <label htmlFor={`${titleId}-frequency`} className="block text-sm font-medium">Frequency</label>
+              <label htmlFor={`${titleId}-frequency`} className="block text-sm font-medium">Maximum sending frequency</label>
               <select id={`${titleId}-frequency`} {...form.register('frequency')} className="mt-1 rounded border p-2 text-sm">
                 <option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
               </select>
             </div>
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">Topics</legend>
-              {topics.map((topic) => <label key={topic} className="flex items-center gap-2 text-sm"><input type="checkbox" value={topic} {...form.register('topics')} />{topic.replaceAll('_', ' ')}</label>)}
+              {topics.map((topic) => <label key={topic} className="flex items-center gap-2 text-sm"><input type="checkbox" value={topic} {...form.register('topics')} />{NEWSLETTER_TOPIC_LABELS[topic]}</label>)}
             </fieldset>
             {form.formState.errors.root && <p role="alert" className="text-sm text-red-700">{form.formState.errors.root.message}</p>}
             {result && <p role="status" className="text-base text-green-800">{result.added} contacts subscribed. {result.skipped} skipped (already subscribed, unsubscribed, opted out, duplicate, or missing a valid email). {result.failed > 0 && `${result.failed} could not be added; retry those contacts.`}</p>}
