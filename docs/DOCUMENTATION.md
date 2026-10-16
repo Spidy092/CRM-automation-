@@ -701,7 +701,16 @@ Supported providers: `google_ads`, `facebook`
 
 | Method | Path | Auth | Roles | Description |
 |---|---|---|---|---|
+| POST | `/newsletter/subscribe` | None | — | Request a subscription and send an email confirmation |
+| GET | `/newsletter/confirm` | None | — | Confirm a subscription using the emailed token |
+| GET | `/newsletter/preferences` | None | — | Read subscription topics and frequency using the email link token |
+| PATCH | `/newsletter/preferences` | None | — | Update subscription topics and frequency using the email link token |
+| GET | `/newsletter/unsubscribe` | None | — | Open the unsubscribe confirmation page without changing subscription state |
+| POST | `/newsletter/unsubscribe` | None | — | Unsubscribe the address identified by the email link token |
 | POST | `/newsletter/admin/contacts` | Auth | admin | Add up to 100 CRM leads to the newsletter audience without a confirmation email |
+| GET | `/newsletter/admin/subscribers` | Auth | admin, marketing | Search and filter subscribers |
+| GET | `/newsletter/admin/subscribers/:id` | Auth | admin, marketing | View subscriber status and delivery eligibility details |
+| PATCH | `/newsletter/admin/subscribers/:id/preferences` | Auth | admin, marketing | Change a subscriber's newsletter topics and maximum sending frequency |
 | GET | `/newsletter/admin/drafts` | Auth | admin, marketing | List saved newsletter drafts |
 | POST | `/newsletter/admin/drafts` | Auth | admin, marketing | Create a newsletter draft |
 | PUT | `/newsletter/admin/drafts/:id` | Auth | admin, marketing | Update a draft using its current revision |
@@ -709,7 +718,7 @@ Supported providers: `google_ads`, `facebook`
 | POST | `/newsletter/admin/drafts/:id/send` | Auth | admin, marketing | Send a saved draft using its current revision |
 | GET | `/newsletter/admin/eligible-count` | Auth | admin, marketing | Count confirmed recipients who match targeting and frequency limits |
 
-Newsletter sending enforces rolling per-subscriber caps: one message per 24 hours, 7 days, or 30 days, according to the subscriber's chosen frequency. Broadcast scheduling defaults to `Asia/Kolkata`. A subscriber who confirms a public signup is opted into product updates, promotions, and company news; they can change topics or unsubscribe through the preference link in each email.
+Only confirmed subscribers can receive a broadcast. Topic and frequency targeting, pending or unsubscribed status, an active send hold, and the subscriber's rolling send limit determine eligibility; the admin check reports why recipients are excluded and the earliest next-eligible time. Sending enforces per-subscriber limits of one message per rolling 24 hours, 7 days, or 30 days, according to the subscriber's selected frequency. Broadcast scheduling defaults to `Asia/Kolkata`. A public signup with no topic selection opts into product updates, promotions, and company news when confirmed; explicit topic selections are kept. Subscribers can change topics or frequency, or unsubscribe, through the preference link in each email. If the eligibility check is unavailable or no recipients qualify, the composer blocks sending.
 
 Migration `1750000000084_newsletter-drafts-send-limits.js` creates server-side drafts and send-limit reservation fields. Apply it through the approved database migration process before using these features.
 
