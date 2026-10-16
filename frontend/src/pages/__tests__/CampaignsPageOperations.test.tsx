@@ -75,12 +75,13 @@ describe('CampaignsPage operations', () => {
     await waitFor(() => {
       expect(screen.getByText('Q3 Restaurant Push')).toBeInTheDocument();
     });
+    // The summary query starts after the campaign list loads and renders separately.
+    expect(await screen.findByText('2 scheduled')).toBeInTheDocument();
     const summaryCalls = vi
       .mocked(apiClient.get)
       .mock.calls.filter(([url]) => url === '/campaigns/operations-summary');
     expect(summaryCalls).toHaveLength(1);
     expect(summaryCalls[0][1]).toMatchObject({ params: expect.objectContaining({ ids: expect.any(String) }) });
-    expect(screen.getByText('2 scheduled')).toBeInTheDocument();
   });
 
   it('filters cards by search text', async () => {
