@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.0.1] - 2026-10-16
+
+### Fixed
+- Keep entered lead details visible after a save error and show the server’s explanation in the form.
+
 ## [0.6.0.0] - 2026-10-16
 
 ### Changed

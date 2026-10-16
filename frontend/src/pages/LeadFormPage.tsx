@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
+import { getApiErrorMessage } from '@/lib/apiError';
 import { LeadTimeline } from '@/components/LeadTimeline';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ColumnSettings, type ColumnOption, type ColumnPreset } from '@/components/ui/ColumnSettings';
@@ -198,6 +199,7 @@ export function LeadFormPage() {
     next_follow_up_at: null,
     custom_fields: {},
   });
+  const [submissionError, setSubmissionError] = useState('');
 
   useEffect(() => {
     if (lead && isEditing) {
@@ -236,6 +238,7 @@ export function LeadFormPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmissionError('');
 
     try {
       if (isEditing && id) {
@@ -246,10 +249,14 @@ export function LeadFormPage() {
         showToast('Lead created successfully.', 'success');
       }
       navigate('/leads');
-    } catch {
-      showToast(
-        isEditing ? 'Failed to update lead. Please try again.' : 'Failed to create lead. Please try again.',
-        'error'
+    } catch (error) {
+      setSubmissionError(
+        getApiErrorMessage(
+          error,
+          isEditing
+            ? 'Could not update this lead. Your changes are still here; please try again.'
+            : 'Could not create this lead. Your entries are still here; please try again.',
+        ),
       );
     }
   };
@@ -366,7 +373,11 @@ export function LeadFormPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form
+            onSubmit={handleSubmit}
+            onChange={() => setSubmissionError('')}
+            className="space-y-6"
+          >
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="business_name">Business Name *</Label>
@@ -673,6 +684,19 @@ export function LeadFormPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {submissionError && (
+              <div
+                role="alert"
+                className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+              >
+                <p className="font-semibold">
+                  {isEditing ? 'Lead could not be updated' : 'Lead could not be created'}
+                </p>
+                <p className="mt-1">{submissionError}</p>
+                <p className="mt-1 text-red-700">Your entered values are still here.</p>
               </div>
             )}
 
