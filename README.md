@@ -17,8 +17,8 @@ Use [Local Development Setup](docs/LOCAL_DEV_SETUP.md) for prerequisites and the
 The package commands are run from their respective directories:
 
 ```bash
-cd backend && npm ci && npm run build
-cd frontend && npm ci && npm run build
+(cd backend && npm ci && npm run build)
+(cd frontend && npm ci && npm run build)
 ```
 
 For local development, the backend exposes `npm run dev` and `npm run worker`; the frontend exposes `npm run dev`. Backend tests use `npm run test`; frontend tests also use `npm run test`.
