@@ -9,6 +9,9 @@ jest.mock('../leads/leads.repository', () => ({ findLeadById: jest.fn() }));
 jest.mock('../templates/templates.repository', () => ({ findTemplateById: jest.fn() }));
 jest.mock('./outreach.prompt', () => ({ personalizeMessage: jest.fn() }));
 jest.mock('../integrations/dispatch', () => ({ dispatchOutbound: jest.fn() }));
+jest.mock('./unsubscribe.service', () => ({
+  createOutreachUnsubscribeUrl: jest.fn<() => Promise<string>>().mockResolvedValue('https://example.com/outreach/unsubscribe?token=recipient-token'),
+}));
 
 import { sendQuickMessage } from './outreach.service';
 import { insertOutreachLog, updateOutreachLogStatus } from './outreach.repository';
@@ -66,10 +69,13 @@ describe('sendQuickMessage custom messages', () => {
     expect(dispatchOutbound).toHaveBeenCalledWith(
       expect.objectContaining({
         templateId: 'custom',
-        body: 'Hello &lt;Acme&gt;<br />Thanks &amp; welcome',
+        body: expect.stringContaining('Hello &lt;Acme&gt;<br />Thanks &amp; welcome'),
         subject: 'A custom subject',
       }),
     );
+    expect(dispatchOutbound).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining('https://example.com/outreach/unsubscribe?token=recipient-token'),
+    }));
     expect(result.status).toBe('sent');
   });
 

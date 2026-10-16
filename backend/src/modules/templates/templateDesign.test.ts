@@ -2,6 +2,7 @@ import {
   TEMPLATE_DESIGN_VERSION,
   checkEmailCompliance,
   emailHtmlToText,
+  ensureRecipientUnsubscribeLink,
   estimateSmsSegments,
   extractVariableNames,
   findInvalidVariables,
@@ -313,8 +314,54 @@ describe('checkEmailCompliance', () => {
     const missing = checkEmailCompliance('<p>Hello</p>');
     expect(missing.errors).toEqual([]);
     expect(missing.warnings.join(' ')).toMatch(/unsubscribe/i);
-    const present = checkEmailCompliance('<p>Hello</p><a href="https://x.example">Unsubscribe</a>');
+    const present = checkEmailCompliance('<p>Hello</p><a href="{{unsubscribe_link}}">Unsubscribe</a>');
     expect(present.warnings).toEqual([]);
+  });
+
+  it('warns for a bare unsubscribe path or unlinked unsubscribe text', () => {
+    expect(checkEmailCompliance('<a href="/unsubscribe">Unsubscribe</a>').warnings).not.toEqual([]);
+    expect(checkEmailCompliance('<p>Unsubscribe</p>').warnings).not.toEqual([]);
+  });
+});
+
+describe('recipient unsubscribe enforcement after personalization', () => {
+  const url = `https://crm.example.com/outreach/unsubscribe?token=${'a'.repeat(64)}`;
+
+  it.each([
+    '<a href="/unsubscribe">Unsubscribe</a>',
+    '<a href="https://crm.example.com/unsubscribe">Unsubscribe</a>',
+    '<a href="https://crm.example.com/outreach/unsubscribe?token=another-recipient">Unsubscribe</a>',
+    '<a href="{{unsubscribe_link}}">Unsubscribe</a>',
+    '<a href="">Unsubscribe</a>',
+    "<a href='/unsubscribe'>Unsubscribe</a>",
+    '<a href=/unsubscribe>Unsubscribe</a>',
+    '<a title="a > b" href="/unsubscribe">Unsubscribe</a>',
+  ])('repairs the unsubscribe anchor: %s', (html) => {
+    expect(ensureRecipientUnsubscribeLink(html, url)).toContain(`href="${url}"`);
+    expect(ensureRecipientUnsubscribeLink(html, url).match(/<a\b/g)).toHaveLength(1);
+    expect(ensureRecipientUnsubscribeLink(html, url)).not.toContain('another-recipient');
+  });
+
+  it('adds the footer inside the document when no recipient link exists', () => {
+    const html = ensureRecipientUnsubscribeLink('<html><body>Hello</body></html>', url);
+    expect(html).toContain(`href="${url}"`);
+    expect(html.indexOf('Unsubscribe')).toBeLessThan(html.indexOf('</body>'));
+  });
+
+  it('does not repurpose external or unrelated links and still supplies our recipient link', () => {
+    const html = '<a href="https://other.example/unsubscribe">Preferences</a><a href="/products">Products</a>';
+    const result = ensureRecipientUnsubscribeLink(html, url);
+    expect(result).toContain(html);
+    expect(result).toContain(`href="${url}"`);
+  });
+
+  it('does not duplicate an existing recipient footer', () => {
+    const html = `<a href="${url}">Unsubscribe</a>`;
+    expect(ensureRecipientUnsubscribeLink(html, url)).toBe(html);
+  });
+
+  it.each(['javascript:alert(1)', 'https://crm.example.com/unsubscribe', 'https://user:password@crm.example.com/unsubscribe?token=x'])('fails closed for an invalid generated capability', (url) => {
+    expect(() => ensureRecipientUnsubscribeLink('Hello', url)).toThrow('valid recipient unsubscribe link');
   });
 });
 

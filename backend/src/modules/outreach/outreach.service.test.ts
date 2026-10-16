@@ -3,6 +3,7 @@ jest.mock('./unsubscribe.service', () => ({
     .fn()
     .mockResolvedValue('https://example.com/outreach/unsubscribe?token=valid'),
 }));
+import { createOutreachUnsubscribeUrl } from './unsubscribe.service';
 import {
   createSequence,
   getSequence,
@@ -507,6 +508,15 @@ describe('sendQuickMessage', () => {
     );
   });
 
+  it('does not dispatch when a recipient unsubscribe link cannot be generated', async () => {
+    (findLeadById as jest.Mock).mockResolvedValue(baseLead);
+    (findTemplateById as jest.Mock).mockResolvedValue(baseTemplate);
+    (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello Acme' });
+    (createOutreachUnsubscribeUrl as jest.Mock).mockRejectedValueOnce(new Error('token storage unavailable'));
+    await expect(sendQuickMessage('lead1', { channel: 'email', templateId: 't1' }, actor)).rejects.toThrow('token storage unavailable');
+    expect(dispatchOutbound).not.toHaveBeenCalled();
+  });
+
   it('rejects a lead that does not exist', async () => {
     (findLeadById as jest.Mock).mockResolvedValue(null);
     await expect(
@@ -563,7 +573,11 @@ describe('sendQuickMessage', () => {
       expect.objectContaining({ lead_id: 'lead1', campaign_id: null, template_id: 't1' }),
     );
     expect(dispatchOutbound).toHaveBeenCalledWith(
-      expect.objectContaining({ campaignId: null, destination: 'lead@example.com' }),
+      expect.objectContaining({
+        campaignId: null,
+        destination: 'lead@example.com',
+        body: expect.stringContaining('https://example.com/outreach/unsubscribe?token=valid'),
+      }),
     );
     expect(result.status).toBe('sent');
     expect(writeAuditLog).toHaveBeenCalledWith(
