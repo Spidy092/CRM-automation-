@@ -11,6 +11,7 @@ import {
   addLeadsToCampaign,
   removeLeadFromCampaign,
   findCampaignLeads,
+  isCampaignLeadEnrolled,
   getCampaignStats,
   findActiveCampaignsBySourceOrTags,
 } from './campaigns.repository';
@@ -41,6 +42,24 @@ function mockQueryResult(rows: unknown[]) {
 describe('campaigns.repository', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('isCampaignLeadEnrolled', () => {
+    it('uses an indexed single-lead EXISTS query and honors soft deletes', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([{ enrolled: true }]));
+      await expect(isCampaignLeadEnrolled('campaign-1', 'lead-1')).resolves.toBe(true);
+      const [sql, params] = mockPoolQuery.mock.calls[0];
+      expect(sql).toContain('SELECT EXISTS');
+      expect(sql).toContain('cl.lead_id = $2');
+      expect(sql).toContain('c.deleted_at IS NULL');
+      expect(sql).toContain('l.deleted_at IS NULL');
+      expect(params).toEqual(['campaign-1', 'lead-1']);
+    });
+
+    it('returns false when the campaign membership is absent', async () => {
+      mockPoolQuery.mockResolvedValueOnce(mockQueryResult([{ enrolled: false }]));
+      await expect(isCampaignLeadEnrolled('campaign-1', 'lead-1')).resolves.toBe(false);
+    });
   });
 
   describe('findCampaigns', () => {
@@ -91,34 +110,31 @@ describe('campaigns.repository', () => {
         'admin-1',
       );
       expect(result).toEqual(row);
-      expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO campaigns'),
-        [
-          'Spring',
-          'friendly',
-          ['saas'],
-          ['US'],
-          'seq-1',
-          'pipe-1',
-          null,
-          null,
-          null,
-          false,
-          'guarded',
-          false,
-          'open_rate',
-          100,
-          95,
-          true,
-          false,
-          9,
-          18,
-          [1, 2, 3, 4, 5],
-          'UTC',
-          null,
-          'admin-1',
-        ],
-      );
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO campaigns'), [
+        'Spring',
+        'friendly',
+        ['saas'],
+        ['US'],
+        'seq-1',
+        'pipe-1',
+        null,
+        null,
+        null,
+        false,
+        'guarded',
+        false,
+        'open_rate',
+        100,
+        95,
+        true,
+        false,
+        9,
+        18,
+        [1, 2, 3, 4, 5],
+        'UTC',
+        null,
+        'admin-1',
+      ]);
     });
 
     it('defaults sequence_id and pipeline_id to null', async () => {
@@ -178,10 +194,11 @@ describe('campaigns.repository', () => {
         trigger_tags: ['vip'],
       });
       expect(result).toEqual(row);
-      expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining('trigger_source = $1'),
-        [['facebook'], ['vip'], 'c1'],
-      );
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('trigger_source = $1'), [
+        ['facebook'],
+        ['vip'],
+        'c1',
+      ]);
     });
   });
 
@@ -189,10 +206,9 @@ describe('campaigns.repository', () => {
     it('soft-deletes by setting deleted_at', async () => {
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult([]));
       await deleteCampaign('c1');
-      expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining('deleted_at = NOW()'),
-        ['c1'],
-      );
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('deleted_at = NOW()'), [
+        'c1',
+      ]);
     });
   });
 
@@ -293,33 +309,32 @@ describe('campaigns.repository', () => {
   });
 
   describe('getCampaignStats', () => {
-    it('aggregates outreach statuses', async () => {
+    it('counts funnel stages from event timestamps so opened messages stay sent', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([{ total: '10' }]))
         .mockResolvedValueOnce(
-          mockQueryResult([
-            { status: 'sent', count: '5' },
-            { status: 'delivered', count: '4' },
-            { status: 'opened', count: '2' },
-            { status: 'replied', count: '1' },
-            { status: 'failed', count: '3' },
-          ]),
+          mockQueryResult([{ sent: '11', delivered: '8', opened: '5', replied: '2', failed: '3' }]),
         );
       const stats = await getCampaignStats('c1');
       expect(stats).toEqual({
         total_leads: 10,
-        sent: 5,
-        delivered: 4,
-        opened: 2,
-        replied: 1,
+        sent: 11,
+        delivered: 8,
+        opened: 5,
+        replied: 2,
         failed: 3,
       });
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('sent_at IS NOT NULL'), [
+        'c1',
+      ]);
     });
 
     it('handles no outreach rows', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([{ total: '0' }]))
-        .mockResolvedValueOnce(mockQueryResult([]));
+        .mockResolvedValueOnce(
+          mockQueryResult([{ sent: '0', delivered: '0', opened: '0', replied: '0', failed: '0' }]),
+        );
       const stats = await getCampaignStats('c1');
       expect(stats.total_leads).toBe(0);
       expect(stats.sent).toBe(0);
@@ -328,7 +343,9 @@ describe('campaigns.repository', () => {
     it('handles missing total row', async () => {
       mockPoolQuery
         .mockResolvedValueOnce(mockQueryResult([]))
-        .mockResolvedValueOnce(mockQueryResult([]));
+        .mockResolvedValueOnce(
+          mockQueryResult([{ sent: '0', delivered: '0', opened: '0', replied: '0', failed: '0' }]),
+        );
       const stats = await getCampaignStats('c1');
       expect(stats.total_leads).toBe(0);
     });
@@ -340,10 +357,10 @@ describe('campaigns.repository', () => {
       mockPoolQuery.mockResolvedValueOnce(mockQueryResult(rows));
       const result = await findActiveCampaignsBySourceOrTags('facebook', ['vip', 'hot']);
       expect(result).toEqual(rows);
-      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('trigger_source && ARRAY'), [
-        'facebook',
-        ['vip', 'hot'],
-      ]);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('trigger_source && ARRAY'),
+        ['facebook', ['vip', 'hot']],
+      );
     });
   });
 });

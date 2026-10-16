@@ -460,6 +460,21 @@ export async function findEligibleTriggerLeadsForCampaign(
   return result.rows;
 }
 
+/** Indexed membership check without loading the campaign roster. */
+export async function isCampaignLeadEnrolled(campaignId: string, leadId: string): Promise<boolean> {
+  const result = await pool.query<{ enrolled: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM campaign_leads cl
+       JOIN campaigns c ON c.id = cl.campaign_id
+       JOIN leads l ON l.id = cl.lead_id
+       WHERE cl.campaign_id = $1 AND cl.lead_id = $2
+         AND c.deleted_at IS NULL AND l.deleted_at IS NULL
+     ) AS enrolled`,
+    [campaignId, leadId],
+  );
+  return result.rows[0]?.enrolled ?? false;
+}
+
 export async function findCampaignLeadRows(campaignId: string): Promise<CampaignLeadRow[]> {
   const result = await pool.query<CampaignLeadRow>(
     `SELECT l.id, l.business_name, l.phone, l.email, l.status
@@ -534,6 +549,15 @@ export async function getCampaignStepStatsRows(campaignId: string): Promise<Camp
   }));
 }
 
+/**
+ * Campaign funnel totals.
+ *
+ * Progress stages come from the timestamp columns — a log whose status
+ * advanced to 'opened' or 'replied' still counts as sent/delivered/opened —
+ * so summary totals reconcile with the per-step statistics below. Failures
+ * come from the status column. Missing tracking data means unknown, never
+ * an invented delivery event.
+ */
 export async function getCampaignStats(campaignId: string): Promise<CampaignStats> {
   const leadsResult = await pool.query<{ total: string }>(
     `SELECT COUNT(*) as total FROM campaign_leads cl
@@ -542,42 +566,33 @@ export async function getCampaignStats(campaignId: string): Promise<CampaignStat
     [campaignId],
   );
 
-  const outreachResult = await pool.query<{ status: string; count: string }>(
-    `SELECT status, COUNT(*) as count
-     FROM outreach_logs
-     WHERE campaign_id = $1
-     GROUP BY status`,
+  const outreachResult = await pool.query<{
+    sent: string;
+    delivered: string;
+    opened: string;
+    replied: string;
+    failed: string;
+  }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE sent_at IS NOT NULL) as sent,
+       COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) as delivered,
+       COUNT(*) FILTER (WHERE opened_at IS NOT NULL) as opened,
+       COUNT(*) FILTER (WHERE replied_at IS NOT NULL) as replied,
+       COUNT(*) FILTER (WHERE status = 'failed') as failed
+      FROM outreach_logs
+      WHERE campaign_id = $1`,
     [campaignId],
   );
 
+  const row = outreachResult.rows[0];
   const stats: CampaignStats = {
     total_leads: parseInt(leadsResult.rows[0]?.total || '0'),
-    sent: 0,
-    delivered: 0,
-    opened: 0,
-    replied: 0,
-    failed: 0,
+    sent: parseInt(row?.sent || '0'),
+    delivered: parseInt(row?.delivered || '0'),
+    opened: parseInt(row?.opened || '0'),
+    replied: parseInt(row?.replied || '0'),
+    failed: parseInt(row?.failed || '0'),
   };
-
-  for (const row of outreachResult.rows) {
-    switch (row.status) {
-      case 'sent':
-        stats.sent = parseInt(row.count);
-        break;
-      case 'delivered':
-        stats.delivered = parseInt(row.count);
-        break;
-      case 'opened':
-        stats.opened = parseInt(row.count);
-        break;
-      case 'replied':
-        stats.replied = parseInt(row.count);
-        break;
-      case 'failed':
-        stats.failed = parseInt(row.count);
-        break;
-    }
-  }
 
   return stats;
 }

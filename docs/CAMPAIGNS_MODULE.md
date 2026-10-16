@@ -931,3 +931,206 @@ npm run test -- --testPathPattern=campaigns.service.test
 - Lead list with progress (latest step, status)
 - Campaign statistics (sent, delivered, opened, replied, failed)
 - AI brief review (if AI personalization is enabled)
+
+---
+
+## 14. Campaign Operations (Phases 0–2, 2026-10-15)
+
+Implements `docs/campaign-operations-research-plan-2026-10-15.md` phases 0–2.
+Phases 3 (operator controls) and 4 (advanced outreach) are documented
+follow-up work — see §15.
+
+### What changed and why
+
+After launch, every campaign answers: which action happens next, its
+estimated time and timezone, how many recipients are scheduled, how many
+potential messages remain, and why anything is waiting. Execution was made
+reliable before any scheduling promise is displayed.
+
+Key fixes (all covered by regression tests):
+
+- Campaign summary counts `sent` from `sent_at`, not from the mutable status
+  column — an opened/replied message stays counted as sent, reconciling with
+  per-step totals.
+- The worker enforces an authoritative pre-send gate (campaign active,
+  enrollment member, lead eligible, reply/opt-out stops, template approval)
+  for first sends, follow-ups, retries, and stale jobs.
+- Manual retry on a paused campaign is rejected (409) with an explanation.
+- Pause freezes remaining delays in PostgreSQL before transport jobs are
+  cancelled; resume reapplies windows and recomputes capacity without
+  restarting completed steps. Individually paused leads stay paused.
+- First-step delays are rejected explicitly at launch (never silently
+  ignored); minute-level delays remain later scope.
+
+### Durable execution model (flag-gated)
+
+PostgreSQL owns enrollment progress, next-step timing, and execution
+identity (`campaign_sequence_snapshots`, `campaign_leads` execution columns,
+`campaign_step_executions`, `campaign_day_capacity` — migration `0085`,
+**review required before running**). BullMQ is wake-up transport only.
+
+- Sequence versions are pinned per enrollment; edits mint new versions.
+- Step executions carry an opaque id + generation; workers claim before
+  sending, so repeats, stale jobs, recovery, and retries cannot double-send.
+- Daily capacity is reserved atomically (`reserved < send_limit`); definite
+  failures release the slot, uncertain outcomes hold it for review.
+- Crash-after-acceptance surfaces as `uncertain` via lease expiry — never a
+  blind resend, never a promise of exactly-once delivery.
+- The recovery sweep (`campaignRecovery.worker`, 60s) republishes orphaned
+  intents and reconciles expired leases. Bounded batches only.
+- The existing event-outbox allowlist was **not** extended; campaign
+  scheduling uses its own intent rows + publisher path.
+
+### Rollout
+
+`CAMPAIGN_OPERATIONS_V2_ENABLED` (default **off**). Enabling requires
+migrations `0085` through `0087` to have run. The flag controls durable
+campaign operations; once an enrollment has durable execution state, that
+state remains its scheduling owner even if the flag is turned off. Durable
+jobs are parked while disabled and can be swept again after re-enabling.
+Enrollments without durable ownership continue through the legacy path.
+Never allow both paths to schedule the same enrollment. Rollback turns the
+flag off while retaining durable rows for reconciliation; it does not hand
+durable enrollments back to legacy dispatch.
+
+Legacy paused campaigns are not automatically backfilled by this release.
+Recovering their lost due times and a guided resume schedule are deferred;
+do not claim that the current UI reconstructs timing for those campaigns.
+
+### New API surface (all Zod-validated, explicit RBAC, same envelope)
+
+- `GET /:id/operations` — next committed activity, state/channel counts,
+  capacity, waiting reasons, attention items, freshness timestamp.
+- `GET /:id/schedule` — committed upcoming work + clearly-marked projections.
+- `GET /:id/activity` — cursor-paginated operational history.
+- `GET /:id/enrollments` — cursor-paginated per-lead progress (the legacy
+  array `/:id/leads` endpoint is unchanged for existing consumers).
+- `POST /:id/enrollments/:leadId/pause|resume` — optimistic version
+  (`expectedGeneration`), reason, audit; sales limited to owned leads.
+- `GET /operations-summary?ids=` — one bulk row per campaign for the list
+  page (max 100 ids), never a request per campaign.
+- Pause/resume responses keep `data` = campaign and gain operational counts
+  in `meta.operations`; launch `meta.automation` gains skipped recipients
+  and partial scheduling failures.
+
+### Frontend
+
+`CampaignDetailPage` gains an operations overview (next activity + timezone,
+scheduled/potential counts, sent today vs capacity, waiting reasons,
+attention items), launch/pause/resume outcome banners, a schedule panel
+(committed vs projected), an activity feed, and a server-paginated
+enrollment table with search, per-lead next action/ETA, waiting reasons,
+and pause/resume/retry actions. `CampaignsPage` gains search, status and
+needs-attention filters, card/table modes, and bulk summary badges. All
+server state flows through `apiClient` + TanStack Query with bounded
+15s polling that stops when the tab is hidden; loading, empty, error, and
+stale states are covered by tests.
+
+## 14b. Corrective Review Fixes (2026-10-15, findings 1–9)
+
+A targeted implementation review found 9 defects in the first implementation.
+All 9 are fixed below; each fix
+names its regression proof. Mocked unit tests plus isolated scratch
+PostgreSQL/Redis integration tests
+(`backend/src/modules/campaigns/campaigns.durable.integration.test.ts`,
+recording connector double, never real sends) cover the persistence, queue,
+concurrency, and recovery boundaries.
+
+1. **Migration defaults.** The user's request to complete the pending fix
+   authorizes correcting both string defaults in the uncommitted 0085 file.
+   The actual checked-in migration chain must succeed on populated pre-0085
+   databases; a later migration alone cannot repair a failing 0085.
+   Migration 0086 retains compatible default repair and adds `mock_mode`.
+   Additive migration 0087 restores campaign enrollment, snapshot, and daily
+   capacity uniqueness plus execution CHECK constraints omitted by earlier
+   named constraint maps under the installed node-pg-migrate API. It fails
+   on invalid existing data without deleting or merging records. Proof:
+   `migrations.chain.integration.test.ts` runs the real chain, checks both
+   defaults, and exercises enrollment/snapshot upserts and daily capacity.
+   No application database migrations have been run; deployment remains a
+   separate approval step. Databases that already applied 0085 retain 0086's
+   corrective path and must apply 0087 before enabling durable dispatch.
+2. **Transport IDs.** BullMQ custom IDs cannot contain `:` (verified against
+   the installed validator). `buildTransportJobId` maps each execution key
+   to stable `exec-<sha256 hex>`; the full key stays in job data, and stable
+   IDs keep BullMQ dedupe from doubling republished intents. Applied to
+   initial publication, deferrals, retries, resume, and recovery. Proof:
+   `queue.transport.test.ts` plus a real-queue add/read/dedupe integration
+   test on scratch Redis.
+3. **Ownership vs. permission.** A job carrying `executionId` is always
+   durable-owned (`handleDurableDispatch`), independent of the flag. Flag-off
+   parks such jobs (no state change, never legacy sending); re-enabling lets
+   the sweep republish due unscheduled *and* stale scheduled intents. Legacy
+   and durable senders are never armed for the same enrollment. Proof:
+   parking unit test plus a park → recover → dispatch integration test.
+4. **Transactional acceptance.** `recordAcceptanceTx` commits sent-marking,
+   enrollment advancement, and the next intent in one transaction; transport
+   publication happens only after commit. Pre-commit crashes leave a claimed
+   execution (lease expiry → explicit uncertain outcome); post-commit crashes
+   leave an unscheduled intent the sweep republishes without resending.
+   Proof: concurrent double-acceptance and failure-injection rollback
+   integration tests.
+5. **Pause/claim serialization.** `pauseCampaignTx` (status flip + freeze)
+   and `claimDueStepExecutionTx` lock campaigns-then-enrollments in one
+   shared order and revalidate live status/generation inside the lock.
+   Pre-pause claims stay valid in-flight sends; post-pause claims are
+   impossible. Proof: two-connection interleaving integration test plus
+   lock-order contract tests.
+6. **Enrollment resume.** `resumeSingleEnrollment` recomputes the frozen
+   remainder through the shared scheduling rules (or an explicit schedule
+   for unknown timing), persists the current-generation execution atomically
+   with the state transition, then publishes. Duplicate resumes conflict
+   (409). Proof: unit tests plus a pause → resume → dispatch integration
+   test with duplicate-resume and explicit-timing cases.
+7. **Fail-closed capacity.** Reservation errors release the claim to a
+   retryable pre-send state and send nothing; the connector never runs
+   without a successful required reservation. Pre-network failures stay
+   `scheduled`, never `failed`/`uncertain`. Proof: unit test asserting zero
+   connector calls plus an integration test with broken capacity storage.
+8. **Mock mode.** `mock_mode` persists per execution and per enrollment
+   (migration 0086); enroll, accept, resume, retry, and recovery all inherit
+   and republish it. Simulated work can never convert to real outreach.
+   Proof: mode assertions in unit tests plus an end-to-end mock-mode
+   integration test (zero provider calls, zero real-mode jobs).
+9. **Campaign-wide reporting.** `summarizeEnrollmentStates` groups totals
+   in PostgreSQL using each enrollment's pinned snapshot step count (legacy
+   rows fall back to the live length). Only waiting-reason buckets reach Node;
+   outreach-log details and per-lead task counts stay on the paginated view. Proof: 120-enrollment mixed-snapshot unit and integration tests.
+
+### Final rollout contract
+
+`CAMPAIGN_OPERATIONS_V2_ENABLED` (default **off**) grants *permission* to
+dispatch durable work and create durable intents; it never *reinterprets*
+ownership. Prerequisites: migrations 0085+0086+0087 reviewed, approved, and
+applied. Rollback = flag off (parked intents retained, sweep idle);
+re-enable resumes via the sweep — no reconciliation script needed. Never run
+legacy and durable dispatch for the same enrollment simultaneously. Do not
+drop durable tables as a rollback shortcut.
+
+### Integration-test infrastructure
+
+Scratch-only containers (never production data or credentials, never
+`.env`): `postgres:16-alpine` on 5433 and `redis:7-alpine` on 6380 (see the
+TESTING block in the integration file). Run these explicitly with
+`npm --prefix backend run test:campaign-integration` after setting
+`TEST_PG_URL`, `TEST_PG_USER`, `TEST_PG_PASSWORD`, and `TEST_REDIS_URL` as shown
+in that block. Default `npm test` excludes the two scratch suites; CI runs
+both commands. Durable worker tests build a minimal
+schema directly. The separate `migrations.chain.integration.test.ts` executes
+the actual checked-in migration chain on fresh, uniquely named scratch
+databases, both empty and populated before 0085, then verifies defaults,
+upserts, and capacity constraints. These scratch tests do not apply migrations
+to an application database. Test connections reject nonlocal hosts, incorrect
+ports, and non-test database names before any destructive cleanup.
+
+## 15. Deferred Follow-up Work (Phases 3–4, not implemented)
+
+- Per-enrollment rescheduling with impact preview, bulk retry selection,
+  explicit stop/completion states UI.
+- Minute-based delays, sender capacity/rotation, cross-campaign contact
+  frequency, meeting-booked stops, out-of-office snoozing, conditional steps
+  and experimentation.
+- Migrating long-running legacy campaigns to durable scheduling at a
+  controlled boundary with reconciliation.
+- Each addition must verify its integration contracts and must not bypass
+  stops or capacity checks.

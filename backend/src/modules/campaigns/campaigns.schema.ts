@@ -108,3 +108,65 @@ export const addLeadsSchema = z.object({
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
 export type UpdateCampaignInput = z.infer<typeof updateCampaignSchema>;
 export type AddLeadsInput = z.infer<typeof addLeadsSchema>;
+
+// ── Campaign operations (phases 1–2) ─────────────────────────────────────────
+
+export const campaignIdParamSchema = z.object({
+  id: z.string().uuid('Campaign id must be a valid UUID'),
+});
+
+export const campaignLeadParamSchema = z.object({
+  id: z.string().uuid('Campaign id must be a valid UUID'),
+  leadId: z.string().uuid('Lead id must be a valid UUID'),
+});
+
+export const operationsSummaryQuerySchema = z.object({
+  ids: z
+    .string()
+    .min(1)
+    .transform((value) =>
+      value
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.string().uuid()).min(1).max(100)),
+});
+
+export const scheduleQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  includeProjected: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((value) => value === true || value === 'true')
+    .optional(),
+});
+
+export const activityQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  cursor: z.string().min(1).max(2000).optional(),
+});
+
+export const enrollmentsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  cursor: z.string().min(1).max(2000).optional(),
+  enrollmentStatus: z.enum(['active', 'paused', 'completed', 'stopped']).optional(),
+  search: z.string().trim().min(1).max(255).optional(),
+});
+
+export const pauseEnrollmentSchema = z.object({
+  reason: z.string().trim().min(1).max(500).optional(),
+  expectedGeneration: z.number().int().min(0),
+});
+
+export const resumeEnrollmentSchema = z.object({
+  expectedGeneration: z.number().int().min(0),
+  /** Explicit schedule — required when the enrollment lost its timing. */
+  nextDueAt: z.string().datetime({ offset: true }).optional(),
+});
+
+export type OperationsSummaryQuery = z.infer<typeof operationsSummaryQuerySchema>;
+export type ScheduleQuery = z.infer<typeof scheduleQuerySchema>;
+export type ActivityQuery = z.infer<typeof activityQuerySchema>;
+export type EnrollmentsQuery = z.infer<typeof enrollmentsQuerySchema>;
+export type PauseEnrollmentInput = z.infer<typeof pauseEnrollmentSchema>;
+export type ResumeEnrollmentInput = z.infer<typeof resumeEnrollmentSchema>;

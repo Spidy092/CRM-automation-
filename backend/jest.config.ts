@@ -5,6 +5,10 @@ const config: Config = {
   rootDir: 'src',
   setupFilesAfterEnv: ['<rootDir>/../jest.setup.ts'],
   testMatch: ['**/*.test.ts', '**/*.spec.ts'],
+  testPathIgnorePatterns: [
+    'campaigns\\.durable\\.integration\\.test\\.ts$',
+    'migrations\\.chain\\.integration\\.test\\.ts$',
+  ],
   collectCoverageFrom: ['**/*.ts', '!**/*.d.ts', '!**/index.ts', '!**/*.test.ts', '!**/*.spec.ts'],
   coverageThreshold: process.env.CI
     ? {

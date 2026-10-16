@@ -71,10 +71,34 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      campaign-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crmtest
+          POSTGRES_PASSWORD: crmtest
+          POSTGRES_DB: crm_test
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      campaign-redis:
+        image: redis:7-alpine
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://crm_test:crm_test@localhost:5432/crm_test
       REDIS_URL: redis://localhost:6379
+      TEST_PG_URL: postgres://localhost:5433/crm_test
+      TEST_PG_USER: crmtest
+      TEST_PG_PASSWORD: crmtest
+      TEST_REDIS_URL: redis://localhost:6380
       JWT_ACCESS_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 7d
       # 32-byte (64 hex char) deterministic test key — NOT a production secret
@@ -113,7 +137,10 @@ jobs:
         run: npm run migrate
 
       - name: Run tests with coverage
-        run: npm run test
+        run: npm run test -- --runInBand
+
+      - name: Run isolated campaign integration tests
+        run: npm run test:campaign-integration
 
       - name: Upload coverage report
         if: always()

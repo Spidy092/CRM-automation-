@@ -9,7 +9,12 @@ import {
   useResumeCampaign,
   useCampaignLeads,
   useRetryLeadOutreachStep,
+  type AutomationLaunchMeta,
 } from '@/api/campaigns';
+import { OperationsOverview } from '@/components/campaigns/OperationsOverview';
+import { EnrollmentsTable } from '@/components/campaigns/EnrollmentsTable';
+import { SchedulePanel } from '@/components/campaigns/SchedulePanel';
+import { ActivityFeed } from '@/components/campaigns/ActivityFeed';
 import { useSequence } from '@/api/outreach';
 import { usePipeline } from '@/api/pipelines';
 import { useTemplates } from '@/api/templates';
@@ -71,6 +76,9 @@ export function CampaignDetailPage() {
   const retryStep = useRetryLeadOutreachStep();
   const { showToast } = useToast();
   const [leadsPage, setLeadsPage] = useState(0);
+  const [launchResult, setLaunchResult] = useState<AutomationLaunchMeta | null>(null);
+  const [pauseResult, setPauseResult] = useState<string | null>(null);
+  const [resumeResult, setResumeResult] = useState<string | null>(null);
 
   const templateById = new Map(templates.map((t) => [t.id, t]));
   const triggerStageName = pipeline?.stages?.find(
@@ -83,8 +91,17 @@ export function CampaignDetailPage() {
 
   const handleLaunch = async () => {
     try {
-      await launchCampaign.mutateAsync(id!);
-      showToast('Campaign launched.', 'success');
+      const result = await launchCampaign.mutateAsync(id!);
+      setLaunchResult(result.automation ?? null);
+      setPauseResult(null);
+      setResumeResult(null);
+      const failures = result.automation?.schedulingFailures?.length ?? 0;
+      showToast(
+        failures > 0
+          ? `Campaign launched with ${failures} scheduling failure(s).`
+          : 'Campaign launched.',
+        failures > 0 ? 'error' : 'success',
+      );
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to launch campaign.'), 'error');
     }
@@ -92,7 +109,15 @@ export function CampaignDetailPage() {
 
   const handlePause = async () => {
     try {
-      await pauseCampaign.mutateAsync(id!);
+      const result = await pauseCampaign.mutateAsync(id!);
+      const ops = result.operations;
+      setPauseResult(
+        ops
+          ? `Paused. ${ops.cancelledJobs} queued job(s) cancelled${ops.inFlight != null ? `, ${ops.inFlight} in-flight send(s) may still complete` : ''}${ops.frozen > 0 ? `, ${ops.frozen} enrollment(s) frozen` : ''}.`
+          : 'Campaign paused.',
+      );
+      setLaunchResult(null);
+      setResumeResult(null);
       showToast('Campaign paused.', 'success');
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to pause campaign.'), 'error');
@@ -101,7 +126,15 @@ export function CampaignDetailPage() {
 
   const handleResume = async () => {
     try {
-      await resumeCampaign.mutateAsync(id!);
+      const result = await resumeCampaign.mutateAsync(id!);
+      const ops = result.operations;
+      setResumeResult(
+        ops
+          ? `Resumed. ${ops.restored} enrollment(s) restored${ops.unknownTiming > 0 ? `, ${ops.unknownTiming} need an explicit schedule` : ''}.`
+          : 'Campaign resumed.',
+      );
+      setLaunchResult(null);
+      setPauseResult(null);
       showToast('Campaign resumed.', 'success');
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to resume campaign.'), 'error');
@@ -189,9 +222,55 @@ export function CampaignDetailPage() {
         </div>
       </div>
 
+      {/* Launch / pause / resume outcome — an active badge must not imply full queueing. */}
+      {launchResult && (
+        <Card className="border-indigo-200 bg-indigo-50/50" aria-live="polite">
+          <CardContent className="pt-4 text-sm text-slate-700">
+            <div className="font-medium text-slate-900">Launch result</div>
+            <div className="mt-1">
+              {launchResult.enqueued} scheduled · {launchResult.skipped} skipped
+              {(launchResult.schedulingFailures?.length ?? 0) > 0 && (
+                <span className="text-red-700">
+                  {' '}· {launchResult.schedulingFailures!.length} scheduling failure(s)
+                </span>
+              )}
+            </div>
+            {(launchResult.skippedLeads?.length ?? 0) > 0 && (
+              <ul className="mt-2 max-h-32 space-y-1 overflow-auto">
+                {launchResult.skippedLeads!.slice(0, 10).map((lead) => (
+                  <li key={lead.leadId} className="text-xs text-slate-600">
+                    <span className="font-medium">{lead.businessName}</span> — {lead.reasons.join(' ')}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {(launchResult.schedulingFailures?.length ?? 0) > 0 && (
+              <ul className="mt-2 space-y-1">
+                {launchResult.schedulingFailures!.slice(0, 10).map((failure) => (
+                  <li key={failure.leadId} className="text-xs text-red-700">
+                    {failure.leadId} — {failure.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {pauseResult && (
+        <Card className="border-amber-200 bg-amber-50/60" aria-live="polite">
+          <CardContent className="pt-4 text-sm text-amber-900">{pauseResult}</CardContent>
+        </Card>
+      )}
+      {resumeResult && (
+        <Card className="border-green-200 bg-green-50/60" aria-live="polite">
+          <CardContent className="pt-4 text-sm text-green-900">{resumeResult}</CardContent>
+        </Card>
+      )}
+
+      <OperationsOverview campaignId={id!} />
+
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {/* How the campaign runs */}
-        <Card>
+        {/* How the campaign runs */}        <Card>
           <CardHeader>
             <CardTitle className="text-lg">Automation Setup</CardTitle>
             <CardDescription>Pipeline trigger and outreach sequence.</CardDescription>
@@ -455,8 +534,7 @@ export function CampaignDetailPage() {
         <CardHeader>
           <CardTitle className="text-lg">Enrolled Leads & Progress</CardTitle>
           <CardDescription>View the current sequence step for each enrolled lead.</CardDescription>
-        </CardHeader>
-        <CardContent>
+        </CardHeader>        <CardContent>
           {isLeadsLoading ? (
             <LoadingTable rows={3} cols={4} />
           ) : campaignLeads.length > 0 ? (
@@ -578,6 +656,12 @@ export function CampaignDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <EnrollmentsTable campaignId={id!} />
+
+      <SchedulePanel campaignId={id!} />
+
+      <ActivityFeed campaignId={id!} />
     </div>
   );
 }

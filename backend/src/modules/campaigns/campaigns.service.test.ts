@@ -1,4 +1,7 @@
-jest.mock('../leads/leads.service', () => ({ getLeadEnrollmentOptions: jest.fn() }));
+jest.mock('../leads/leads.service', () => ({
+  getLeadEnrollmentOptions: jest.fn(),
+  getLeadsByIds: jest.fn().mockResolvedValue([{ id: 'lead-1', status: 'active' }]),
+}));
 jest.mock('./campaigns.repository', () => ({
   findCampaigns: jest.fn(),
   findCampaignById: jest.fn(),
@@ -18,6 +21,13 @@ jest.mock('./campaigns.repository', () => ({
   getCampaignStats: jest.fn(),
   getCampaignStepStatsRows: jest.fn(),
 }));
+jest.mock('./campaigns.execution.repository', () => ({
+  findExistingEnrollmentLeadIds: jest.fn().mockResolvedValue([]),
+  pauseCampaignTx: jest.fn(),
+  hasDurableEnrollments: jest.fn().mockResolvedValue(false),
+  hasDurableEnrollment: jest.fn().mockResolvedValue(false),
+  listActiveEnrollments: jest.fn(),
+}));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
 jest.mock('../../workers/queue', () => ({
   enqueueOutreachDispatch: jest.fn(),
@@ -35,7 +45,9 @@ jest.mock('../integrations/integrations.repository', () => ({
 jest.mock('../ai-campaign-brain/ai-campaign-brain.repository', () => ({
   findCampaignBrief: jest.fn(),
 }));
-jest.mock('../../shared/utils/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
+jest.mock('../../shared/utils/logger', () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+}));
 
 import { AppError } from '../../shared/middleware/errorHandler';
 import {
@@ -79,6 +91,13 @@ import {
   retryLeadOutreachStep,
   updateCampaignById,
 } from './campaigns.service';
+import {
+  hasDurableEnrollments,
+  findExistingEnrollmentLeadIds,
+  pauseCampaignTx,
+  listActiveEnrollments,
+} from './campaigns.execution.repository';
+import * as executionService from './campaigns.execution.service';
 
 const baseCampaign = {
   id: 'camp-1',
@@ -102,6 +121,9 @@ const actor = { id: 'admin-1', role: 'admin', ipAddress: '127.0.0.1' };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (hasDurableEnrollments as jest.Mock).mockResolvedValue(false);
+  (listActiveEnrollments as jest.Mock).mockResolvedValue([]);
+  (findExistingEnrollmentLeadIds as jest.Mock).mockResolvedValue([]);
   (findCampaignLeadRows as jest.Mock).mockResolvedValue([]);
   (findEligibleTriggerLeadsForCampaign as jest.Mock).mockResolvedValue([]);
   (findTemplateById as jest.Mock).mockResolvedValue({
@@ -115,6 +137,7 @@ beforeEach(() => {
     last_test_status: 'ok',
   });
   (findCampaignBrief as jest.Mock).mockResolvedValue(null);
+  (cancelPendingOutreachJobs as jest.Mock).mockResolvedValue(0);
 });
 
 describe('getCampaignById', () => {
@@ -145,14 +168,25 @@ describe('getAllCampaigns', () => {
 describe('createCampaign', () => {
   it('persists source and tag enrollment rules on creation', async () => {
     (insertCampaign as jest.Mock).mockResolvedValue(baseCampaign);
-    await createCampaign({ name: 'Sources', trigger_source: ['google_business'], trigger_tags: ['vip'] }, actor);
-    expect(insertCampaign).toHaveBeenCalledWith(expect.objectContaining({ trigger_source: ['google_business'], trigger_tags: ['vip'] }), actor.id);
+    await createCampaign(
+      { name: 'Sources', trigger_source: ['google_business'], trigger_tags: ['vip'] },
+      actor,
+    );
+    expect(insertCampaign).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger_source: ['google_business'], trigger_tags: ['vip'] }),
+      actor.id,
+    );
   });
 
   it('inserts and audits', async () => {
     (insertCampaign as jest.Mock).mockResolvedValue(baseCampaign);
     const res = await createCampaign(
-      { name: 'Q3 Outreach', tone: 'professional', target_industries: ['Tech'], target_countries: ['US'] },
+      {
+        name: 'Q3 Outreach',
+        tone: 'professional',
+        target_industries: ['Tech'],
+        target_countries: ['US'],
+      },
       actor,
     );
     expect(res.id).toBe('camp-1');
@@ -164,8 +198,15 @@ describe('updateCampaignById', () => {
   it.each([null, ['facebook']])('saves or clears enrollment rules: %s', async (value) => {
     (findCampaignById as jest.Mock).mockResolvedValue(baseCampaign);
     (updateCampaign as jest.Mock).mockResolvedValue(baseCampaign);
-    await updateCampaignById('camp-1', { trigger_source: value, trigger_tags: value, pipeline_id: null }, actor);
-    expect(updateCampaign).toHaveBeenCalledWith('camp-1', expect.objectContaining({ trigger_source: value, trigger_tags: value, pipeline_id: null }));
+    await updateCampaignById(
+      'camp-1',
+      { trigger_source: value, trigger_tags: value, pipeline_id: null },
+      actor,
+    );
+    expect(updateCampaign).toHaveBeenCalledWith(
+      'camp-1',
+      expect.objectContaining({ trigger_source: value, trigger_tags: value, pipeline_id: null }),
+    );
   });
 
   it('leaves trigger rules unchanged when omitted in an update', async () => {
@@ -214,7 +255,11 @@ describe('launch / pause / resume', () => {
       id: 'seq-1',
       steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
     });
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...campaign, status: 'active', launched_at: '2026-06-19T01:00:00Z' });
+    (launchCampaign as jest.Mock).mockResolvedValue({
+      ...campaign,
+      status: 'active',
+      launched_at: '2026-06-19T01:00:00Z',
+    });
     const res = await launchCampaignById('camp-1', actor);
     expect(res.campaign.status).toBe('active');
     expect(res.automation).toEqual({ enqueued: 0, skipped: 0, mockMode: false });
@@ -230,7 +275,40 @@ describe('launch / pause / resume', () => {
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
     (pauseCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'paused' });
     const res = await pauseCampaignById('camp-1', actor);
-    expect(res.status).toBe('paused');
+    expect(res.campaign.status).toBe('paused');
+    expect(res.operations).toEqual(
+      expect.objectContaining({ cancelledJobs: expect.any(Number), durable: false }),
+    );
+    expect(pauseCampaignTx).not.toHaveBeenCalled();
+  });
+
+  it('keeps durable pause semantics for existing enrollments when the rollout flag is off', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
+    (hasDurableEnrollments as jest.Mock).mockResolvedValue(true);
+    (pauseCampaignTx as jest.Mock).mockResolvedValue({
+      campaign: { ...baseCampaign, status: 'paused' },
+      frozen: 1,
+    });
+    const res = await pauseCampaignById('camp-1', actor);
+    expect(pauseCampaignTx).toHaveBeenCalledWith('camp-1', expect.any(String));
+    expect(res.operations).toMatchObject({ frozen: 1, durable: true });
+  });
+
+  it('pauses atomically through the shared lock protocol when durable', async () => {
+    process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = 'true';
+    try {
+      (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
+      (pauseCampaignTx as jest.Mock).mockResolvedValue({
+        campaign: { ...baseCampaign, status: 'paused' },
+        frozen: 2,
+      });
+      const res = await pauseCampaignById('camp-1', actor);
+      expect(pauseCampaignTx).toHaveBeenCalledWith('camp-1', expect.any(String));
+      expect(pauseCampaign).not.toHaveBeenCalled();
+      expect(res.operations).toMatchObject({ frozen: 2, durable: true });
+    } finally {
+      delete process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
+    }
   });
 
   it('refuses to pause a non-active campaign', async () => {
@@ -242,7 +320,20 @@ describe('launch / pause / resume', () => {
     (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'paused' });
     (resumeCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
     const res = await resumeCampaignById('camp-1', actor);
-    expect(res.status).toBe('active');
+    expect(res.campaign.status).toBe('active');
+    expect(res.operations).toEqual(
+      expect.objectContaining({ restored: 0, unknownTiming: 0, durable: false }),
+    );
+  });
+
+  it('restores durable enrollments on campaign resume when the rollout flag is off', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'paused' });
+    (hasDurableEnrollments as jest.Mock).mockResolvedValue(true);
+    (resumeCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active' });
+    (listActiveEnrollments as jest.Mock).mockResolvedValue([]);
+    const res = await resumeCampaignById('camp-1', actor);
+    expect(listActiveEnrollments).toHaveBeenCalledWith('camp-1');
+    expect(res.operations).toMatchObject({ restored: 0, unknownTiming: 0, durable: true });
   });
 
   it('refuses to resume a non-paused campaign', async () => {
@@ -272,7 +363,13 @@ describe('addLeads / removeLead', () => {
       steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
     });
     (findCampaignLeadRows as jest.Mock).mockResolvedValue([
-      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
+      {
+        id: 'lead-1',
+        business_name: 'Lead 1',
+        email: 'one@example.com',
+        phone: '+1',
+        status: 'active',
+      },
     ]);
     (addLeadsToCampaign as jest.Mock).mockResolvedValue([
       { id: 'cl-1', campaign_id: 'camp-1', lead_id: 'lead-1' },
@@ -284,14 +381,16 @@ describe('addLeads / removeLead', () => {
     const res = await addLeads('camp-1', ['lead-1'], actor);
 
     expect(res).toEqual({ added: 1, enqueued: 1 });
-    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      leadId: 'lead-1',
-      campaignId: 'camp-1',
-      sequenceId: 'seq-1',
-      stepNumber: 1,
-      channel: 'email',
-      templateId: 'tmpl-1',
-    }));
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead-1',
+        campaignId: 'camp-1',
+        sequenceId: 'seq-1',
+        stepNumber: 1,
+        channel: 'email',
+        templateId: 'tmpl-1',
+      }),
+    );
   });
 
   it('queues an already-enrolled lead with no outreach history when added again', async () => {
@@ -302,7 +401,13 @@ describe('addLeads / removeLead', () => {
       steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
     });
     (findCampaignLeadRows as jest.Mock).mockResolvedValue([
-      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
+      {
+        id: 'lead-1',
+        business_name: 'Lead 1',
+        email: 'one@example.com',
+        phone: '+1',
+        status: 'active',
+      },
     ]);
     (addLeadsToCampaign as jest.Mock).mockResolvedValue([]);
     (findCampaignLeadsWithProgress as jest.Mock).mockResolvedValue([
@@ -312,11 +417,13 @@ describe('addLeads / removeLead', () => {
     const res = await addLeads('camp-1', ['lead-1'], actor);
 
     expect(res).toEqual({ added: 0, enqueued: 1 });
-    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      leadId: 'lead-1',
-      campaignId: 'camp-1',
-      stepNumber: 1,
-    }));
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead-1',
+        campaignId: 'camp-1',
+        stepNumber: 1,
+      }),
+    );
   });
 
   it('refuses to add leads to an active campaign when its sending provider is disconnected', async () => {
@@ -457,11 +564,54 @@ describe('retryLeadOutreachStep', () => {
     error_message: 'SendGrid credentials not set',
   };
 
+  it('rejects durable-owned retries when the rollout flag is disabled', async () => {
+    const { hasDurableEnrollment } = await import('./campaigns.execution.repository');
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', sequence_id: 'seq-1' });
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue({ status: 'failed', template_id: 'tmpl-1' });
+    (findTemplateById as jest.Mock).mockResolvedValue({ approval_status: 'approved' });
+    (hasDurableEnrollment as jest.Mock).mockResolvedValueOnce(true);
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toMatchObject({ statusCode: 409 });
+    expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
+  });
+
   it('re-enqueues the latest failed step', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
     (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(failedLog);
 
     const result = await retryLeadOutreachStep('camp-1', 'lead-1', actor);
+
+    expect(result).toEqual({ enqueued: true });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      {
+        leadId: 'lead-1',
+        campaignId: 'camp-1',
+        sequenceId: 'seq-1',
+        stepNumber: 2,
+        channel: 'email',
+        templateId: 'tmpl-1',
+        mockMode: false,
+        aiPersonalizationEnabled: false,
+      },
+      { jobIdSuffix: expect.stringMatching(/^retry-\d+$/) },
+    );
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'campaign.outreach.retried' }),
+    );
+  });
+
+  it('keeps legacy retry ownership when the rollout flag is enabled', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(failedLog);
+
+    const oldFlag = process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
+    process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = 'true';
+    let result;
+    try {
+      result = await retryLeadOutreachStep('camp-1', 'lead-1', actor);
+    } finally {
+      if (oldFlag === undefined) delete process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
+      else process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = oldFlag;
+    }
 
     expect(result).toEqual({ enqueued: true });
     expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
@@ -497,8 +647,16 @@ describe('retryLeadOutreachStep', () => {
   it('refuses when campaign is draft', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue({ ...activeCampaign, status: 'draft' });
     await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toThrow(
-      'Campaign must be active or paused',
+      'Campaign must be active',
     );
+  });
+
+  it('refuses manual retry while the campaign is paused', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...activeCampaign, status: 'paused' });
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toMatchObject({
+      statusCode: 409,
+    });
+    expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
   });
 
   it('refuses when there is no failed log for the lead', async () => {
@@ -532,12 +690,67 @@ describe('retryLeadOutreachStep', () => {
 });
 
 describe('launchCampaignById — outreach enqueueing', () => {
+  it('does not re-enroll frozen recipients when relaunching a durable campaign', async () => {
+    process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = 'true';
+    try {
+      const paused = { ...baseCampaign, status: 'paused' as const, sequence_id: 'seq-1' };
+      const active = { ...paused, status: 'active' as const };
+      (findCampaignById as jest.Mock).mockResolvedValueOnce(paused);
+      (launchCampaign as jest.Mock).mockResolvedValue(active);
+      (findCampaignLeadRows as jest.Mock).mockResolvedValue([
+        { id: 'lead-1', business_name: 'Frozen', email: 'one@example.com', phone: '+1', status: 'active' },
+      ]);
+      (findSequenceById as jest.Mock).mockResolvedValue({
+        id: 'seq-1',
+        steps: [{ stepNumber: 1, channel: 'email', templateId: 'tmpl-1', delayHours: 0 }],
+      });
+      (findExistingEnrollmentLeadIds as jest.Mock).mockResolvedValue(['lead-1']);
+      (listActiveEnrollments as jest.Mock).mockResolvedValue([
+        { lead_id: 'lead-1', enrollment_status: 'active', delay_remaining_ms: '300000' },
+      ]);
+      const restoreSpy = jest
+        .spyOn(executionService, 'restoreForResume')
+        .mockResolvedValue({ restored: 1, unknownTiming: 0 });
+
+      await launchCampaignById('camp-1', actor);
+
+      expect(findExistingEnrollmentLeadIds).toHaveBeenCalledWith('camp-1', ['lead-1']);
+      expect(addLeadsToCampaign).not.toHaveBeenCalled();
+      expect(restoreSpy).toHaveBeenCalledWith({ campaign: active, enrollments: expect.any(Array) });
+      expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
+      restoreSpy.mockRestore();
+    } finally {
+      delete process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
+    }
+  });
+
   it('launches and enqueues for leads with sequence', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', sequence_id: 'seq-1', launched_at: '2026-06-19T01:00:00Z' });
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'draft',
+      sequence_id: 'seq-1',
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'active',
+      sequence_id: 'seq-1',
+      launched_at: '2026-06-19T01:00:00Z',
+    });
     (findCampaignLeadRows as jest.Mock).mockResolvedValue([
-      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
-      { id: 'lead-2', business_name: 'Lead 2', email: 'two@example.com', phone: '+2', status: 'active' },
+      {
+        id: 'lead-1',
+        business_name: 'Lead 1',
+        email: 'one@example.com',
+        phone: '+1',
+        status: 'active',
+      },
+      {
+        id: 'lead-2',
+        business_name: 'Lead 2',
+        email: 'two@example.com',
+        phone: '+2',
+        status: 'active',
+      },
     ]);
     (findSequenceById as jest.Mock).mockResolvedValue({
       id: 'seq-1',
@@ -547,24 +760,28 @@ describe('launchCampaignById — outreach enqueueing', () => {
     const res = await launchCampaignById('camp-1', actor);
     expect(res.campaign.status).toBe('active');
     expect(enqueueOutreachDispatch).toHaveBeenCalledTimes(2);
-    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      leadId: 'lead-1',
-      campaignId: 'camp-1',
-      sequenceId: 'seq-1',
-      stepNumber: 1,
-      channel: 'email',
-      templateId: 't1',
-      mockMode: false,
-    }));
-    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      leadId: 'lead-2',
-      campaignId: 'camp-1',
-      sequenceId: 'seq-1',
-      stepNumber: 1,
-      channel: 'email',
-      templateId: 't1',
-      mockMode: false,
-    }));
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead-1',
+        campaignId: 'camp-1',
+        sequenceId: 'seq-1',
+        stepNumber: 1,
+        channel: 'email',
+        templateId: 't1',
+        mockMode: false,
+      }),
+    );
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead-2',
+        campaignId: 'camp-1',
+        sequenceId: 'seq-1',
+        stepNumber: 1,
+        channel: 'email',
+        templateId: 't1',
+        mockMode: false,
+      }),
+    );
   });
 
   it('does not launch without an outreach sequence', async () => {
@@ -578,8 +795,16 @@ describe('launchCampaignById — outreach enqueueing', () => {
   });
 
   it('launches with sequence but no leads — skips enqueue', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', sequence_id: 'seq-1' });
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'draft',
+      sequence_id: 'seq-1',
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'active',
+      sequence_id: 'seq-1',
+    });
     (findCampaignLeadRows as jest.Mock).mockResolvedValue([]);
     (findSequenceById as jest.Mock).mockResolvedValue({
       id: 'seq-1',
@@ -592,7 +817,11 @@ describe('launchCampaignById — outreach enqueueing', () => {
   });
 
   it('does not launch when the sequence has no steps', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'draft',
+      sequence_id: 'seq-1',
+    });
     (findSequenceById as jest.Mock).mockResolvedValue({ id: 'seq-1', steps: [] });
 
     await expect(launchCampaignById('camp-1', actor)).rejects.toThrow(
@@ -603,7 +832,11 @@ describe('launchCampaignById — outreach enqueueing', () => {
   });
 
   it('does not activate a campaign when its required sending provider is disconnected', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'draft',
+      sequence_id: 'seq-1',
+    });
     (findSequenceById as jest.Mock).mockResolvedValue({
       id: 'seq-1',
       steps: [{ stepNumber: 1, channel: 'email', templateId: 't1', delayHours: 0 }],
@@ -618,11 +851,32 @@ describe('launchCampaignById — outreach enqueueing', () => {
   });
 
   it('launches and gracefully handles enqueue errors', async () => {
-    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'draft', sequence_id: 'seq-1' });
-    (launchCampaign as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', sequence_id: 'seq-1', launched_at: '2026-06-19T01:00:00Z' });
+    (findCampaignById as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'draft',
+      sequence_id: 'seq-1',
+    });
+    (launchCampaign as jest.Mock).mockResolvedValue({
+      ...baseCampaign,
+      status: 'active',
+      sequence_id: 'seq-1',
+      launched_at: '2026-06-19T01:00:00Z',
+    });
     (findCampaignLeadRows as jest.Mock).mockResolvedValue([
-      { id: 'lead-1', business_name: 'Lead 1', email: 'one@example.com', phone: '+1', status: 'active' },
-      { id: 'lead-2', business_name: 'Lead 2', email: 'two@example.com', phone: '+2', status: 'active' },
+      {
+        id: 'lead-1',
+        business_name: 'Lead 1',
+        email: 'one@example.com',
+        phone: '+1',
+        status: 'active',
+      },
+      {
+        id: 'lead-2',
+        business_name: 'Lead 2',
+        email: 'two@example.com',
+        phone: '+2',
+        status: 'active',
+      },
     ]);
     (findSequenceById as jest.Mock).mockResolvedValue({
       id: 'seq-1',
@@ -717,7 +971,12 @@ describe('getCampaignAutomationPreview — full-sequence validation', () => {
     const preview = await getCampaignAutomationPreview('camp-1');
     expect(preview.templateIssues).toEqual([]);
     expect(preview.connectorIssues).toEqual([]);
-    expect(preview.firstStep).toEqual({ stepNumber: 1, channel: 'email', templateId: 't1', delayHours: 0 });
+    expect(preview.firstStep).toEqual({
+      stepNumber: 1,
+      channel: 'email',
+      templateId: 't1',
+      delayHours: 0,
+    });
   });
 });
 

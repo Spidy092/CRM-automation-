@@ -19,6 +19,7 @@
 import { newsletterBroadcastJobId } from '../shared/utils/newsletterJobId';
 import IORedis, { type Redis } from 'ioredis';
 import { Queue, type ConnectionOptions } from 'bullmq';
+import { createHash } from 'crypto';
 import { logger } from '../shared/utils/logger';
 import { registerTestCleanup } from '../shared/utils/testResources';
 import { type AIDomainEvent } from '../shared/events/ai.events';
@@ -336,6 +337,14 @@ export interface OutreachDispatchJob {
    *  live APIs (for Sprint 3 pre-credential testing). */
   mockMode: boolean;
   aiPersonalizationEnabled?: boolean;
+  /**
+   * Opaque durable execution id (campaign_step_executions.dedupe_key).
+   * Present only on the durable path; the worker must claim the row before
+   * sending. Absent on legacy jobs, which keep the previous behavior.
+   */
+  executionId?: string;
+  /** Scheduling generation — stale generations exit without sending. */
+  generation?: number;
 }
 
 export interface OutreachFollowUpJob {
@@ -533,10 +542,25 @@ function outreachJobId(
   return `outreach-${kind}-${payload.campaignId}-${payload.leadId}-step-${step}`;
 }
 
+/**
+ * Stable BullMQ transport ID for a durable execution.
+ *
+ * The installed BullMQ validator rejects custom IDs containing ':' (unless
+ * they split into exactly 3 parts), so the colon-joined execution identity
+ * can never travel as the job ID. This maps it to `exec-<sha256 hex>`
+ * (fixed length, no colons, never integer-like). The full execution key
+ * stays in job data, where no such restriction applies, and stable IDs keep
+ * BullMQ's own dedupe from double-enqueueing republished intents.
+ */
+export function buildTransportJobId(dedupeKey: string): string {
+  const digest = createHash('sha256').update(dedupeKey, 'utf8').digest('hex').slice(0, 32);
+  return `exec-${digest}`;
+}
+
 export async function enqueueOutreachDispatch(
   payload: OutreachDispatchJob,
   opts?: { jobIdSuffix?: string; delayMs?: number },
-): Promise<void> {
+): Promise<string> {
   // Default jobId is deterministic per (campaign, lead, step) so a campaign
   // launch can be safely re-run without double-enqueueing a step that's
   // already in flight or completed. Retries need a *distinct* id — reusing
@@ -545,10 +569,31 @@ export async function enqueueOutreachDispatch(
   // pass a unique `jobIdSuffix`.
   const baseId = outreachJobId('dispatch', payload);
   const jobId = opts?.jobIdSuffix ? `${baseId}-${opts.jobIdSuffix}` : baseId;
-  await outreachQueue.add(OUTREACH_DISPATCH, payload, {
+  const job = await outreachQueue.add(OUTREACH_DISPATCH, payload, {
     jobId,
     ...(opts?.delayMs && opts.delayMs > 0 ? { delay: opts.delayMs } : {}),
   });
+  return job.id as string;
+}
+
+/**
+ * Look up a dispatch transport job by its full BullMQ job ID. Used by
+ * recovery to distinguish live jobs (waiting/delayed/active — leave alone)
+ * from retained terminal records (completed/failed — safe to remove and
+ * republish). Returns null when no record exists.
+ */
+export async function getOutreachDispatchJob(jobId: string): Promise<{
+  state: string;
+  remove: () => Promise<void>;
+} | null> {
+  const job = await outreachQueue.getJob(jobId);
+  if (!job) return null;
+  return {
+    state: await job.getState(),
+    remove: async (): Promise<void> => {
+      await job.remove().catch(() => undefined);
+    },
+  };
 }
 
 export async function enqueueOutreachFollowUp(payload: OutreachFollowUpJob): Promise<void> {

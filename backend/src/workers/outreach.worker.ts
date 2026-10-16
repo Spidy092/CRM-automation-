@@ -41,6 +41,23 @@ import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { createTask } from '../modules/outreach/outreach.service';
 import { pool } from '../shared/utils/db';
+import { buildTransportJobId } from './queue';
+import { isCampaignOperationsV2Enabled } from '../modules/campaigns/campaigns.rollout';
+import {
+  evaluateDispatchGate,
+  claimExecutionForWorker,
+  recordClaimedOutcome,
+  recordAcceptance,
+  resolveExecutionSteps,
+  lookupEnrollment,
+  tryReserveCapacity,
+} from '../modules/campaigns/campaigns.execution.service';
+import {
+  findExecutionByDedupeKey,
+  markExecutionSkipped,
+} from '../modules/campaigns/campaigns.execution.repository';
+import { releaseClaimForRetry } from '../modules/campaigns/campaigns.execution.service';
+import { computeDelayToNextLocalMidnightMs } from '../modules/campaigns/campaigns.sendWindow';
 
 interface DispatchResult {
   success: boolean;
@@ -170,17 +187,246 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
     aiPersonalizationEnabled,
   } = data;
 
+  // Ownership is determined by the execution identity, never by the
+  // rollout flag: a job carrying an executionId is always durable-owned.
+  // The flag only grants permission to dispatch new durable work; parked
+  // jobs (flag off) are retained for later recovery, never reinterpreted
+  // as legacy sends.
+  if (data.executionId) {
+    await handleDurableDispatch(data);
+    return;
+  }
+
   // 1. Verify sequence still exists and the step is valid
   const sequence = await findSequenceById(sequenceId);
   if (!sequence) {
     throw new AppError(`Sequence ${sequenceId} not found`, 404);
   }
-  const step = (sequence.steps as Array<{ stepNumber: number; channel: string }>).find(
-    (s) => s.stepNumber === stepNumber,
-  );
+  const steps = sequence.steps as Array<{ stepNumber: number; channel: string }>;
+  const step = steps.find((s) => s.stepNumber === stepNumber);
   if (!step) {
     throw new AppError(`Step ${stepNumber} not found in sequence ${sequenceId}`, 404);
   }
+
+  // Authoritative execution gate: campaign state, enrollment membership,
+  // lead eligibility, opt-out/reply stops, and template approval are
+  // rechecked here — for first sends, follow-ups, retries, and stale jobs.
+  const gate = await evaluateDispatchGate({
+    campaignId,
+    leadId,
+    stepNumber,
+    templateId,
+  });
+  if (!gate.eligible) {
+    if (gate.reason === 'template_unapproved') {
+      // Fall through to the connector path so the failure is recorded on the
+      // log exactly as before (failed status + 502 for visibility).
+    } else {
+      logger.info('dispatch skipped: execution gate blocked send', {
+        leadId,
+        campaignId,
+        sequenceId,
+        stepNumber,
+        reason: gate.reason,
+        detail: gate.detail,
+      });
+      return;
+    }
+  }
+
+  await dispatchClaimedStep({
+    leadId,
+    campaignId,
+    sequenceId,
+    stepNumber,
+    channel,
+    templateId,
+    mockMode,
+    aiPersonalizationEnabled,
+    steps: steps as Array<{
+      stepNumber: number;
+      channel: string;
+      delayHours: number;
+      templateId: string;
+    }>,
+    durable: false,
+    snapshotId: null,
+    originalData: data,
+  });
+}
+
+/**
+ * Durable-owned dispatch. Runs regardless of the rollout flag: with the flag
+ * off the job is parked (recoverable state retained, nothing sent); with
+ * the flag on it proceeds through gate → transactional claim → dispatch.
+ */
+export async function handleDurableDispatch(data: OutreachDispatchJob): Promise<void> {
+  const {
+    leadId,
+    campaignId,
+    sequenceId,
+    stepNumber,
+    channel,
+    templateId,
+    mockMode,
+    aiPersonalizationEnabled,
+  } = data;
+  const executionId = data.executionId as string;
+
+  const execution = await findExecutionByDedupeKey(executionId).catch(() => null);
+  if (!execution) {
+    logger.info('dispatch skipped: stale execution (no durable intent)', {
+      leadId,
+      campaignId,
+      sequenceId,
+      stepNumber,
+    });
+    return;
+  }
+
+  if (!isCampaignOperationsV2Enabled()) {
+    // Parked: the rollout flag only permits dispatch, it never changes
+    // ownership. The execution row is untouched so re-enabling the flag lets
+    // the recovery sweep republish it. Never send through the legacy path.
+    logger.info('dispatch parked: durable sending is disabled by rollout flag', {
+      leadId,
+      campaignId,
+      sequenceId,
+      stepNumber,
+    });
+    return;
+  }
+
+  let steps: Array<{
+    stepNumber: number;
+    channel: string;
+    delayHours?: number;
+    templateId?: string;
+  }>;
+  const snapshotId = execution.snapshot_id;
+  try {
+    steps = await resolveExecutionSteps({ snapshotId, sequenceId });
+  } catch {
+    await markExecutionSkipped(executionId, 'sequence unavailable').catch(() => undefined);
+    return;
+  }
+  const step = steps.find((s) => s.stepNumber === stepNumber);
+  if (!step) {
+    await markExecutionSkipped(executionId, `Step ${stepNumber} not in sequence`).catch(
+      () => undefined,
+    );
+    return;
+  }
+
+  const gate = await evaluateDispatchGate({
+    campaignId,
+    leadId,
+    stepNumber,
+    templateId,
+    expectedGeneration: data.generation,
+  });
+  if (!gate.eligible) {
+    await markExecutionSkipped(executionId, gate.detail ?? gate.reason ?? 'blocked').catch(
+      () => undefined,
+    );
+    logger.info('dispatch skipped: execution gate blocked send', {
+      leadId,
+      campaignId,
+      sequenceId,
+      stepNumber,
+      reason: gate.reason,
+      detail: gate.detail,
+    });
+    return;
+  }
+
+  // Transactional claim (see claimDueStepExecutionTx): revalidates campaign
+  // status, enrollment status, and generation while holding the locks shared
+  // with pause transitions. Stale generations, duplicates, recovery replays,
+  // and retries that lost the race exit here without sending.
+  const claimed = await claimExecutionForWorker({
+    dedupeKey: executionId,
+    expectedGeneration: data.generation ?? 0,
+    workerId: `outreach-${process.pid}`,
+  }).catch(() => null);
+  if (!claimed) {
+    logger.info('dispatch skipped: execution already claimed or stale', {
+      leadId,
+      campaignId,
+      sequenceId,
+      stepNumber,
+    });
+    return;
+  }
+
+  try {
+    await dispatchClaimedStep({
+      leadId,
+      campaignId,
+      sequenceId,
+      stepNumber,
+      channel,
+      templateId,
+      // The persisted execution mode is authoritative: recovery, resume,
+      // and retry republish the row's mode, so a simulated send can never
+      // be converted into real outreach downstream.
+      mockMode: execution.mock_mode ?? mockMode,
+      aiPersonalizationEnabled,
+      steps: steps as Array<{
+        stepNumber: number;
+        channel: string;
+        delayHours: number;
+        templateId: string;
+      }>,
+      durable: true,
+      executionId,
+      snapshotId,
+      originalData: { ...data, mockMode: execution.mock_mode ?? mockMode },
+    });
+  } catch (err) {
+    // The claim stays held: a crash after provider acceptance must surface
+    // as an uncertain outcome via the recovery sweep, never as a blind
+    // duplicate resend. BullMQ retries cannot reclaim until the lease
+    // expires, so they exit at the claim step above.
+    logger.error('durable dispatch threw after claim — lease held for recovery', {
+      leadId,
+      campaignId,
+      sequenceId,
+      stepNumber,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function dispatchClaimedStep(opts: {
+  leadId: string;
+  campaignId: string;
+  sequenceId: string;
+  stepNumber: number;
+  channel: 'whatsapp' | 'email' | 'sms' | 'phone_call';
+  templateId: string;
+  mockMode: boolean;
+  aiPersonalizationEnabled?: boolean;
+  steps: Array<{ stepNumber: number; channel: string; delayHours: number; templateId: string }>;
+  durable: boolean;
+  executionId?: string;
+  snapshotId: string | null;
+  originalData: OutreachDispatchJob;
+}): Promise<void> {
+  const {
+    leadId,
+    campaignId,
+    sequenceId,
+    stepNumber,
+    channel,
+    templateId,
+    mockMode,
+    aiPersonalizationEnabled,
+    steps,
+    durable,
+    executionId,
+    originalData,
+  } = opts;
 
   const stopResult = await handleStopCheck({
     leadId,
@@ -194,6 +440,11 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
     ],
   });
   if (stopResult.stopped) {
+    if (durable && executionId) {
+      await markExecutionSkipped(executionId, stopResult.reason ?? 'stop condition').catch(
+        () => undefined,
+      );
+    }
     logger.info('dispatch skipped: stop condition met', {
       leadId,
       campaignId,
@@ -212,27 +463,80 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
   if (channel !== 'phone_call') {
     const campaign = await findCampaignById(campaignId);
     if (campaign) {
-      const sentToday =
-        campaign.daily_send_limit != null
-          ? await countSentTodayForCampaign(campaignId, campaign.send_window_timezone || 'UTC')
-          : null;
-      const deferral = computeDispatchDeferralMs(campaign, sentToday);
-      if (deferral.delayMs > 0) {
-        const targetMinute = Math.ceil((Date.now() + deferral.delayMs) / 60_000);
-        await enqueueOutreachDispatch(data, {
-          jobIdSuffix: `deferred-${targetMinute}`,
-          delayMs: deferral.delayMs,
-        });
-        logger.info('dispatch deferred', {
-          leadId,
-          campaignId,
-          sequenceId,
-          stepNumber,
-          reason: deferral.reason,
-          delayMs: deferral.delayMs,
-          resumesAt: new Date(Date.now() + deferral.delayMs).toISOString(),
-        });
-        return;
+      if (durable) {
+        const sentToday =
+          campaign.daily_send_limit != null
+            ? await countSentTodayForCampaign(campaignId, campaign.send_window_timezone || 'UTC')
+            : null;
+        const deferral = computeDispatchDeferralMs(campaign, sentToday);
+        if (deferral.delayMs > 0) {
+          await enqueueDeferredDispatch(originalData, deferral.delayMs);
+          logger.info('dispatch deferred', {
+            leadId,
+            campaignId,
+            sequenceId,
+            stepNumber,
+            reason: deferral.reason,
+            delayMs: deferral.delayMs,
+            resumesAt: new Date(Date.now() + deferral.delayMs).toISOString(),
+          });
+          await releaseClaimForDeferral(executionId, deferral.delayMs);
+          return;
+        }
+        // Atomic reservation: concurrent workers serialize here so the
+        // campaign-local daily cap cannot overshoot. Fail closed: a
+        // reservation error releases the claim back to a retryable pre-send
+        // state and sends nothing — the connector is never called without a
+        // successful required reservation. This is a pre-network failure,
+        // distinct from an uncertain post-network outcome.
+        let reserved: boolean;
+        try {
+          reserved = await tryReserveCapacity(campaign, sentToday ?? undefined);
+        } catch (err) {
+          logger.error('capacity reservation failed — send blocked, claim released', {
+            leadId,
+            campaignId,
+            sequenceId,
+            stepNumber,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          await releaseClaimForDeferral(executionId);
+          return;
+        }
+        if (!reserved) {
+          const toMidnight = computeDelayToNextLocalMidnightMs(
+            campaign.send_window_timezone || 'UTC',
+          );
+          await enqueueDeferredDispatch(originalData, toMidnight);
+          logger.info('dispatch deferred: daily cap reached', {
+            leadId,
+            campaignId,
+            sequenceId,
+            stepNumber,
+            delayMs: toMidnight,
+          });
+          await releaseClaimForDeferral(executionId, toMidnight);
+          return;
+        }
+      } else {
+        const sentToday =
+          campaign.daily_send_limit != null
+            ? await countSentTodayForCampaign(campaignId, campaign.send_window_timezone || 'UTC')
+            : null;
+        const deferral = computeDispatchDeferralMs(campaign, sentToday);
+        if (deferral.delayMs > 0) {
+          await enqueueDeferredDispatch(originalData, deferral.delayMs);
+          logger.info('dispatch deferred', {
+            leadId,
+            campaignId,
+            sequenceId,
+            stepNumber,
+            reason: deferral.reason,
+            delayMs: deferral.delayMs,
+            resumesAt: new Date(Date.now() + deferral.delayMs).toISOString(),
+          });
+          return;
+        }
       }
     }
   }
@@ -263,6 +567,17 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
       sequenceId,
       stepNumber,
     });
+    // The next step is scheduled when the rep completes the task (see
+    // updateTask → enqueueNextStepAfterTask), preserving manual-task
+    // progression: creation never advances the sequence on its own.
+    if (durable && executionId) {
+      await recordClaimedOutcome({
+        dedupeKey: executionId,
+        campaign: (await findCampaignById(campaignId)) as never,
+        outcome: 'sent',
+        providerMsgId: null,
+      });
+    }
 
     return;
   }
@@ -288,10 +603,46 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
   });
 
   if (result.success) {
+    const sentAt = new Date().toISOString();
     await updateLogStatus(log.id, 'sent' as OutreachStatus, {
       externalMsgId: result.externalId,
-      sentAt: new Date().toISOString(),
+      sentAt,
     });
+
+    if (durable && executionId) {
+      // Acceptance, enrollment advancement, and the next intent commit in one
+      // transaction (recordAcceptanceTx); publication follows the commit.
+      // There is exactly one sent-marking — a separate outcome call here would
+      // consume the claim and strand the follow-up.
+      const campaign = await findCampaignById(campaignId);
+      const enrollment = campaign ? await lookupEnrollment(campaignId, leadId) : null;
+      const execution = await findExecutionByDedupeKey(executionId).catch(() => null);
+      if (campaign && enrollment && execution) {
+        await recordAcceptance({
+          campaign,
+          enrollment,
+          execution: { ...execution, state: 'sent' },
+          providerMsgId: result.externalId ?? null,
+          steps: steps as Array<{
+            stepNumber: number;
+            channel: 'whatsapp' | 'email' | 'sms' | 'phone_call';
+            delayHours: number;
+            templateId: string;
+          }>,
+          sequenceId,
+          mockMode,
+          aiPersonalizationEnabled,
+          acceptedAt: new Date(sentAt),
+        }).catch((err) => {
+          logger.error('failed to persist next-step intent after acceptance', {
+            leadId,
+            campaignId,
+            stepNumber,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    }
 
     // ── Automated Pipeline Stage Progression ────────────────────────────
     try {
@@ -378,11 +729,33 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
     await updateLogStatus(log.id, 'failed' as OutreachStatus, {
       errorMessage: result.error ?? 'Unknown dispatch error',
     });
+    if (durable && executionId) {
+      // Definite failure: record it durably, release the reserved capacity
+      // slot, and return without throwing. BullMQ retries cannot reclaim a
+      // failed execution, so they would only no-op; the failure surfaces via
+      // operations/activity for review and explicit manual retry.
+      const campaign = await findCampaignById(campaignId);
+      if (campaign) {
+        await recordClaimedOutcome({
+          dedupeKey: executionId,
+          campaign,
+          outcome: 'failed',
+          errorCategory: 'provider_error',
+          errorMessage: result.error ?? 'Unknown dispatch error',
+        });
+      }
+      return;
+    }
     throw new AppError(`Dispatch failed for lead ${leadId} via ${channel}: ${result.error}`, 502);
   }
 
+  if (durable) {
+    // Next-step intent was already persisted by recordAcceptance above.
+    return;
+  }
+
   // 5. Schedule next step via follow-up job
-  const nextStep = (sequence.steps as Array<{ stepNumber: number; delayHours: number }>).find(
+  const nextStep = (steps as Array<{ stepNumber: number; delayHours: number }>).find(
     (s) => s.stepNumber === stepNumber + 1,
   );
   if (nextStep) {
@@ -400,6 +773,36 @@ export async function handleDispatch(data: OutreachDispatchJob): Promise<void> {
 }
 
 // ── Follow-up Scheduler (exported for testability) ─────────────────────────
+
+/**
+ * Re-enqueue a dispatch with a delay without piling up duplicates: the
+ * deferred job id encodes the target minute so repeated evaluations dedupe.
+ */
+async function enqueueDeferredDispatch(data: OutreachDispatchJob, delayMs: number): Promise<void> {
+  const targetMinute = Math.ceil((Date.now() + delayMs) / 60_000);
+  await enqueueOutreachDispatch(data, {
+    jobIdSuffix: data.executionId
+      ? `${buildTransportJobId(data.executionId)}-deferred-${targetMinute}`
+      : `deferred-${targetMinute}`,
+    delayMs,
+  });
+}
+
+/**
+ * Release a durable claim when the worker defers instead of sending, so the
+ * deferred wake-up can reclaim it. Deferral is not a failure: no outcome is
+ * recorded and no capacity is consumed.
+ */
+async function releaseClaimForDeferral(
+  executionId: string | undefined,
+  delayMs?: number,
+): Promise<void> {
+  if (!executionId) return;
+  await releaseClaimForRetry(
+    executionId,
+    delayMs == null ? undefined : new Date(Date.now() + delayMs).toISOString(),
+  );
+}
 
 export async function handleFollowUp(data: OutreachFollowUpJob): Promise<void> {
   const { leadId, campaignId, sequenceId, nextStepNumber, mockMode, aiPersonalizationEnabled } =
@@ -420,6 +823,28 @@ export async function handleFollowUp(data: OutreachFollowUpJob): Promise<void> {
   ).find((s) => s.stepNumber === nextStepNumber);
   if (!nextStep) {
     logger.warn('follow-up aborted: step removed', { leadId, sequenceId, nextStepNumber });
+    return;
+  }
+
+  // Authoritative gate before scheduling the next send: a paused or deleted
+  // campaign, removed enrollment, ineligible lead, or unapproved template
+  // must not produce a new dispatch — including from already-queued
+  // follow-ups that predate the pause.
+  const gate = await evaluateDispatchGate({
+    campaignId,
+    leadId,
+    stepNumber: nextStepNumber,
+    templateId: nextStep.templateId,
+  });
+  if (!gate.eligible) {
+    logger.info('follow-up skipped: execution gate blocked send', {
+      leadId,
+      campaignId,
+      sequenceId,
+      nextStepNumber,
+      reason: gate.reason,
+      detail: gate.detail,
+    });
     return;
   }
 

@@ -11,6 +11,7 @@
 export interface CursorPayload {
   ts: string; // ISO 8601 timestamp (created_at)
   id: string; // UUID
+  kind?: string; // Event discriminator for campaign activity cursors
 }
 
 export const DEFAULT_PAGE_LIMIT = 25;
@@ -32,7 +33,8 @@ export function decodeCursor(cursor: string): CursorPayload | null {
       'ts' in parsed &&
       'id' in parsed &&
       typeof (parsed as CursorPayload).ts === 'string' &&
-      typeof (parsed as CursorPayload).id === 'string'
+      typeof (parsed as CursorPayload).id === 'string' &&
+      (!('kind' in parsed) || typeof (parsed as CursorPayload).kind === 'string')
     ) {
       return parsed as CursorPayload;
     }
