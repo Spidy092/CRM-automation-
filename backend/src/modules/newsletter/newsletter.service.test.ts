@@ -37,6 +37,7 @@ jest.mock('./newsletter.repository', () => ({
   countSubscribersByStatus: jest.fn(),
   findEligibleSubscribers: jest.fn(),
   countEligibleSubscribers: jest.fn(),
+  getRecipientEligibility: jest.fn(),
 }));
 jest.mock('../../shared/utils/redis', () => ({
   redis: { get: jest.fn(), set: jest.fn(), del: jest.fn(), scan: jest.fn() },
@@ -63,6 +64,7 @@ import {
   unsubscribe,
   getPreferences,
   updateSubscriberPreferences,
+  updateSubscriberPreferencesById,
   listSubscribers,
   getSubscriberById,
   getDigestConfig,
@@ -167,7 +169,11 @@ describe('newsletter.service', () => {
       const result = await subscribe('lead@example.com', [], 'daily', 'website');
 
       expect(result.ok).toBe(true);
-      expect(mockedRepo.resetToPending).toHaveBeenCalledWith('sub-1', [], 'daily');
+      expect(mockedRepo.resetToPending).toHaveBeenCalledWith(
+        'sub-1',
+        ['product_updates', 'promotions', 'company_news'],
+        'daily',
+      );
       expect(mockedRepo.insertSubscriber).not.toHaveBeenCalled();
       expect(mockedSendgrid.sendEmail).toHaveBeenCalled();
     });
@@ -181,6 +187,17 @@ describe('newsletter.service', () => {
       expect(mockedRepo.resetToPending).not.toHaveBeenCalled();
       expect(mockedRepo.insertSubscriber).not.toHaveBeenCalled();
       expect(mockedSendgrid.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('defaults an empty topic selection to every newsletter topic', async () => {
+      mockedRepo.findSubscriberByEmail.mockResolvedValue(null);
+      mockedRepo.insertSubscriber.mockResolvedValue({ ...baseRow });
+
+      await subscribe('lead@example.com', [], 'weekly', 'website');
+
+      expect(mockedRepo.insertSubscriber).toHaveBeenCalledWith(
+        expect.objectContaining({ topics: ['product_updates', 'promotions', 'company_news'] }),
+      );
     });
 
     it('falls back to SMTP when SendGrid fails', async () => {
@@ -288,6 +305,30 @@ describe('newsletter.service', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error.statusCode).toBe(404);
+    });
+  });
+
+  describe('updateSubscriberPreferencesById', () => {
+    it('updates admin-managed preferences without changing subscription status', async () => {
+      mockedRepo.updatePreferences.mockResolvedValue({ ...baseRow, topics: ['company_news'], frequency: 'monthly' });
+      const result = await updateSubscriberPreferencesById('sub-1', {
+        topics: ['company_news'],
+        frequency: 'monthly',
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockedRepo.updatePreferences).toHaveBeenCalledWith('sub-1', {
+        topics: ['company_news'],
+        frequency: 'monthly',
+      });
+    });
+
+    it('keeps an unsubscribed contact unsubscribed when preferences are edited', async () => {
+      mockedRepo.updatePreferences.mockResolvedValue({ ...baseRow, status: 'unsubscribed' });
+      const result = await updateSubscriberPreferencesById('sub-1', { topics: ['company_news'] });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.status).toBe('unsubscribed');
     });
   });
 
@@ -537,14 +578,21 @@ describe('newsletter.service', () => {
       expect(result.value).toEqual({ pending: 2, confirmed: 5, unsubscribed: 1, total: 8 });
     });
 
-    it('counts eligible recipients with topic/frequency targeting', async () => {
-      mockedRepo.countEligibleSubscribers.mockResolvedValue(4);
+    it('returns recipient counts and exclusion reasons for topic/frequency targeting', async () => {
+      const summary = { eligible: 4, total: 7, pending: 1, unsubscribed: 0,
+        topicMismatch: 1, frequencyMismatch: 0, waiting: 1, reserved: 0, nextEligibleAt: null };
+      mockedRepo.getRecipientEligibility.mockResolvedValue(summary);
       const result = await getEligibleRecipientCount({ topics: ['promotions'], frequency: 'weekly' });
-      expect(result.ok).toBe(true);
-      expect(mockedRepo.countEligibleSubscribers).toHaveBeenCalledWith({
-        topics: ['promotions'],
-        frequency: 'weekly',
-      });
+      expect(result).toEqual({ ok: true, value: summary });
+      expect(mockedRepo.getRecipientEligibility).toHaveBeenCalledWith({ topics: ['promotions'], frequency: 'weekly' });
+    });
+
+    it('reports unavailable setup instead of returning a false zero', async () => {
+      mockedRepo.isSendLimitStorageAvailable.mockResolvedValue(false);
+      const result = await getEligibleRecipientCount();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.statusCode).toBe(503);
+      expect(mockedRepo.getRecipientEligibility).not.toHaveBeenCalled();
     });
 
     it('passes list filters (search/topic/source/frequency) through to the repository', async () => {

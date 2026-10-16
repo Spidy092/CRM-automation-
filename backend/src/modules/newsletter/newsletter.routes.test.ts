@@ -138,6 +138,34 @@ describe('Newsletter Routes', () => {
     expect(mockedService.updateSubscriberPreferences).not.toHaveBeenCalled();
   });
 
+  it('PATCH /newsletter/admin/subscribers/:id/preferences updates topics and frequency without leaking token data', async () => {
+    mockedService.updateSubscriberPreferencesById.mockResolvedValue({
+      ok: true,
+      value: { ...baseRow, topics: ['company_news'], frequency: 'monthly' },
+    });
+    const res = await request(app)
+      .patch(`/newsletter/admin/subscribers/${baseRow.id}/preferences`)
+      .send({ topics: ['company_news'], frequency: 'monthly' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.topics).toEqual(['company_news']);
+    expect(res.body.data.unsubscribe_token_hash).toBeUndefined();
+    expect(mockedService.updateSubscriberPreferencesById).toHaveBeenCalledWith(baseRow.id, {
+      topics: ['company_news'],
+      frequency: 'monthly',
+    });
+  });
+
+  it('PATCH /newsletter/admin/subscribers/:id/preferences rejects roles outside admin/marketing', async () => {
+    const res = await request(app)
+      .patch(`/newsletter/admin/subscribers/${baseRow.id}/preferences`)
+      .set('x-test-role', 'sales')
+      .send({ topics: ['company_news'] });
+
+    expect(res.status).toBe(403);
+    expect(mockedService.updateSubscriberPreferencesById).not.toHaveBeenCalled();
+  });
+
   it('GET /newsletter/admin/subscribers returns 200 for an admin', async () => {
     mockedService.listSubscribers.mockResolvedValue({
       ok: true,
@@ -163,6 +191,24 @@ describe('Newsletter Routes', () => {
     });
     const res = await request(app).get('/newsletter/admin/subscribers/550e8400-e29b-41d4-a716-446655440099');
     expect(res.status).toBe(404);
+  });
+
+  it('GET /newsletter/admin/subscribers/:id rejects a malformed UUID before calling the service', async () => {
+    const res = await request(app).get('/newsletter/admin/subscribers/not-a-uuid');
+    expect(res.status).toBe(422);
+    expect(mockedService.getSubscriberById).not.toHaveBeenCalled();
+  });
+
+  it('PATCH /newsletter/admin/subscribers/:id/preferences propagates a missing subscriber error', async () => {
+    mockedService.updateSubscriberPreferencesById.mockResolvedValue({
+      ok: false,
+      error: new AppError('Subscriber not found', 404),
+    });
+    const res = await request(app)
+      .patch(`/newsletter/admin/subscribers/${baseRow.id}/preferences`)
+      .send({ frequency: 'monthly' });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain('Subscriber not found');
   });
 
   it('GET /newsletter/admin/subscribers returns 403 for a role outside admin/marketing', async () => {
@@ -199,10 +245,10 @@ describe('Newsletter Routes', () => {
   });
 
   it('GET /newsletter/admin/eligible-count returns eligible recipients', async () => {
-    mockedService.getEligibleRecipientCount.mockResolvedValue({ ok: true, value: { eligible: 4 } });
+    mockedService.getEligibleRecipientCount.mockResolvedValue({ ok: true, value: { eligible: 4, total: 4, pending: 0, unsubscribed: 0, topicMismatch: 0, frequencyMismatch: 0, waiting: 0, reserved: 0, nextEligibleAt: null } });
     const res = await request(app).get('/newsletter/admin/eligible-count?frequency=weekly');
     expect(res.status).toBe(200);
-    expect(res.body.data).toEqual({ eligible: 4 });
+    expect(res.body.data).toMatchObject({ eligible: 4, total: 4, waiting: 0 });
   });
 
   it('POST /newsletter/admin/test-send requires an explicit address', async () => {

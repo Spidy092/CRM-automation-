@@ -19,6 +19,7 @@ import {
   countSubscribersByStatus,
   findEligibleSubscribers,
   countEligibleSubscribers,
+  getRecipientEligibility,
   createBroadcast,
   findBroadcastById,
   findBroadcastByIdempotencyKey,
@@ -153,6 +154,8 @@ describe('newsletter.repository', () => {
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).toContain("status = 'confirmed'");
     expect(params).toEqual(['sub-1', JSON.stringify(['product_updates', 'promotions', 'company_news'])]);
+    expect(sql).toContain('jsonb_array_length(topics) = 0');
+    expect(sql).toContain('ELSE topics END');
     expect(sql).toContain("status = 'pending'");
   });
 
@@ -233,6 +236,23 @@ describe('newsletter.repository', () => {
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).not.toContain('WHERE status');
     expect(params).toEqual([25, 0]);
+  });
+
+  it('findSubscribers keeps delivery metadata optional when the send-limit columns are absent', async () => {
+    mockQuery.mockResolvedValue([{
+      ...baseRow,
+      send_limits_available: false,
+      last_sent_at: null,
+      next_eligible_at: null,
+      delivery_reserved: false,
+    }]);
+
+    const [subscriber] = await findSubscribers(25, 0);
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain("to_jsonb(newsletter_subscribers) ? 'newsletter_last_accepted_at'");
+    expect(sql).not.toContain('newsletter_subscribers.newsletter_last_accepted_at');
+    expect(subscriber.send_limits_available).toBe(false);
+    expect(subscriber.last_sent_at).toBeNull();
   });
 
   it('countSubscribers returns a parsed count, filtered by status', async () => {
@@ -482,6 +502,18 @@ describe('newsletter.repository', () => {
     await findEligibleSubscribers(100, 0, { frequency: [] });
     const [sql] = mockQuery.mock.calls[0];
     expect(sql).toContain('FALSE');
+  });
+
+  it('returns a disjoint recipient breakdown with safe topic and enum frequency parameters', async () => {
+    const summary = { eligible: 2, total: 7, pending: 1, unsubscribed: 1,
+      topicMismatch: 1, frequencyMismatch: 0, waiting: 1, reserved: 1, nextEligibleAt: null };
+    mockQueryOne.mockResolvedValue(summary);
+    expect(await getRecipientEligibility({ topics: ['promotions'], frequency: ['daily', 'weekly'] })).toEqual(summary);
+    const [sql, params] = mockQueryOne.mock.calls[0];
+    expect(sql).toContain('frequency::text = ANY($2::text[])');
+    expect(sql).toContain('NOT held AND recent');
+    expect(sql).toContain('NOT held AND NOT recent');
+    expect(params).toEqual([['promotions'], ['daily', 'weekly']]);
   });
 
   it('countEligibleSubscribers supports frequency lists', async () => {

@@ -43,6 +43,7 @@ import { pool } from '../../shared/utils/db';
 import { hashToken } from './newsletter.service';
 import {
   markConfirmed,
+  getRecipientEligibility,
   addConfirmedContact,
   markUnsubscribed,
   insertSubscriber,
@@ -99,6 +100,26 @@ runIntegration('newsletter persistence (real PostgreSQL)', () => {
     const key = reservations[0] ? 'broadcast-A' : 'broadcast-B';
     await finishNewsletterSend(sub.id, key, true);
     expect(await reserveNewsletterSend(sub.id, 'broadcast-C')).toBe(false);
+  });
+
+  it('partitions the audience into ready, pending, unsubscribed, topic mismatch, recent, and held', async () => {
+    const rows = [];
+    for (let index = 0; index < 6; index += 1) {
+      const row = await insertSubscriber({ email: email(`breakdown-${index}`), topics: ['promotions'],
+        frequency: 'weekly', unsubscribeTokenHash: hashToken(`breakdown-${index}`), source: 'website' });
+      if (index !== 1) await markConfirmed(row.id);
+      rows.push(row);
+    }
+    await markUnsubscribed(rows[2].id);
+    await pool.query('UPDATE newsletter_subscribers SET topics = $2::jsonb WHERE id = $1', [rows[3].id, JSON.stringify(['company_news'])]);
+    await pool.query("UPDATE newsletter_subscribers SET newsletter_last_accepted_at = now() - interval '1 day' WHERE id = $1", [rows[4].id]);
+    await reserveNewsletterSend(rows[5].id, 'held-broadcast');
+    const summary = await getRecipientEligibility({ topics: ['promotions'] });
+    expect(summary).toMatchObject({ total: 6, eligible: 1, pending: 1, unsubscribed: 1,
+      topicMismatch: 1, frequencyMismatch: 0, waiting: 1, reserved: 1 });
+    expect(new Date(summary.nextEligibleAt!).getTime()).toBeGreaterThan(Date.now());
+    expect((await getRecipientEligibility()).eligible).toBe(2);
+    expect(await getRecipientEligibility({ frequency: 'daily' })).toMatchObject({ eligible: 0, frequencyMismatch: 4 });
   });
 
   it('resolves links from two successive broadcasts without invalidation', async () => {

@@ -14,6 +14,7 @@ import {
   updatePreferencesHandler,
   listSubscribersHandler,
   getSubscriberHandler,
+  updateAdminSubscriberPreferencesHandler,
   broadcastHandler,
   toggleAutomatedDigestHandler,
   getDigestConfigHandler,
@@ -52,6 +53,7 @@ router.get('/admin/subscribers', wrap(listSubscribersHandler));
 router.get('/admin/subscribers/counts', wrap(getSubscriberCountsHandler));
 router.get('/admin/subscribers/export', wrap(exportSubscribersHandler));
 router.get('/admin/subscribers/:id', wrap(getSubscriberHandler));
+router.patch('/admin/subscribers/:id/preferences', wrap(updateAdminSubscriberPreferencesHandler));
 router.get('/admin/eligible-count', wrap(getEligibleCountHandler));
 router.get('/admin/drafts', wrap(draftHandler('list')));
 router.post('/admin/drafts', wrap(draftHandler('create')));

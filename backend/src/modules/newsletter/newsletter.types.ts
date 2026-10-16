@@ -10,6 +10,10 @@ export interface NewsletterSubscriberRow {
   topics: string[];
   frequency: NewsletterFrequency;
   unsubscribe_token_hash: string;
+  last_sent_at?: string | null;
+  next_eligible_at?: string | null;
+  delivery_reserved?: boolean;
+  send_limits_available?: boolean;
   source: string | null;
   confirmed_at: string | null;
   unsubscribed_at: string | null;
@@ -82,3 +86,15 @@ export interface NewsletterDigestDraft {
 }
 
 export type NewsletterResult<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+export interface NewsletterEligibilitySummary {
+  eligible: number;
+  total: number;
+  pending: number;
+  unsubscribed: number;
+  topicMismatch: number;
+  frequencyMismatch: number;
+  waiting: number;
+  reserved: number;
+  nextEligibleAt: string | null;
+}

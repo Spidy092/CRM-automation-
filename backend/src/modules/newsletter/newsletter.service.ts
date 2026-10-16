@@ -1,6 +1,7 @@
 import {
   addNewsletterContactsSchema,
   subscribeSchema,
+  NEWSLETTER_TOPICS,
   type AddNewsletterContactsInput,
 } from './newsletter.schema';
 import { writeAuditLog } from '../../shared/utils/audit';
@@ -40,6 +41,7 @@ import {
   countSubscribers,
   countSubscribersByStatus,
   countEligibleSubscribers,
+  getRecipientEligibility,
   createBroadcast,
   findBroadcastById,
   findBroadcastByIdempotencyKey,
@@ -63,6 +65,7 @@ import {
   NewsletterDigestStatus,
   NewsletterDigestDraft,
   NewsletterResult,
+  NewsletterEligibilitySummary,
 } from './newsletter.types';
 
 const CONFIRM_TOKEN_TTL_SECONDS = 60 * 60 * 48; // 48 hours
@@ -299,6 +302,10 @@ export async function subscribe(
 ): Promise<NewsletterResult<{ message: string }, AppError>> {
   try {
     const normalizedEmail = email.trim().toLowerCase();
+    // A signup that omits topic choices opts into the complete newsletter
+    // by default. Keep non-empty selections intact for API callers that
+    // provide explicit preferences.
+    const selectedTopics = topics.length > 0 ? topics : [...NEWSLETTER_TOPICS];
     const existing = await findSubscriberByEmail(normalizedEmail);
     const genericMessage = 'Thanks! Please check your inbox to confirm your subscription.';
 
@@ -309,11 +316,11 @@ export async function subscribe(
     }
 
     const subscriberId = existing
-      ? (await resetToPending(existing.id, topics, frequency)).id
+      ? (await resetToPending(existing.id, selectedTopics, frequency)).id
       : (
           await insertSubscriber({
             email: normalizedEmail,
-            topics,
+            topics: selectedTopics,
             frequency,
             unsubscribeTokenHash: hashToken(crypto.randomBytes(32).toString('hex')),
             source,
@@ -417,6 +424,21 @@ export async function updateSubscriberPreferences(
   }
 }
 
+/** Admin preference edits use the protected subscriber ID route, not bearer links. */
+export async function updateSubscriberPreferencesById(
+  subscriberId: string,
+  updates: { topics?: string[]; frequency?: NewsletterFrequency },
+): Promise<NewsletterResult<NewsletterSubscriberRow, AppError>> {
+  try {
+    const row = await updatePreferencesRow(subscriberId, updates);
+    return { ok: true, value: row };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to update subscriber preferences';
+    const statusCode = err instanceof AppError ? err.statusCode : 500;
+    return { ok: false, error: new AppError(message, statusCode) };
+  }
+}
+
 export async function listSubscribers(
   limit?: number,
   offset?: number,
@@ -461,13 +483,23 @@ export async function getSubscriberCounts(): Promise<
 export async function getEligibleRecipientCount(targeting?: {
   topics?: string[];
   frequency?: NewsletterFrequency | NewsletterFrequency[];
-}): Promise<NewsletterResult<{ eligible: number }, AppError>> {
+}): Promise<NewsletterResult<NewsletterEligibilitySummary, AppError>> {
   try {
-    const eligible = await countEligibleSubscribers(targeting);
-    return { ok: true, value: { eligible } };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to count eligible recipients';
-    return { ok: false, error: new AppError(message, 500) };
+    if (!(await isSendLimitStorageAvailable())) {
+      return {
+        ok: false,
+        error: new AppError(
+          'Recipient checks are unavailable until newsletter setup is complete. Ask an administrator to apply migration 0084.',
+          503,
+        ),
+      };
+    }
+    return { ok: true, value: await getRecipientEligibility(targeting) };
+  } catch {
+    return {
+      ok: false,
+      error: new AppError('Could not check newsletter recipients. Please retry.', 503),
+    };
   }
 }
 
@@ -767,9 +799,7 @@ export async function triggerBroadcast(
       send.topics || send.frequency || send.frequencies
         ? { topics: send.topics, frequency: send.frequencies ?? send.frequency }
         : undefined;
-    const { value } = await getEligibleRecipientCount(targeting).then((r) =>
-      r.ok ? { value: r.value.eligible } : { value: undefined },
-    );
+    const value = await countEligibleSubscribers(targeting).catch(() => undefined);
     let jobId: string | undefined;
     try {
       jobId = await enqueueNewsletterBroadcast({

@@ -124,6 +124,22 @@ export async function updatePreferencesHandler(
   }
 }
 
+export async function updateAdminSubscriberPreferencesHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { id } = subscriberIdParamSchema.parse(req.params);
+    const body = updatePreferencesBodySchema.parse(req.body);
+    const result = await newsletterService.updateSubscriberPreferencesById(id, body);
+    if (!result.ok) throw result.error;
+    sendSuccess(res, toPublicSubscriber(result.value));
+  } catch (err) {
+    next(err);
+  }
+}
+
 // ── Admin Handlers ───────────────────────────────────────────────────────
 
 export async function listSubscribersHandler(
