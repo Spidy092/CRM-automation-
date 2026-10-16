@@ -435,9 +435,9 @@ describe('transactional acceptance', () => {
         stepNumber: 2,
         channel: 'email',
         templateId,
-        generation: 0,
         attempt: 0,
         dueAt: new Date(Date.now() + 3_600_000).toISOString(),
+        delayRemainingMs: 3_600_000,
       },
     };
     // Acceptance follows a successful claim, as in the worker path.
@@ -460,6 +460,72 @@ describe('transactional acceptance', () => {
     expect(nextRows.rows[0].count).toBe('1');
     const enrollment = await execRepo.getEnrollmentState(campaignId, leadId);
     expect(enrollment?.completed_steps).toBe(1);
+  });
+
+  it('preserves a paused enrollment delay when an in-flight send is accepted', async () => {
+    const campaignId = await seedCampaign();
+    const leadId = await seedLead();
+    const templateId = await seedTemplate();
+    await execRepo.upsertEnrollmentState(campaignId, leadId, {
+      enrollmentStatus: 'active',
+      nextStepNumber: 1,
+      completedSteps: 0,
+    });
+    const execution = await execRepo.insertStepExecution({
+      campaignId,
+      leadId,
+      snapshotId: null,
+      stepNumber: 1,
+      channel: 'email',
+      templateId,
+      generation: 0,
+      attempt: 0,
+      dueAt: new Date(Date.now() - 60_000).toISOString(),
+      mockMode: false,
+    });
+    const claimed = await execRepo.claimDueStepExecutionTx({
+      dedupeKey: execution?.dedupe_key ?? '',
+      expectedGeneration: 0,
+      workerId: 'in-flight-before-pause',
+      leaseMs: 300000,
+    });
+    expect(claimed?.state).toBe('claimed');
+
+    const paused = await execRepo.pauseCampaignTx(campaignId, new Date().toISOString());
+    expect(paused?.campaign.status).toBe('paused');
+    const acceptance = await execRepo.recordAcceptanceTx({
+      dedupeKey: execution?.dedupe_key ?? '',
+      providerMsgId: 'accepted-before-pause-finished',
+      campaignId,
+      leadId,
+      snapshotId: null,
+      completedSteps: 1,
+      terminalStopReason: 'sequence_completed',
+      next: {
+        stepNumber: 2,
+        channel: 'email',
+        templateId,
+        attempt: 0,
+        dueAt: new Date(Date.now() + 3_600_000).toISOString(),
+        delayRemainingMs: 3_600_000,
+      },
+    });
+
+    expect(acceptance).toEqual({ advanced: true, nextDedupeKey: null, nextGeneration: null });
+    const enrollment = await execRepo.getEnrollmentState(campaignId, leadId);
+    expect(enrollment).toMatchObject({
+      enrollment_status: 'active',
+      next_step_number: 2,
+      next_due_at: null,
+      delay_remaining_ms: '3600000',
+      completed_steps: 1,
+      scheduling_generation: 1,
+    });
+    const pending = await pool.query(
+      'SELECT COUNT(*)::text AS count FROM campaign_step_executions WHERE campaign_id = $1 AND lead_id = $2 AND step_number = 2',
+      [campaignId, leadId],
+    );
+    expect(pending.rows[0].count).toBe('0');
   });
 
   it('rolls back the whole acceptance when the next intent cannot persist', async () => {
@@ -501,9 +567,9 @@ describe('transactional acceptance', () => {
           stepNumber: 2,
           channel: 'email',
           templateId: null,
-          generation: 0,
           attempt: 0,
           dueAt: 'not-a-timestamp',
+          delayRemainingMs: 0,
         },
       }),
     ).rejects.toThrow();

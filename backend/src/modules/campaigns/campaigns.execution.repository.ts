@@ -1017,9 +1017,9 @@ export interface AcceptanceNextIntent {
   stepNumber: number;
   channel: string;
   templateId: string | null;
-  generation: number;
   attempt: number;
   dueAt: string;
+  delayRemainingMs: number;
 }
 
 /**
@@ -1040,7 +1040,11 @@ export async function recordAcceptanceTx(input: {
   completedSteps: number;
   terminalStopReason: string | null;
   next: AcceptanceNextIntent | null;
-}): Promise<{ advanced: boolean; nextDedupeKey: string | null }> {
+}): Promise<{
+  advanced: boolean;
+  nextDedupeKey: string | null;
+  nextGeneration: number | null;
+}> {
   return withTransaction(async (client) => {
     const sent = await client.query<StepExecutionRow>(
       `UPDATE campaign_step_executions
@@ -1054,23 +1058,56 @@ export async function recordAcceptanceTx(input: {
       [input.dedupeKey, input.providerMsgId],
     );
     const execution = sent.rows[0];
-    if (!execution) return { advanced: false, nextDedupeKey: null };
+    if (!execution) return { advanced: false, nextDedupeKey: null, nextGeneration: null };
+
+    // Match the claim/pause lock order: execution → campaign → enrollment.
+    // Pauses lock the campaign before freezing enrollment rows, so acceptance
+    // either observes the committed pause and preserves frozen timing, or
+    // commits first and lets the pause freeze the new follow-up normally.
+    const campaign = await client.query<{ status: string }>(
+      'SELECT status FROM campaigns WHERE id = $1 FOR UPDATE',
+      [input.campaignId],
+    );
+    const enrollmentResult = await client.query<{
+      enrollment_status: EnrollmentStatus;
+      next_step_number: number | null;
+      scheduling_generation: number;
+    }>(
+      `SELECT enrollment_status, next_step_number, scheduling_generation
+         FROM campaign_leads
+        WHERE campaign_id = $1 AND lead_id = $2
+        FOR UPDATE`,
+      [input.campaignId, input.leadId],
+    );
+    const campaignStatus = campaign.rows[0]?.status;
+    const enrollment = enrollmentResult.rows[0];
+    if (
+      !enrollment ||
+      !['active', 'paused'].includes(enrollment.enrollment_status) ||
+      enrollment.next_step_number !== execution.step_number
+    ) {
+      return { advanced: true, nextDedupeKey: null, nextGeneration: null };
+    }
 
     if (input.next) {
-      const nextDedupeKey = buildDedupeKey({
-        campaignId: input.campaignId,
-        leadId: input.leadId,
-        snapshotId: input.snapshotId,
-        stepNumber: input.next.stepNumber,
-        generation: input.next.generation,
-        attempt: input.next.attempt,
-      });
+      const isPaused = campaignStatus !== 'active' || enrollment.enrollment_status === 'paused';
+      const generation = enrollment.scheduling_generation;
+      const nextDedupeKey = isPaused
+        ? null
+        : buildDedupeKey({
+            campaignId: input.campaignId,
+            leadId: input.leadId,
+            snapshotId: input.snapshotId,
+            stepNumber: input.next.stepNumber,
+            generation,
+            attempt: input.next.attempt,
+          });
       await client.query(
         `UPDATE campaign_leads
             SET next_step_number = $3,
-                next_due_at = $4::timestamptz,
-                delay_remaining_ms = NULL,
-                completed_steps = $5,
+                next_due_at = CASE WHEN $6 THEN NULL ELSE $4::timestamptz END,
+                delay_remaining_ms = CASE WHEN $6 THEN $7::bigint ELSE NULL END,
+                completed_steps = GREATEST(completed_steps, $5),
                 execution_updated_at = NOW()
           WHERE campaign_id = $1 AND lead_id = $2`,
         [
@@ -1079,8 +1116,13 @@ export async function recordAcceptanceTx(input: {
           input.next.stepNumber,
           input.next.dueAt,
           input.completedSteps,
+          isPaused,
+          input.next.delayRemainingMs,
         ],
       );
+      if (isPaused || !nextDedupeKey) {
+        return { advanced: true, nextDedupeKey: null, nextGeneration: null };
+      }
       await client.query(
         `INSERT INTO campaign_step_executions
           (campaign_id, lead_id, snapshot_id, step_number, channel, template_id,
@@ -1094,13 +1136,13 @@ export async function recordAcceptanceTx(input: {
           input.next.stepNumber,
           input.next.channel,
           input.next.templateId,
-          input.next.generation,
+          generation,
           nextDedupeKey,
           input.next.dueAt,
           execution.mock_mode,
         ],
       );
-      return { advanced: true, nextDedupeKey };
+      return { advanced: true, nextDedupeKey, nextGeneration: generation };
     }
 
     await client.query(
@@ -1115,7 +1157,7 @@ export async function recordAcceptanceTx(input: {
         WHERE campaign_id = $1 AND lead_id = $2`,
       [input.campaignId, input.leadId, input.completedSteps, input.terminalStopReason],
     );
-    return { advanced: true, nextDedupeKey: null };
+    return { advanced: true, nextDedupeKey: null, nextGeneration: null };
   });
 }
 

@@ -307,7 +307,9 @@ describe('recordAcceptanceTx', () => {
   it('commits acceptance, advancement, and the next intent together', async () => {
     const { recordAcceptanceTx } = await import('./campaigns.execution.repository');
     const { client, calls } = mockTxClient([
-      { rows: [{ dedupe_key: 'exec-1', mock_mode: false }] },
+      { rows: [{ dedupe_key: 'exec-1', mock_mode: false, step_number: 1 }] },
+      { rows: [{ status: 'active' }] },
+      { rows: [{ enrollment_status: 'active', next_step_number: 1, scheduling_generation: 0 }] },
       { rows: [] },
       { rows: [{ id: 'exec-2' }] },
     ]);
@@ -324,19 +326,64 @@ describe('recordAcceptanceTx', () => {
         stepNumber: 2,
         channel: 'email',
         templateId: 'tmpl-2',
-        generation: 0,
         attempt: 0,
         dueAt: '2026-10-14T10:00:00.000Z',
+        delayRemainingMs: 3_600_000,
       },
     });
     expect(result.advanced).toBe(true);
     expect(result.nextDedupeKey).toContain('camp-1');
+    expect(result.nextGeneration).toBe(0);
     const statements = calls.map((c) => c.sql);
     expect(statements[0]).toContain("state = 'claimed'");
-    expect(statements[1]).toContain('UPDATE campaign_leads');
-    expect(statements[2]).toContain('ON CONFLICT (dedupe_key) DO NOTHING');
+    expect(statements[1]).toContain('FROM campaigns');
+    expect(statements[2]).toContain('FROM campaign_leads');
+    expect(statements[3]).toContain('UPDATE campaign_leads');
+    expect(statements[4]).toContain('ON CONFLICT (dedupe_key) DO NOTHING');
     // The next intent inherits the accepted execution's dispatch mode.
-    expect(calls[2].params).toContain(false);
+    expect(calls[4].params).toContain(false);
+  });
+
+  it('keeps the next step frozen when acceptance observes a paused campaign', async () => {
+    const { recordAcceptanceTx } = await import('./campaigns.execution.repository');
+    const { client, calls } = mockTxClient([
+      { rows: [{ dedupe_key: 'exec-1', mock_mode: false, step_number: 1 }] },
+      { rows: [{ status: 'paused' }] },
+      { rows: [{ enrollment_status: 'active', next_step_number: 1, scheduling_generation: 1 }] },
+      { rows: [] },
+    ]);
+    mockPoolConnect(client);
+    const result = await recordAcceptanceTx({
+      dedupeKey: 'exec-1',
+      providerMsgId: 'ext-1',
+      campaignId: 'camp-1',
+      leadId: 'lead-1',
+      snapshotId: 'snap-1',
+      completedSteps: 1,
+      terminalStopReason: 'sequence_completed',
+      next: {
+        stepNumber: 2,
+        channel: 'email',
+        templateId: 'tmpl-2',
+        attempt: 0,
+        dueAt: '2026-10-14T10:00:00.000Z',
+        delayRemainingMs: 3_600_000,
+      },
+    });
+
+    expect(result).toEqual({ advanced: true, nextDedupeKey: null, nextGeneration: null });
+    expect(calls).toHaveLength(4);
+    expect(calls[3].sql).toContain('CASE WHEN $6 THEN NULL');
+    expect(calls[3].sql).toContain('CASE WHEN $6 THEN $7::bigint ELSE NULL END');
+    expect(calls[3].params).toEqual([
+      'camp-1',
+      'lead-1',
+      2,
+      '2026-10-14T10:00:00.000Z',
+      1,
+      true,
+      3_600_000,
+    ]);
   });
 
   it('advances nothing when the claim was lost', async () => {
@@ -353,14 +400,16 @@ describe('recordAcceptanceTx', () => {
       terminalStopReason: 'sequence_completed',
       next: null,
     });
-    expect(result).toEqual({ advanced: false, nextDedupeKey: null });
+    expect(result).toEqual({ advanced: false, nextDedupeKey: null, nextGeneration: null });
     expect(calls).toHaveLength(1);
   });
 
   it('completes the enrollment when no steps remain', async () => {
     const { recordAcceptanceTx } = await import('./campaigns.execution.repository');
     const { client, calls } = mockTxClient([
-      { rows: [{ dedupe_key: 'exec-1', mock_mode: false }] },
+      { rows: [{ dedupe_key: 'exec-1', mock_mode: false, step_number: 3 }] },
+      { rows: [{ status: 'active' }] },
+      { rows: [{ enrollment_status: 'active', next_step_number: 3, scheduling_generation: 0 }] },
       { rows: [] },
     ]);
     mockPoolConnect(client);
@@ -375,7 +424,7 @@ describe('recordAcceptanceTx', () => {
       next: null,
     });
     expect(result.advanced).toBe(true);
-    expect(calls[1].sql).toContain("enrollment_status = 'completed'");
+    expect(calls[3].sql).toContain("enrollment_status = 'completed'");
   });
 });
 

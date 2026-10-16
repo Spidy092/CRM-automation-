@@ -369,9 +369,9 @@ export async function recordAcceptance(input: {
     stepNumber: number;
     channel: SequenceStep['channel'];
     templateId: string;
-    generation: number;
     attempt: number;
     dueAt: string;
+    delayRemainingMs: number;
   } | null = null;
   let delayMs = 0;
   if (next) {
@@ -394,13 +394,13 @@ export async function recordAcceptance(input: {
       stepNumber: next.stepNumber,
       channel: next.channel,
       templateId: next.templateId,
-      generation: input.enrollment.scheduling_generation,
       attempt: 0,
       dueAt: due.dueAt,
+      delayRemainingMs: due.delayMs,
     };
   }
 
-  const { advanced, nextDedupeKey } = await recordAcceptanceTx({
+  const { advanced, nextDedupeKey, nextGeneration } = await recordAcceptanceTx({
     dedupeKey: input.execution.dedupe_key,
     providerMsgId: input.providerMsgId,
     campaignId: input.campaign.id,
@@ -422,7 +422,7 @@ export async function recordAcceptance(input: {
     stepNumber: nextIntent.stepNumber,
     channel: nextIntent.channel,
     templateId: nextIntent.templateId,
-    generation: nextIntent.generation,
+    generation: nextGeneration ?? input.enrollment.scheduling_generation,
     delayMs,
     mockMode: input.execution.mock_mode ?? input.mockMode,
     aiPersonalizationEnabled: input.aiPersonalizationEnabled,
