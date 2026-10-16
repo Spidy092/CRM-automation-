@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useCampaign, useCampaignSchedule } from '@/api/campaigns';
 import { useSequence } from '@/api/outreach';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -6,7 +7,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingTable } from '@/components/ui/LoadingTable';
 import { CHANNEL_ICONS, CHANNEL_COLORS } from '@/components/SequenceStepEditor';
 import { ListOrdered, History } from 'lucide-react';
-import { isOverdue } from './operationsLabels';
+import { isOverdue, scheduleCountdown } from './operationsLabels';
 
 interface Props {
   campaignId: string;
@@ -21,9 +22,16 @@ export function SchedulePanel({ campaignId }: Props) {
   const { data: schedule, isLoading, isError, refetch } = useCampaignSchedule(campaignId);
   const { data: campaign } = useCampaign(campaignId);
   const { data: sequence } = useSequence(campaign?.sequence_id ?? '');
+  const [now, setNow] = useState(() => Date.now());
   const committed = schedule?.committed ?? [];
   const projected = schedule?.projected ?? [];
   const orderedSteps = [...(sequence?.steps ?? [])].sort((a, b) => a.stepNumber - b.stepNumber);
+  const nextCommitted = committed.find((item) => item.dueAt && item.state !== 'claimed');
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   return (
     <Card aria-labelledby="schedule-title">
@@ -52,6 +60,24 @@ export function SchedulePanel({ campaignId }: Props) {
           />
         ) : (
           <div className="space-y-5">
+            {campaign?.status === 'paused' ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Campaign paused. Countdown resumes when you resume the campaign.
+              </div>
+            ) : nextCommitted ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-slate-50 px-3 py-3">
+                <div>
+                  <div className="text-sm font-medium text-slate-900">Next send</div>
+                  <div className="mt-0.5 text-xs text-slate-600">
+                    {nextCommitted.businessName ?? 'Recipient'} · Step {nextCommitted.stepNumber} · {nextCommitted.channel}
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500">{nextCommitted.dueLabel}</div>
+                </div>
+                <time dateTime={nextCommitted.dueAt} className="text-sm font-semibold tabular-nums text-slate-900">
+                  {scheduleCountdown(nextCommitted.dueAt!, now)}
+                </time>
+              </div>
+            ) : null}
             {orderedSteps.length > 0 && (
               <div>
                 <div className="mb-2 text-sm font-medium text-slate-700">
@@ -94,7 +120,7 @@ export function SchedulePanel({ campaignId }: Props) {
                       <tr>
                         <th scope="col" className="px-4 py-2 font-medium">Lead</th>
                         <th scope="col" className="px-4 py-2 font-medium">Step</th>
-                        <th scope="col" className="px-4 py-2 font-medium">Estimated time</th>
+                        <th scope="col" className="px-4 py-2 font-medium">Next send</th>
                         <th scope="col" className="px-4 py-2 font-medium">State</th>
                       </tr>
                     </thead>
@@ -112,9 +138,19 @@ export function SchedulePanel({ campaignId }: Props) {
                               Step {item.stepNumber} · {item.channel}
                             </span>
                           </td>
-                          <td className={`px-4 py-2 text-xs ${item.dueAt && isOverdue(item.dueAt) ? 'font-medium text-amber-700' : 'text-slate-500'}`}>
-                            {item.dueLabel ?? 'Unscheduled'}
-                            {item.dueAt && isOverdue(item.dueAt) && ' · overdue'}
+                          <td className="px-4 py-2 text-xs">
+                            {campaign?.status === 'paused' ? (
+                              <span className="text-amber-800">Paused · resumes with campaign</span>
+                            ) : item.dueAt ? (
+                              <>
+                                <time dateTime={item.dueAt} className={`block font-medium tabular-nums ${isOverdue(item.dueAt) ? 'text-amber-700' : 'text-slate-900'}`}>
+                                  {scheduleCountdown(item.dueAt, now)}
+                                </time>
+                                <span className="text-slate-500">{item.dueLabel}</span>
+                              </>
+                            ) : (
+                              <span className="text-slate-500">Unscheduled</span>
+                            )}
                           </td>
                           <td className="px-4 py-2 text-xs capitalize text-slate-600">{item.state}</td>
                         </tr>
@@ -142,7 +178,16 @@ export function SchedulePanel({ campaignId }: Props) {
                       <span className="font-medium text-slate-800">
                         Step {item.stepNumber} · {item.channel}
                       </span>
-                      <span>{item.estimatedDueLabel}</span>
+                      {campaign?.status === 'paused' ? (
+                        <span className="text-amber-800">Paused · estimate resumes with campaign</span>
+                      ) : (
+                        <>
+                          <time dateTime={item.estimatedDueAt} className="font-medium tabular-nums text-slate-800">
+                            Estimated {scheduleCountdown(item.estimatedDueAt, now).toLowerCase()}
+                          </time>
+                          <span className="text-slate-500">{item.estimatedDueLabel}</span>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>

@@ -33,3 +33,23 @@ export function isOverdue(dueAt: string | null): boolean {
   if (!dueAt) return false;
   return new Date(dueAt).getTime() < Date.now();
 }
+
+/** Live, compact countdown for a committed or estimated schedule timestamp. */
+export function scheduleCountdown(dueAt: string, now = Date.now()): string {
+  const remainingMs = new Date(dueAt).getTime() - now;
+  if (!Number.isFinite(remainingMs)) return 'Time unavailable';
+  if (remainingMs < 0) {
+    const lateMinutes = Math.ceil(Math.abs(remainingMs) / 60_000);
+    return lateMinutes <= 1 ? 'Due now' : `Overdue by ${lateMinutes} min`;
+  }
+  if (remainingMs < 60_000) return 'In less than 1 min';
+  if (remainingMs < 3_600_000) return `In ${Math.ceil(remainingMs / 60_000)} min`;
+  if (remainingMs < 86_400_000) {
+    const hours = Math.floor(remainingMs / 3_600_000);
+    const minutes = Math.ceil((remainingMs % 3_600_000) / 60_000);
+    return minutes ? `In ${hours}h ${minutes} min` : `In ${hours}h`;
+  }
+  const days = Math.floor(remainingMs / 86_400_000);
+  const hours = Math.floor((remainingMs % 86_400_000) / 3_600_000);
+  return hours ? `In ${days}d ${hours}h` : `In ${days}d`;
+}

@@ -1030,15 +1030,15 @@ export async function findCampaignActivity(
   const fetchLimit = limit + 1;
   const result = await pool.query<ActivityEntry>(
     `SELECT * FROM (
-       SELECT id, 'send' AS kind, lead_id, step_number, channel, status,
+       SELECT id, 'send' AS kind, lead_id, step_number, channel, status::text AS status,
          error_message AS body, sent_at AS created_at
        FROM outreach_logs WHERE campaign_id = $1 AND sent_at IS NOT NULL
        UNION ALL
-       SELECT id, 'failure' AS kind, lead_id, step_number, channel, status,
+       SELECT id, 'failure' AS kind, lead_id, step_number, channel, status::text AS status,
          error_message AS body, updated_at AS created_at
        FROM outreach_logs WHERE campaign_id = $1 AND status = 'failed'
        UNION ALL
-       SELECT id, 'reply' AS kind, lead_id, step_number, channel, status,
+       SELECT id, 'reply' AS kind, lead_id, step_number, channel, status::text AS status,
          NULL AS body, replied_at AS created_at
        FROM outreach_logs WHERE campaign_id = $1 AND replied_at IS NOT NULL
        UNION ALL
