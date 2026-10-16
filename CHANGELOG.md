@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.0.2] - 2026-10-16
+
+### Fixed
+- Add variable pickers to custom HTML email subjects, preheaders, and content, with guidance for personal unsubscribe links.
+
 ## [0.6.0.1] - 2026-10-16
 
 ### Fixed
