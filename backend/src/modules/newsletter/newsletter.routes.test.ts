@@ -4,6 +4,12 @@ import { newsletterRoutes } from './newsletter.routes';
 import * as service from './newsletter.service';
 
 jest.mock('./newsletter.service');
+jest.mock('./newsletter.drafts.service', () => ({
+  list: jest.fn(),
+  save: jest.fn(),
+  remove: jest.fn(),
+  send: jest.fn(),
+}));
 jest.mock('../../shared/middleware/rateLimiter', () => ({
   authenticatedLimiter: (req: any, res: any, next: any) => next(),
   publicLimiter: (req: any, res: any, next: any) => next(),
@@ -25,6 +31,7 @@ jest.mock('../../shared/middleware/rbac', () => ({
 
 import { errorHandler } from '../../shared/middleware/errorHandler';
 import { AppError } from '../../shared/middleware/errorHandler';
+import * as drafts from './newsletter.drafts.service';
 
 const app = express();
 app.use(express.json());
@@ -32,6 +39,7 @@ app.use('/newsletter', newsletterRoutes);
 app.use(errorHandler);
 
 const mockedService = service as jest.Mocked<typeof service>;
+const mockedDrafts = drafts as jest.Mocked<typeof drafts>;
 
 const baseRow = {
   id: '550e8400-e29b-41d4-a716-446655440000',
@@ -89,10 +97,20 @@ describe('Newsletter Routes', () => {
     expect(mockedService.unsubscribe).toHaveBeenCalledWith('raw-token');
   });
 
-  it('does not change subscription state through a GET unsubscribe request', async () => {
-    const res = await request(app).get('/newsletter/unsubscribe?token=raw-token');
-    expect(res.status).toBe(404);
-    expect(mockedService.unsubscribe).not.toHaveBeenCalled();
+  it('hands legacy GET unsubscribe links to the confirmation UI without changing subscription state', async () => {
+    const originalFrontendUrl = process.env.FRONTEND_URL;
+    process.env.FRONTEND_URL = 'https://crm.example.test';
+    try {
+      const res = await request(app).get('/newsletter/unsubscribe?token=raw-token');
+      expect(res.status).toBe(303);
+      expect(res.headers.location).toBe(
+        'https://crm.example.test/newsletter/unsubscribe?token=raw-token',
+      );
+      expect(mockedService.unsubscribe).not.toHaveBeenCalled();
+    } finally {
+      if (originalFrontendUrl === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = originalFrontendUrl;
+    }
   });
 
   it('GET /newsletter/preferences returns current preferences', async () => {
@@ -201,7 +219,7 @@ describe('Newsletter Routes', () => {
       value: {
         enabled: true,
         schedule: '0 9 * * 5 (Fridays 09:00)',
-        timezone: 'UTC',
+        timezone: 'Asia/Kolkata',
         nextRunAt: null,
         autoSend: false,
         lastOutcome: { status: 'never_run', message: 'none', at: null },
@@ -209,7 +227,7 @@ describe('Newsletter Routes', () => {
     });
     const res = await request(app).get('/newsletter/admin/digest-status');
     expect(res.status).toBe(200);
-    expect(res.body.data.timezone).toBe('UTC');
+    expect(res.body.data.timezone).toBe('Asia/Kolkata');
   });
 
   it('GET /newsletter/admin/broadcasts returns history without invented delivery metrics', async () => {
@@ -302,5 +320,45 @@ describe('admin direct enrollment', () => {
     const res = await request(app).post('/newsletter/admin/contacts').set('x-test-role', 'marketing').send({ leadIds: [baseRow.id] });
     expect(res.status).toBe(403);
     expect(mockedService.addNewsletterContacts).not.toHaveBeenCalled();
+  });
+});
+
+describe('admin newsletter drafts', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('lists drafts for admin and marketing roles', async () => {
+    mockedDrafts.list.mockResolvedValue({ ok: true, value: [] });
+    const res = await request(app).get('/newsletter/admin/drafts?limit=10&offset=0')
+      .set('x-test-role', 'marketing');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+    expect(mockedDrafts.list).toHaveBeenCalledWith(10, 0);
+  });
+
+  it('creates a draft and attributes it to the authenticated actor', async () => {
+    const content = { subject: '', htmlBody: '', timezone: 'Asia/Kolkata' };
+    mockedDrafts.save.mockResolvedValue({ ok: true, value: { id: baseRow.id, content, revision: 1 } as never });
+    const res = await request(app).post('/newsletter/admin/drafts').send({ content });
+    expect(res.status).toBe(201);
+    expect(mockedDrafts.save).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: '', htmlBody: '', timezone: 'Asia/Kolkata' }),
+      'admin-1',
+      undefined,
+      undefined,
+    );
+  });
+
+  it('requires the current revision before updating a draft', async () => {
+    const res = await request(app).put(`/newsletter/admin/drafts/${baseRow.id}`).send({
+      content: { subject: 'Updated', htmlBody: '<p>Body</p>' },
+    });
+    expect(res.status).toBe(400);
+    expect(mockedDrafts.save).not.toHaveBeenCalled();
+  });
+
+  it('denies sales access to draft management', async () => {
+    const res = await request(app).get('/newsletter/admin/drafts').set('x-test-role', 'sales');
+    expect(res.status).toBe(403);
+    expect(mockedDrafts.list).not.toHaveBeenCalled();
   });
 });

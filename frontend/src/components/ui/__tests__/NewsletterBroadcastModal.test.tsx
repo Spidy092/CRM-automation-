@@ -9,6 +9,8 @@ const { mockMutateAsync } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/api/newsletter', () => ({
+  useSaveNewsletterDraft: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
+  useSendNewsletterDraft: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
   useBroadcast: vi.fn().mockReturnValue({ mutateAsync: mockMutateAsync, isPending: false }),
   useEligibleCount: vi.fn().mockReturnValue({ data: { eligible: 3 }, isLoading: false }),
   useTestSendNewsletter: vi.fn().mockReturnValue({ mutateAsync: vi.fn(), isPending: false }),
@@ -29,6 +31,18 @@ describe('NewsletterBroadcastModal editing workflow', () => {
     expect(screen.getByRole('group', { name: /content editing mode/i })).toBeDefined();
     expect(screen.getByLabelText(/paragraph text/i)).toBeDefined();
     expect(screen.queryByLabelText(/^content \(html\)$/i)).toBeNull();
+  });
+
+
+  it('defaults scheduled sends to India time', async () => {
+    renderWithProviders(<NewsletterBroadcastModal onClose={() => undefined} />);
+    fireEvent.change(screen.getByLabelText(/subject/i), { target: { value: 'Timezone default' } });
+    fireEvent.change(screen.getByLabelText(/paragraph text/i), { target: { value: 'Content' } });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(await screen.findByRole('button', { name: 'Continue' }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect((screen.getByLabelText(/timezone/i) as HTMLSelectElement).value).toBe('Asia/Kolkata');
   });
 
   it('keeps HTML editing as an advanced option', () => {

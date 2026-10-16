@@ -7,7 +7,7 @@ import { Button } from './button';
 import { Input } from './input';
 import { Textarea } from './textarea';
 import { LoadingSpinner } from './LoadingSpinner';
-import { useBroadcast, useEligibleCount, useTestSendNewsletter, type NewsletterTopic, type NewsletterFrequency } from '@/api/newsletter';
+import { useSaveNewsletterDraft, useSendNewsletterDraft, type NewsletterDraft, useBroadcast, useEligibleCount, useTestSendNewsletter, type NewsletterTopic, type NewsletterFrequency } from '@/api/newsletter';
 import { useTemplates } from '@/api/templates';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
@@ -21,6 +21,7 @@ import {
 
 interface Props {
   onClose: () => void;
+  draft?: NewsletterDraft;
 }
 
 const DRAFT_KEY = 'newsletter:broadcast:draft';
@@ -45,7 +46,7 @@ const formSchema = z
     templateId: z.string().optional(),
     testEmail: z.string().email('Enter a valid email').optional().or(z.literal('')),
     scheduledAt: z.string().optional().default(''),
-    timezone: z.string().default('UTC'),
+    timezone: z.string().default('Asia/Kolkata'),
   })
   .superRefine((v, ctx) => {
     if (v.editMode === 'blocks' && blocksAreEmpty(v.blocks as NewsletterBlock[])) {
@@ -68,7 +69,7 @@ const TIMEZONES = (() => {
     const rest = all.filter((tz) => !preferred.includes(tz)).slice(0, 40);
     return [...preferred, ...rest];
   } catch {
-    return ['UTC'];
+    return ['Asia/Kolkata', 'UTC'];
   }
 })();
 
@@ -102,10 +103,13 @@ function loadDraft(): SavedBroadcastDraft | null {
   }
 }
 
-export function NewsletterBroadcastModal({ onClose }: Props) {
+export function NewsletterBroadcastModal({ onClose, draft }: Props) {
   const titleId = useId();
   const dialogRef = useModalFocus(onClose);
-  const [savedDraft] = useState(loadDraft);
+  const [savedDraft] = useState(() => draft ? null : loadDraft());
+  const [serverDraft, setServerDraft] = useState(draft);
+  const saveDraftMutation = useSaveNewsletterDraft();
+  const sendDraftMutation = useSendNewsletterDraft();
   const [idempotencyKey] = useState(() => savedDraft?.idempotencyKey ?? crypto.randomUUID());
   const [step, setStep] = useState(0);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
@@ -126,10 +130,11 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
       blocks: [createBlock('paragraph')],
       htmlBody: '',
       topics: [],
-      timezone: 'UTC',
+      timezone: 'Asia/Kolkata',
       scheduledAt: '',
       testEmail: '',
       ...savedDraft?.values,
+      ...(draft ? { ...draft.content, scheduledAt: draft.content.scheduledAtLocal ?? '' } : {}),
     },
   });
 
@@ -149,12 +154,26 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
 
 
 
-  const persistDraft = () => {
+  const draftContent = (): NewsletterDraft['content'] => {
+    const values = form.getValues();
+    return {
+      subject: values.subject, htmlBody: effectiveHtml, previewText: values.previewText,
+      topics: values.topics, frequency: values.frequency, timezone: values.timezone,
+      scheduledAtLocal: values.scheduledAt || undefined, templateId: values.templateId,
+      editMode: values.editMode, blocks: values.blocks as NewsletterBlock[],
+    };
+  };
+  const persistDraft = async (): Promise<NewsletterDraft | undefined> => {
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ values: form.getValues(), idempotencyKey }));
-      showToast('Draft saved. Reopen to continue editing.', 'success');
-    } catch {
-      showToast('Could not save draft in this browser.', 'error');
+      const saved = await saveDraftMutation.mutateAsync({
+        id: serverDraft?.id, revision: serverDraft?.revision, content: draftContent(),
+      });
+      setServerDraft(saved);
+      showToast('Draft saved. Find it in the Drafts tab.', 'success');
+      return saved;
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Could not save draft. Your editor is still open.'), 'error');
+      return undefined;
     }
   };
 
@@ -221,7 +240,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
       // Send the wall-clock value plus the selected IANA zone; the backend
       // converts the pair to the correct UTC instant (the zone affects the
       // scheduled moment, not just its label). DST gaps are rejected server-side.
-      const res = await broadcastMutation.mutateAsync({
+      const payload = {
         subject: values.subject,
         htmlBody: effectiveHtml,
         ...(values.previewText ? { previewText: values.previewText } : {}),
@@ -231,7 +250,17 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
         timezone: values.timezone,
         idempotencyKey,
         ...(values.templateId ? { templateId: values.templateId } : {}),
-      });
+      };
+      let res;
+      if (serverDraft) {
+        const saved = serverDraft.status === 'sending' ? serverDraft : await saveDraftMutation.mutateAsync({ id: serverDraft.id, revision: serverDraft.revision, content: draftContent() });
+        setServerDraft(saved);
+        // Freeze before request: on an ambiguous result retry only this version.
+        setServerDraft({ ...saved, status: 'sending' });
+        res = await sendDraftMutation.mutateAsync(saved);
+      } else {
+        res = await broadcastMutation.mutateAsync(payload);
+      }
       try {
         localStorage.removeItem(DRAFT_KEY);
       } catch {
@@ -240,7 +269,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
       setSendState('success');
       showToast(
         res.scheduledAt
-          ? `Broadcast scheduled for ${new Date(res.scheduledAt).toLocaleString(undefined, { timeZone: 'UTC' })} UTC.`
+          ? `Broadcast scheduled for ${new Date(res.scheduledAt).toLocaleString(undefined, { timeZone: values.timezone })} (${values.timezone}).`
           : 'Broadcast enqueued.',
       );
       onClose();
@@ -279,6 +308,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
         </ol>
 
         <form onSubmit={form.handleSubmit(handleSubmit)} className="mt-4 space-y-4">
+          <fieldset disabled={sendState === 'pending' || serverDraft?.status === 'sending'} className="space-y-4">
           {step === 0 && (
             <div className="space-y-4">
               <div>
@@ -442,7 +472,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
                   <>
                     <strong>{eligible?.eligible ?? 0}</strong> eligible recipient(s) — confirmed subscribers only.
                     Pending, unsubscribed, and suppressed recipients are always excluded and rechecked before dispatch.
-                    Manual broadcasts send to the selected segment now (or at the scheduled time); automated digests separately respect frequency preferences.
+                    Every newsletter respects rolling limits: Daily = 24 hours, Weekly = 7 days, Monthly = 30 days. Recipients who reached their limit are skipped at dispatch, including manual sends and AI digests.
                   </>
                 )}
               </div>
@@ -473,8 +503,10 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
             </div>
           )}
 
+          </fieldset>
+          {serverDraft?.status === 'sending' && <p role="status" className="text-sm text-amber-800">Sending has started. Content is frozen; retry sending or close and recover from Drafts.</p>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-            <Button type="button" variant="ghost" onClick={persistDraft}>Save draft</Button>
+            <Button type="button" variant="ghost" disabled={sendState === 'pending' || saveDraftMutation.isPending || serverDraft?.status === 'sending'} onClick={() => void persistDraft()}>Save draft</Button>
             <div className="flex gap-2">
               <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
               {step > 0 && <Button type="button" variant="outline" onClick={() => setStep(step - 1)}>Back</Button>}
@@ -493,7 +525,7 @@ export function NewsletterBroadcastModal({ onClose }: Props) {
                 </Button>
               )}
               {step === 3 && (
-                <Button type="submit" disabled={sendState === 'pending' || broadcastMutation.isPending}>
+                <Button type="submit" disabled={sendState === 'pending' || broadcastMutation.isPending || sendDraftMutation.isPending || saveDraftMutation.isPending}>
                   {sendState === 'pending' ? 'Sending…' : watched.scheduledAt ? 'Schedule broadcast' : 'Send now'}
                 </Button>
               )}

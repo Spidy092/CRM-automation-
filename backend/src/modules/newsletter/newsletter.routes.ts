@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { draftHandler } from './newsletter.drafts.controller';
 import { wrap } from '../../shared/utils/asyncHandler';
 import { authenticate } from '../../shared/middleware/auth';
 import { authorize } from '../../shared/middleware/rbac';
@@ -8,6 +9,7 @@ import {
   subscribeHandler,
   confirmHandler,
   unsubscribeHandler,
+  unsubscribeHandoffHandler,
   getPreferencesHandler,
   updatePreferencesHandler,
   listSubscribersHandler,
@@ -36,6 +38,7 @@ const router = Router();
 
 router.post('/subscribe', publicLimiter, wrap(subscribeHandler));
 router.get('/confirm', publicLimiter, wrap(confirmHandler));
+router.get('/unsubscribe', publicLimiter, wrap(unsubscribeHandoffHandler));
 router.post('/unsubscribe', publicLimiter, wrap(unsubscribeHandler));
 router.get('/preferences', publicLimiter, wrap(getPreferencesHandler));
 router.patch('/preferences', publicLimiter, wrap(updatePreferencesHandler));
@@ -50,6 +53,11 @@ router.get('/admin/subscribers/counts', wrap(getSubscriberCountsHandler));
 router.get('/admin/subscribers/export', wrap(exportSubscribersHandler));
 router.get('/admin/subscribers/:id', wrap(getSubscriberHandler));
 router.get('/admin/eligible-count', wrap(getEligibleCountHandler));
+router.get('/admin/drafts', wrap(draftHandler('list')));
+router.post('/admin/drafts', wrap(draftHandler('create')));
+router.put('/admin/drafts/:id', wrap(draftHandler('update')));
+router.delete('/admin/drafts/:id', wrap(draftHandler('delete')));
+router.post('/admin/drafts/:id/send', wrap(draftHandler('send')));
 router.get('/admin/broadcasts', wrap(listBroadcastsHandler));
 router.post('/admin/broadcasts/:id/retry-failed', wrap(retryBroadcastHandler));
 router.get('/admin/broadcasts/:id/uncertain-recipients', wrap(listUncertainRecipientsHandler));

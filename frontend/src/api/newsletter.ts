@@ -441,3 +441,60 @@ export function useAddNewsletterContacts() {
     },
   });
 }
+
+export interface NewsletterDraft {
+  id: string;
+  revision: number;
+  status: 'draft' | 'sending' | 'sent';
+  content: Partial<Omit<BroadcastInput, 'idempotencyKey'>> & {
+    subject: string;
+    htmlBody: string;
+    editMode?: 'blocks' | 'html';
+    blocks?: import('@/lib/newsletterComposer').NewsletterBlock[];
+  };
+  updated_at: string;
+}
+export function useNewsletterDrafts(page: number) {
+  return useQuery({
+    queryKey: ['newsletter-drafts', page],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiResponse<NewsletterDraft[]>>(`/newsletter/admin/drafts?limit=25&offset=${page * 25}`);
+      return res.data.data;
+    },
+  });
+}
+export function useSaveNewsletterDraft() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, revision, content }: { id?: string; revision?: number; content: NewsletterDraft['content'] }) => {
+      const res = id
+        ? await apiClient.put<ApiResponse<NewsletterDraft>>(`/newsletter/admin/drafts/${id}`, { revision, content })
+        : await apiClient.post<ApiResponse<NewsletterDraft>>('/newsletter/admin/drafts', { content });
+      return res.data.data;
+    },
+    onSuccess: () => client.invalidateQueries({ queryKey: ['newsletter-drafts'] }),
+  });
+}
+export function useDeleteNewsletterDraft() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, revision }: { id: string; revision: number }) => {
+      await apiClient.delete(`/newsletter/admin/drafts/${id}`, { data: { revision } });
+    },
+    onSuccess: () => client.invalidateQueries({ queryKey: ['newsletter-drafts'] }),
+  });
+}
+export function useSendNewsletterDraft() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, revision }: { id: string; revision: number }) => {
+      const res = await apiClient.post<ApiResponse<BroadcastResult>>(`/newsletter/admin/drafts/${id}/send`, { revision });
+      return res.data.data;
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ['newsletter-drafts'] });
+      client.invalidateQueries({ queryKey: ['newsletter-broadcasts'] });
+      client.invalidateQueries({ queryKey: ['newsletter-eligible-count'] });
+    },
+  });
+}

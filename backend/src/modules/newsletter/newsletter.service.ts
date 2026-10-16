@@ -35,6 +35,7 @@ import {
   createSubscriberToken,
   isMissingRelationError,
   isTokenTableAvailable,
+  isSendLimitStorageAvailable,
   findSubscribers,
   countSubscribers,
   countSubscribersByStatus,
@@ -283,7 +284,7 @@ async function sendConfirmationEmail(subscriberId: string, email: string): Promi
   await sendSystemEmail(
     email,
     'Confirm your newsletter subscription',
-    `<p>Please confirm your subscription by clicking the link below:</p>
+    `<p>Confirm your subscription to product updates, promotions, and company news by clicking the link below. You can change your preferences or unsubscribe from any newsletter.</p>
      <p><a href="${confirmUrl}">Confirm subscription</a></p>
      <p>If you didn't request this, you can safely ignore this email.</p>`,
     subscriberId,
@@ -598,12 +599,27 @@ export async function triggerBroadcast(
         ),
       };
     }
+    // Reservation columns ship in migration 0084. Reject before creating a
+    // history row or queue job when an environment has only applied 0081.
+    if (!(await isSendLimitStorageAvailable())) {
+      return {
+        ok: false,
+        error: new AppError(
+          'Newsletter sending is not set up: run migration 0084 ' +
+            '(newsletter send-limit columns) before sending broadcasts. Nothing was enqueued.',
+          503,
+        ),
+      };
+    }
     // Resolve wall-clock scheduling in the selected timezone to the correct
     // UTC instant. An absolute `scheduledAt` (API compat) is used as-is.
     let scheduledAtUtc: string | undefined;
     let ambiguous = false;
     if (opts?.scheduledAtLocal) {
-      const resolved = localDateTimeInZoneToUtc(opts.scheduledAtLocal, opts?.timezone ?? 'UTC');
+      const resolved = localDateTimeInZoneToUtc(
+        opts.scheduledAtLocal,
+        opts?.timezone ?? 'Asia/Kolkata',
+      );
       scheduledAtUtc = resolved.utcIso;
       ambiguous = resolved.ambiguous;
     } else if (opts?.scheduledAt) {
@@ -668,7 +684,7 @@ export async function triggerBroadcast(
           ...(opts?.topics ? { topics: opts.topics } : {}),
           ...(opts?.frequency ? { frequency: opts.frequency } : {}),
           ...(opts?.frequencies ? { frequencies: opts.frequencies } : {}),
-          timezone: opts?.timezone ?? 'UTC',
+          timezone: opts?.timezone ?? 'Asia/Kolkata',
           ...(scheduledAtUtc ? { scheduledAtUtc } : {}),
           ...(actor ? { createdBy: actor.id } : {}),
           ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
@@ -691,7 +707,7 @@ export async function triggerBroadcast(
       topics: opts?.topics,
       frequency: opts?.frequency,
       frequencies: opts?.frequencies,
-      timezone: opts?.timezone ?? 'UTC',
+      timezone: opts?.timezone ?? 'Asia/Kolkata',
       scheduledAtUtc,
       scheduledAtLocal: opts?.scheduledAtLocal,
       templateId: opts?.templateId,
@@ -1434,6 +1450,7 @@ export async function retryFailedRecipients(
         idempotencyKey: retryKey,
         ...(retryRecordId ? { broadcastRecordId: retryRecordId } : {}),
         recipientIds: retryIds,
+        ...(uncertainIds.length > 0 ? { uncertainRecipientIds: uncertainIds } : {}),
         retryOf: broadcastId,
       });
     } catch (err) {

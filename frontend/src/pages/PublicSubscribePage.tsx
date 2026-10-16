@@ -58,7 +58,7 @@ export function PublicSubscribePage() {
               </div>
               <h1 className="text-2xl font-semibold text-slate-950">Subscribe to our Newsletter</h1>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                Get the latest updates, industry insights, and news delivered straight to your inbox.
+                Confirm your email to receive product updates, promotions, and company news. You can change topics or unsubscribe from any newsletter.
               </p>
             </div>
 
