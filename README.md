@@ -23,6 +23,14 @@ The package commands are run from their respective directories:
 
 For local development, the backend exposes `npm run dev` and `npm run worker`; the frontend exposes `npm run dev`. Backend tests use `npm run test`; frontend tests also use `npm run test`.
 
+## Email template variables and unsubscribe links
+
+In the Custom HTML email editor, use **Variables** beside Subject, Preheader, or HTML content to insert a token at the cursor. To place the unsubscribe link yourself, use `<a href="{{unsubscribe_link}}">Unsubscribe</a>`.
+
+Campaign and Quick Send emails apply a recipient unsubscribe link after personalization, for both simple and designed templates. Delivery repairs anchors pointing to the application's `/unsubscribe` or `/outreach/unsubscribe` paths and empty links labelled Unsubscribe; it preserves unrelated and external links. If no recipient link exists, delivery adds a footer. Failure to generate a valid recipient link blocks sending.
+
+Template warnings check for an anchor containing the unsubscribe placeholder or a token link, rather than the word “unsubscribe” alone. These sending changes apply to future emails; messages already delivered cannot be changed.
+
 ## WhatsApp Cloud API
 
 The CRM has a WhatsApp Cloud API integration and an inbound webhook. Follow the [WhatsApp setup guide](docs/WHATSAPP_CLOUD_API_SETUP.md) to configure the Meta account, CRM credentials, server webhook secrets, and test delivery. The official Meta MCP mentioned in the dashboard can help with setup; it is not the runtime messaging connection.
