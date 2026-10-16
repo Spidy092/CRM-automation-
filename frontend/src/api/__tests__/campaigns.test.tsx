@@ -352,3 +352,20 @@ describe('campaign operations hooks', () => {
     expect(res).toEqual({ status: 'active', nextDueAt: null });
   });
 });
+
+
+describe('large campaign summary lists', () => {
+  it('combines all summaries from batches of at most 100 distinct IDs', async () => {
+    const ids = Array.from({ length: 205 }, (_, i) => `campaign-${String(i).padStart(3, '0')}`);
+    vi.mocked(apiClient.get).mockImplementation(async (_url, config) => ({
+      data: { data: (config?.params.ids as string).split(',').map((campaignId) => ({
+        campaignId, scheduled: 0, failed: 1, uncertain: 0, nextDueAt: null,
+      })) },
+    }));
+    const { result } = renderHook(() => useCampaignsSummary([...ids, ids[0]]), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(apiClient.get).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(apiClient.get).mock.calls.map(([, config]) => config?.params.ids.split(',').length)).toEqual([100, 100, 5]);
+    expect(result.current.data?.map((row) => row.campaignId)).toEqual(ids);
+  });
+});

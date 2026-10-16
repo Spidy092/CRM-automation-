@@ -622,19 +622,25 @@ export interface CampaignSummaryRow {
 }
 
 /**
- * One bulk request for every visible campaign — never a request per
- * campaign. Disabled when there is nothing to summarize.
+ * Bulk requests of at most 100 IDs, combined for campaign-list filtering.
+ * Disabled when there is nothing to summarize.
  */
 export function useCampaignsSummary(campaignIds: string[]) {
-  const key = [...campaignIds].sort().join(',');
+  const ids = [...new Set(campaignIds)].sort();
+  const key = ids.join(',');
   return useQuery({
     queryKey: ['campaigns', 'operations-summary', key],
     queryFn: async () => {
-      const response = await apiClient.get<ApiResponse<CampaignSummaryRow[]>>(
-        '/campaigns/operations-summary',
-        { params: { ids: [...campaignIds].sort().join(',') } },
-      );
-      return response.data.data ?? [];
+      const summaries: CampaignSummaryRow[] = [];
+      // Sequential batches bound concurrent requests even for a large fleet.
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        const response = await apiClient.get<ApiResponse<CampaignSummaryRow[]>>(
+          '/campaigns/operations-summary',
+          { params: { ids: ids.slice(offset, offset + 100).join(',') } },
+        );
+        summaries.push(...(response.data.data ?? []));
+      }
+      return summaries;
     },
     enabled: campaignIds.length > 0,
     refetchInterval: OPERATIONS_REFRESH_MS,

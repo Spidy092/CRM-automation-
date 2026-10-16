@@ -139,6 +139,9 @@ jobs:
       - name: Run tests with coverage
         run: npm run test -- --runInBand
 
+      - name: Run isolated campaign integration tests
+        run: npm run test:campaign-integration
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4

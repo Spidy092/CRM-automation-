@@ -76,6 +76,9 @@ const { pool } = require('../../shared/utils/db') as typeof import('../../shared
 const execRepo =
   require('./campaigns.execution.repository') as typeof import('./campaigns.execution.repository');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const campaignRepo =
+  require('./campaigns.repository') as typeof import('./campaigns.repository');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const execService =
   require('./campaigns.execution.service') as typeof import('./campaigns.execution.service');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -215,7 +218,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE TABLE IF NOT EXISTS audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid, action text, entity_type text, entity_id text,
+  user_id uuid, action text, entity_type text, entity_id uuid,
   old_value jsonb, new_value jsonb, ip_address text,
   created_at timestamptz DEFAULT NOW()
 );`;
@@ -609,6 +612,28 @@ describe('atomic daily capacity under concurrency', () => {
     );
     expect(stored.rows[0]).toMatchObject({ send_limit: 2, reserved: 3 });
   });
+
+  it('counts sends made before durable capacity tracking was enabled', async () => {
+    const campaignId = await seedCampaign();
+    const leadId = await seedLead();
+    await pool.query(
+      `INSERT INTO outreach_logs (lead_id, campaign_id, channel, status, sent_at)
+       SELECT $1, $2, 'email', 'sent', NOW() - (n || ' minutes')::interval
+       FROM generate_series(1, 9) AS n`,
+      [leadId, campaignId],
+    );
+    const sentToday = await campaignRepo.countSentTodayForCampaign(campaignId, 'UTC');
+    expect(sentToday).toBe(9);
+
+    const localDate = new Date().toISOString().slice(0, 10);
+    await expect(execRepo.reserveDailyCapacity(campaignId, localDate, 10, sentToday)).resolves.toBe(true);
+    await expect(execRepo.reserveDailyCapacity(campaignId, localDate, 10, sentToday + 1)).resolves.toBe(false);
+    const stored = await pool.query(
+      'SELECT send_limit, reserved FROM campaign_day_capacity WHERE campaign_id = $1',
+      [campaignId],
+    );
+    expect(stored.rows[0]).toMatchObject({ send_limit: 10, reserved: 10 });
+  });
 });
 
 describe('real BullMQ publication with permitted IDs', () => {
@@ -748,6 +773,7 @@ describe('mock dispatch mode is preserved end to end', () => {
 
     // Campaign pause/resume keeps the mode.
     await execRepo.pauseCampaignTx(campaignId, new Date().toISOString());
+    await pool.query("UPDATE campaigns SET status = 'active' WHERE id = $1", [campaignId]);
     const resumed = await execService.restoreForResume({
       campaign: (await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId])).rows[0],
       enrollments: await execRepo.listActiveEnrollments(campaignId),
@@ -1470,5 +1496,154 @@ describe('finding 3: second manual retry and idempotency lifecycle', () => {
       }),
     );
     expect(exec2?.mock_mode).toBe(true);
+  });
+});
+
+
+describe('review regression: concurrent snapshot allocation', () => {
+  it('reuses an equivalent winner and allocates distinct changed versions', async () => {
+    const campaignId = await seedCampaign();
+    const sequenceId = randomUUID();
+    const steps = twoSteps(await seedTemplate(), await seedTemplate());
+    const snapshots = await Promise.all(Array.from({ length: 12 }, () =>
+      execRepo.ensureSequenceSnapshot(campaignId, sequenceId, steps)));
+    expect(new Set(snapshots.map((snapshot) => snapshot.id)).size).toBe(1);
+    const changed = await Promise.all([1, 2].map((delay) =>
+      execRepo.ensureSequenceSnapshot(campaignId, sequenceId, [steps[0], { ...steps[1], delayHours: delay }])));
+    expect(changed.map((snapshot) => snapshot.version).sort()).toEqual([2, 3]);
+    const latest = changed.reduce((a, b) => a.version > b.version ? a : b);
+    const reused = await execRepo.ensureSequenceSnapshot(campaignId, sequenceId, latest.steps);
+    expect(reused.id).toBe(latest.id);
+  });
+});
+
+describe('review regression: deferred due time', () => {
+  it('persists the deferral so recovery cannot immediately republish or reclaim it', async () => {
+    const campaignId = await seedCampaign();
+    const leadId = await seedLead();
+    await execRepo.upsertEnrollmentState(campaignId, leadId, {
+      nextStepNumber: 1, nextDueAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const execution = await execRepo.insertStepExecution({ campaignId, leadId, snapshotId: null,
+      stepNumber: 1, channel: 'email', templateId: null, generation: 0, attempt: 0,
+      dueAt: new Date(Date.now() - 60_000).toISOString(), mockMode: true });
+    const dedupeKey = execution!.dedupe_key;
+    await execRepo.claimDueStepExecutionTx({ dedupeKey, expectedGeneration: 0, workerId: 'test', leaseMs: 300000 });
+    const dueAt = new Date(Date.now() + 3_600_000).toISOString();
+    await execService.releaseClaimForRetry(dedupeKey, dueAt);
+    const stored = await execRepo.findExecutionByDedupeKey(dedupeKey);
+    expect(new Date(stored!.due_at!).toISOString()).toBe(dueAt);
+    const enrollment = await execRepo.getEnrollmentState(campaignId, leadId);
+    expect(new Date(enrollment!.next_due_at!).toISOString()).toBe(dueAt);
+    expect(await execRepo.findStaleScheduledExecutions(100)).toHaveLength(0);
+    expect(await execRepo.claimDueStepExecutionTx({ dedupeKey, expectedGeneration: 0, workerId: 'test2', leaseMs: 300000 })).toBeNull();
+  });
+});
+
+describe('review regression: campaign-wide SQL aggregates', () => {
+  it('counts every enrollment using its pinned snapshot and returns only reason buckets', async () => {
+    const campaignId = await seedCampaign();
+    const sequenceId = randomUUID();
+    const steps = twoSteps(await seedTemplate(), await seedTemplate());
+    const short = await execRepo.ensureSequenceSnapshot(campaignId, sequenceId, steps);
+    const long = await execRepo.ensureSequenceSnapshot(campaignId, sequenceId,
+      [...steps, { ...steps[1], stepNumber: 3 }, { ...steps[1], stepNumber: 4 }]);
+    const leads = await pool.query<{ id: string }>(
+      "INSERT INTO leads (business_name, status) SELECT 'Aggregate fixture', 'active' FROM generate_series(1, 120) RETURNING id");
+    await Promise.all(leads.rows.map((lead, index) => execRepo.upsertEnrollmentState(campaignId, lead.id, {
+      sequenceSnapshotId: index < 70 ? long.id : short.id,
+      nextStepNumber: index < 70 ? 2 : 1, completedSteps: index < 70 ? 1 : 0,
+      nextDueAt: new Date(Date.now() + 3_600_000).toISOString(),
+    })));
+    const buckets = await execRepo.summarizeEnrollmentStates({ campaignId, campaignPaused: false,
+      liveSteps: steps, unavailableChannels: [], deferralReason: null, now: new Date().toISOString() });
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]).toMatchObject({ reason: 'sequence_delay', count: '120', potential_remaining: '310', unknown_timing: '0' });
+    const paused = await execRepo.summarizeEnrollmentStates({ campaignId, campaignPaused: true,
+      liveSteps: steps, unavailableChannels: ['email'], deferralReason: 'daily_cap', now: new Date().toISOString() });
+    expect(paused[0]).toMatchObject({ reason: 'campaign_paused', count: '120', potential_remaining: '310' });
+  });
+});
+
+describe('review regression: activity event pagination', () => {
+  it('paginates a send and reply with the same ID/time without dropping either', async () => {
+    const campaignId = await seedCampaign();
+    const leadId = await seedLead();
+    const at = '2026-10-13T10:00:00.000Z';
+    await pool.query(`INSERT INTO outreach_logs (lead_id, campaign_id, channel, status, sent_at, replied_at, created_at)
+      VALUES ($1, $2, 'email', 'replied', $3, $3, '2026-10-12')`, [leadId, campaignId, at]);
+    await pool.query(`INSERT INTO outreach_logs (lead_id, campaign_id, channel, status, updated_at, created_at)
+      VALUES ($1, $2, 'email', 'failed', '2026-10-14', '2026-10-12')`, [leadId, campaignId]);
+    const first = await execRepo.findCampaignActivity(campaignId, 1);
+    expect(first.rows[0].kind).toBe('failure');
+    const row1 = first.rows[0];
+    const second = await execRepo.findCampaignActivity(campaignId, 1, new Date(row1.created_at).toISOString(), row1.id, row1.kind);
+    expect(second.rows[0].kind).toBe('send');
+    const row2 = second.rows[0];
+    const third = await execRepo.findCampaignActivity(campaignId, 1, new Date(row2.created_at).toISOString(), row2.id, row2.kind);
+    expect(third.rows[0].kind).toBe('reply');
+    expect(new Date(third.rows[0].created_at).toISOString()).toBe(at);
+    expect(third.hasMore).toBe(false);
+  });
+});
+
+async function seedPendingPhoneTask(): Promise<{ campaignId: string; leadId: string; sequenceId: string }> {
+  const campaignId = await seedCampaign();
+  const leadId = await seedLead();
+  const sequenceId = randomUUID();
+  const templateId = await seedTemplate();
+  const steps = [{ stepNumber: 1, channel: 'phone_call' as const, delayHours: 0, templateId },
+    { stepNumber: 2, channel: 'email' as const, delayHours: 2, templateId }];
+  const snapshot = await execRepo.ensureSequenceSnapshot(campaignId, sequenceId, steps);
+  await execRepo.upsertEnrollmentState(campaignId, leadId, { sequenceSnapshotId: snapshot.id,
+    nextStepNumber: 1, nextDueAt: new Date(Date.now() - 60_000).toISOString() });
+  const execution = await execRepo.insertStepExecution({ campaignId, leadId, snapshotId: snapshot.id,
+    stepNumber: 1, channel: 'phone_call', templateId, generation: 0, attempt: 0,
+    dueAt: new Date(Date.now() - 60_000).toISOString(), mockMode: true });
+  await execRepo.claimDueStepExecutionTx({ dedupeKey: execution!.dedupe_key,
+    expectedGeneration: 0, workerId: 'phone-test', leaseMs: 300000 });
+  await execRepo.markExecutionSent(execution!.dedupe_key, null);
+  return { campaignId, leadId, sequenceId };
+}
+
+describe('review regression: phone tasks across pause', () => {
+  it.each(['campaign', 'enrollment'])('advances a completed call during %s pause without replaying it', async (scope) => {
+    const { campaignId, leadId, sequenceId } = await seedPendingPhoneTask();
+    if (scope === 'campaign') await execRepo.pauseCampaignTx(campaignId, new Date().toISOString());
+    else await execRepo.pauseEnrollmentState(campaignId, leadId, null, 0, new Date().toISOString());
+    let campaign = (await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+    const complete = await execService.scheduleAfterPhoneTask({ campaign, leadId, sequenceId, completedStepNumber: 1 });
+    expect(complete).toEqual({ owned: true, scheduled: false, duplicate: false });
+    const frozen = await execRepo.getEnrollmentState(campaignId, leadId);
+    expect(frozen).toMatchObject({ next_step_number: 2, completed_steps: 1, next_due_at: null, delay_remaining_ms: '7200000' });
+    const duplicate = await execService.scheduleAfterPhoneTask({ campaign, leadId, sequenceId, completedStepNumber: 1 });
+    expect(duplicate.duplicate).toBe(true);
+    if (scope === 'campaign') {
+      await pool.query("UPDATE campaigns SET status = 'active' WHERE id = $1", [campaignId]);
+      campaign = (await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+      await execService.restoreForResume({ campaign, enrollments: [frozen!] });
+    } else await execService.resumeSingleEnrollment({ campaign, enrollment: frozen!, sequenceId });
+    const next = await execRepo.getEnrollmentState(campaignId, leadId);
+    expect(next?.next_step_number).toBe(2);
+    expect(new Date(next!.next_due_at!).getTime() - Date.now()).toBeGreaterThan(7_190_000);
+    const executions = await pool.query('SELECT step_number, state FROM campaign_step_executions WHERE campaign_id = $1 ORDER BY step_number', [campaignId]);
+    expect(executions.rows).toEqual([{ step_number: 1, state: 'sent' }, { step_number: 2, state: 'scheduled' }]);
+  });
+
+  it.each(['campaign', 'enrollment'])('leaves an open call task alone on %s resume', async (scope) => {
+    const { campaignId, leadId, sequenceId } = await seedPendingPhoneTask();
+    const pending = await execRepo.getEnrollmentState(campaignId, leadId);
+    expect(pending).toMatchObject({ next_due_at: null, delay_remaining_ms: null });
+    if (scope === 'campaign') await execRepo.pauseCampaignTx(campaignId, new Date().toISOString());
+    else await execRepo.pauseEnrollmentState(campaignId, leadId, null, 0, new Date().toISOString());
+    const enrollment = await execRepo.getEnrollmentState(campaignId, leadId);
+    await pool.query("UPDATE campaigns SET status = 'active' WHERE id = $1", [campaignId]);
+    const campaign = (await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId])).rows[0];
+    if (scope === 'campaign') {
+      const restored = await execService.restoreForResume({ campaign, enrollments: [enrollment!] });
+      expect(restored).toEqual({ restored: 0, unknownTiming: 0 });
+    } else await execService.resumeSingleEnrollment({ campaign, enrollment: enrollment!, sequenceId });
+    const executions = await pool.query('SELECT step_number, state FROM campaign_step_executions WHERE campaign_id = $1', [campaignId]);
+    expect(executions.rows).toEqual([{ step_number: 1, state: 'sent' }]);
   });
 });

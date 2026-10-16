@@ -130,7 +130,7 @@ Campaign pause invalidates unclaimed generations and freezes pending delay state
 
 This is the design target recorded before implementation, not a claim that
 every item shipped. The implemented routes and UI are documented in
-`docs/CAMPAIGNS_MODULE.md` §14a. In particular, the committed schedule endpoint
+`docs/CAMPAIGNS_MODULE.md` §14 and §14b. In particular, the committed schedule endpoint
 is not cursor-paginated, and future-step projections remain indicative rather
 than using pinned snapshots and shared send-window calculations.
 

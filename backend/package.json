@@ -13,6 +13,7 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
+    "test:campaign-integration": "jest --config jest.integration.config.ts --runInBand",
     "migrate": "node-pg-migrate up --envPath ../.env --migrations-dir ../migrations",
     "migrate:up": "node-pg-migrate up --envPath ../.env --migrations-dir ../migrations",
     "migrate:down": "node-pg-migrate down --envPath ../.env --migrations-dir ../migrations",

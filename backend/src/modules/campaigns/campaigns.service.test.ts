@@ -25,6 +25,7 @@ jest.mock('./campaigns.execution.repository', () => ({
   findExistingEnrollmentLeadIds: jest.fn().mockResolvedValue([]),
   pauseCampaignTx: jest.fn(),
   hasDurableEnrollments: jest.fn().mockResolvedValue(false),
+  hasDurableEnrollment: jest.fn().mockResolvedValue(false),
   listActiveEnrollments: jest.fn(),
 }));
 jest.mock('../../shared/utils/audit', () => ({ writeAuditLog: jest.fn() }));
@@ -563,11 +564,54 @@ describe('retryLeadOutreachStep', () => {
     error_message: 'SendGrid credentials not set',
   };
 
+  it('rejects durable-owned retries when the rollout flag is disabled', async () => {
+    const { hasDurableEnrollment } = await import('./campaigns.execution.repository');
+    (findCampaignById as jest.Mock).mockResolvedValue({ ...baseCampaign, status: 'active', sequence_id: 'seq-1' });
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue({ status: 'failed', template_id: 'tmpl-1' });
+    (findTemplateById as jest.Mock).mockResolvedValue({ approval_status: 'approved' });
+    (hasDurableEnrollment as jest.Mock).mockResolvedValueOnce(true);
+    await expect(retryLeadOutreachStep('camp-1', 'lead-1', actor)).rejects.toMatchObject({ statusCode: 409 });
+    expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
+  });
+
   it('re-enqueues the latest failed step', async () => {
     (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
     (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(failedLog);
 
     const result = await retryLeadOutreachStep('camp-1', 'lead-1', actor);
+
+    expect(result).toEqual({ enqueued: true });
+    expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
+      {
+        leadId: 'lead-1',
+        campaignId: 'camp-1',
+        sequenceId: 'seq-1',
+        stepNumber: 2,
+        channel: 'email',
+        templateId: 'tmpl-1',
+        mockMode: false,
+        aiPersonalizationEnabled: false,
+      },
+      { jobIdSuffix: expect.stringMatching(/^retry-\d+$/) },
+    );
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'campaign.outreach.retried' }),
+    );
+  });
+
+  it('keeps legacy retry ownership when the rollout flag is enabled', async () => {
+    (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
+    (findLatestOutreachLogForLead as jest.Mock).mockResolvedValue(failedLog);
+
+    const oldFlag = process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
+    process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = 'true';
+    let result;
+    try {
+      result = await retryLeadOutreachStep('camp-1', 'lead-1', actor);
+    } finally {
+      if (oldFlag === undefined) delete process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
+      else process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = oldFlag;
+    }
 
     expect(result).toEqual({ enqueued: true });
     expect(enqueueOutreachDispatch).toHaveBeenCalledWith(

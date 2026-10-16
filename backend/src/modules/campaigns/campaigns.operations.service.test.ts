@@ -19,7 +19,8 @@ jest.mock('./campaigns.execution.repository', () => ({
   findNextCommittedActivity: jest.fn(),
   findSnapshotById: jest.fn(),
   getEnrollmentState: jest.fn(),
-  listAllEnrollmentStates: jest.fn(),
+  hasSentPhoneTaskStep: jest.fn().mockResolvedValue(false),
+  summarizeEnrollmentStates: jest.fn(),
   pauseEnrollmentState: jest.fn(),
   resumeEnrollmentTx: jest.fn(),
   summarizeCampaigns: jest.fn(),
@@ -45,7 +46,7 @@ import {
   findNextCommittedActivity,
   findSnapshotById,
   getEnrollmentState,
-  listAllEnrollmentStates,
+  summarizeEnrollmentStates,
   pauseEnrollmentState,
   resumeEnrollmentTx,
   summarizeCampaigns,
@@ -111,39 +112,9 @@ describe('getCampaignOperations', () => {
       { state: 'scheduled', channel: 'email', count: '2' },
     ]);
     (getLeadByIdService as jest.Mock).mockResolvedValue({ business_name: 'Acme' });
-    (listAllEnrollmentStates as jest.Mock).mockResolvedValue([
-      {
-        lead_id: 'lead-1',
-        enrollment_status: 'active',
-        lead_status: 'active',
-        completed_steps: 1,
-        snapshot_total_steps: '2',
-        snapshot_next_channel: 'email',
-        next_step_number: 2,
-        next_due_at: '2026-10-13T12:30:00.000Z',
-        delay_remaining_ms: null,
-        timing_unknown: false,
-        pause_reason: null,
-        stop_reason: null,
-        open_task_count: '0',
-        mock_mode: false,
-      },
-      {
-        lead_id: 'lead-2',
-        enrollment_status: 'paused',
-        lead_status: 'active',
-        completed_steps: 0,
-        snapshot_total_steps: '2',
-        snapshot_next_channel: 'email',
-        next_step_number: 1,
-        next_due_at: null,
-        delay_remaining_ms: '600000',
-        timing_unknown: false,
-        pause_reason: 'rep request',
-        stop_reason: null,
-        open_task_count: '0',
-        mock_mode: false,
-      },
+    (summarizeEnrollmentStates as jest.Mock).mockResolvedValue([
+      { reason: null, count: '1', potential_remaining: '1', unknown_timing: '0' },
+      { reason: 'enrollment_paused', count: '1', potential_remaining: '2', unknown_timing: '0' },
     ]);
 
     const overview = await getCampaignOperations('camp-1', actor);
@@ -180,7 +151,7 @@ describe('getCampaignOperations', () => {
     (findNextCommittedActivity as jest.Mock).mockResolvedValue(null);
     (countAttentionItems as jest.Mock).mockResolvedValue({ failed: '0', uncertain: '0', scheduled: '0' });
     (countExecutionsByState as jest.Mock).mockResolvedValue([]);
-    (listAllEnrollmentStates as jest.Mock).mockResolvedValue([]);
+    (summarizeEnrollmentStates as jest.Mock).mockResolvedValue([]);
     const overview = await getCampaignOperations('camp-1', actor);
     expect(overview.nextActivity).toBeNull();
     expect(overview.capacityRemaining).toBeNull();
@@ -437,48 +408,14 @@ describe('getCampaignOperations campaign-wide totals', () => {
     (findNextCommittedActivity as jest.Mock).mockResolvedValue(null);
     (countAttentionItems as jest.Mock).mockResolvedValue({ failed: '0', uncertain: '0', scheduled: '5' });
     (countExecutionsByState as jest.Mock).mockResolvedValue([]);
-    // 120 enrollments: 70 pinned to a 4-step snapshot (1 completed), 50 to a
-    // 2-step snapshot (0 completed). Totals must reflect every row, not a page.
-    const rows = [
-      ...Array.from({ length: 70 }, (_, i) => ({
-        lead_id: `v1-${i}`,
-        enrollment_status: 'active',
-        lead_status: 'active',
-        completed_steps: 1,
-        snapshot_total_steps: '4',
-        snapshot_next_channel: 'email',
-        next_step_number: 2,
-        next_due_at: new Date(Date.now() + 3600_000).toISOString(),
-        delay_remaining_ms: null,
-        timing_unknown: false,
-        pause_reason: null,
-        stop_reason: null,
-        open_task_count: '0',
-        mock_mode: false,
-      })),
-      ...Array.from({ length: 50 }, (_, i) => ({
-        lead_id: `v2-${i}`,
-        enrollment_status: 'active',
-        lead_status: 'active',
-        completed_steps: 0,
-        snapshot_total_steps: '2',
-        snapshot_next_channel: 'email',
-        next_step_number: 1,
-        next_due_at: new Date(Date.now() + 3600_000).toISOString(),
-        delay_remaining_ms: null,
-        timing_unknown: false,
-        pause_reason: null,
-        stop_reason: null,
-        open_task_count: '0',
-        mock_mode: false,
-      })),
-    ];
-    (listAllEnrollmentStates as jest.Mock).mockResolvedValue(rows);
+    (summarizeEnrollmentStates as jest.Mock).mockResolvedValue([
+      { reason: 'sequence_delay', count: '120', potential_remaining: '310', unknown_timing: '0' },
+    ]);
 
     const overview = await getCampaignOperations('camp-1', actor);
     // 70 × (4−1) + 50 × (2−0) = 310, not the 300 a 100-row page would give.
     expect(overview.potentialRemaining).toBe(310);
     expect(overview.scheduledCount).toBe(5);
-    expect(listAllEnrollmentStates).toHaveBeenCalledWith('camp-1');
+    expect(summarizeEnrollmentStates).toHaveBeenCalledWith(expect.objectContaining({ campaignId: 'camp-1' }));
   });
 });

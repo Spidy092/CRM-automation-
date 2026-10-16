@@ -29,7 +29,6 @@ jest.mock('../shared/utils/db', () => ({
   pool: { query: jest.fn(() => Promise.resolve({ rows: [] })) },
 }));
 
-
 jest.mock('../shared/utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -61,7 +60,7 @@ jest.mock('../modules/campaigns/campaigns.service', () => ({
 }));
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findCampaignById: jest.fn(),
-  findCampaignLeadRows: jest.fn(),
+  isCampaignLeadEnrolled: jest.fn(),
   countSentTodayForCampaign: jest.fn(),
 }));
 jest.mock('../modules/integrations/dispatch', () => ({
@@ -71,18 +70,21 @@ jest.mock('../modules/outreach/outreach.prompt', () => ({
   personalizeMessage: jest.fn(),
 }));
 
-import { findSequenceByIdIncludingDeleted, findLogsByLead } from '../modules/outreach/outreach.repository';
+import {
+  findSequenceByIdIncludingDeleted,
+  findLogsByLead,
+} from '../modules/outreach/outreach.repository';
 import { createLog, updateLogStatus, createTask } from '../modules/outreach/outreach.service';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { findLeadById } from '../modules/leads/leads.repository';
-import { findCampaignById, findCampaignLeadRows } from '../modules/campaigns/campaigns.repository';
+import {
+  findCampaignById,
+  isCampaignLeadEnrolled,
+} from '../modules/campaigns/campaigns.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
-import {
-  enqueueOutreachDispatch,
-  enqueueOutreachFollowUp,
-} from './queue';
+import { enqueueOutreachDispatch, enqueueOutreachFollowUp } from './queue';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -152,7 +154,11 @@ beforeEach(() => {
   (findLeadById as jest.Mock<any>).mockResolvedValue(MOCK_LEAD);
   (findTemplateById as jest.Mock<any>).mockResolvedValue(MOCK_TEMPLATE);
   (personalizeMessage as jest.Mock<any>).mockResolvedValue({ message: 'Hello Acme' });
-  (dispatchOutbound as jest.Mock<any>).mockResolvedValue({ ok: true, externalId: 'ext-1', latencyMs: 10 });
+  (dispatchOutbound as jest.Mock<any>).mockResolvedValue({
+    ok: true,
+    externalId: 'ext-1',
+    latencyMs: 10,
+  });
   // Execution gate defaults: active campaign with the lead enrolled.
   (findCampaignById as jest.Mock<any>).mockResolvedValue({
     id: 'camp-e2e',
@@ -164,7 +170,7 @@ beforeEach(() => {
     send_window_timezone: 'UTC',
     daily_send_limit: null,
   });
-  (findCampaignLeadRows as jest.Mock<any>).mockResolvedValue([{ id: 'lead-e2e' }]);
+  (isCampaignLeadEnrolled as jest.Mock<any>).mockResolvedValue(true);
   (findLogsByLead as jest.Mock<any>).mockResolvedValue([]);
 });
 
@@ -299,11 +305,7 @@ describe('stop condition: lead replied', () => {
     const result = await handleStopCheck({
       leadId: 'lead-e2e',
       campaignId: 'camp-e2e',
-      rules: [
-        { type: 'replied' },
-        { type: 'opted_out' },
-        { type: 'max_messages', value: 10 },
-      ],
+      rules: [{ type: 'replied' }, { type: 'opted_out' }, { type: 'max_messages', value: 10 }],
     });
 
     expect(result.stopped).toBe(true);
@@ -350,11 +352,7 @@ describe('stop condition: lead replied', () => {
     const result = await handleStopCheck({
       leadId: 'lead-e2e',
       campaignId: 'camp-e2e',
-      rules: [
-        { type: 'replied' },
-        { type: 'opted_out' },
-        { type: 'max_messages', value: 10 },
-      ],
+      rules: [{ type: 'replied' }, { type: 'opted_out' }, { type: 'max_messages', value: 10 }],
     });
 
     expect(result.stopped).toBe(false);

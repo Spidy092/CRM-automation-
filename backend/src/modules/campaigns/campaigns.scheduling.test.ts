@@ -346,3 +346,17 @@ describe('formatDueInTimezone', () => {
     expect(formatDueInTimezone('2026-10-13T07:00:00.000Z', 'Not/AZone')).toContain('UTC');
   });
 });
+
+
+describe('daily cap across campaign-local days', () => {
+  it.each(['UTC', 'Asia/Kolkata', 'America/New_York'])(
+    'does not add a day to delayed scheduling or resume in %s', (timezone) => {
+      const now = new Date('2026-10-13T16:00:00.000Z');
+      const delayMs = 24 * 3_600_000;
+      const camp = campaign({ daily_send_limit: 1, send_window_timezone: timezone });
+      const expected = new Date(now.getTime() + delayMs).toISOString();
+      expect(computeScheduledDueAt({ baseTime: now, delayMs, campaign: camp, sentToday: 1, now }).dueAt).toBe(expected);
+      expect(computeResumeDueAt({ remainingMs: delayMs, resumedAt: now, campaign: camp, sentToday: 1 }).dueAt).toBe(expected);
+    },
+  );
+});

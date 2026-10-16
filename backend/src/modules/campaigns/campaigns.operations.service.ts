@@ -18,14 +18,13 @@ import {
   findEnrollmentsPage,
   findNextCommittedActivity,
   getEnrollmentState,
-  listAllEnrollmentStates,
+  summarizeEnrollmentStates,
   pauseEnrollmentState,
   summarizeCampaigns,
   type EnrollmentOperationsRow,
 } from './campaigns.execution.repository';
 import { resumeSingleEnrollment } from './campaigns.execution.service';
 import {
-  computePotentialRemaining,
   describeWaitingReason,
   formatDueInTimezone,
   type WaitingReason,
@@ -293,35 +292,22 @@ export async function getCampaignOperations(
   }
 
   const steps = await liveSteps(campaign);
-  const liveTotal = steps.length > 0 ? steps.length : null;
-  // Campaign-wide totals aggregate EVERY enrollment in one bounded query —
-  // never the first page of a paginated list. Each enrollment contributes
-  // its pinned snapshot's step count (legacy rows fall back to the live
-  // sequence length).
-  const allRows = await listAllEnrollmentStates(campaignId).catch(() => []);
-  const senderReady = await senderReadiness(steps).catch(() => new Map());
+  const senderReady = await senderReadiness(steps).catch(() => new Map<string, boolean>());
+  const buckets = await summarizeEnrollmentStates({
+    campaignId,
+    campaignPaused: campaign.status === 'paused',
+    liveSteps: steps,
+    unavailableChannels: [...senderReady].filter(([, ready]) => !ready).map(([channel]) => channel),
+    deferralReason: computeDispatchDeferralMs(campaign, sentToday, now).reason,
+    now: now.toISOString(),
+  });
   const reasonCounts = new Map<WaitingReason, number>();
   let potentialRemaining = 0;
   let unknownTiming = 0;
-  for (const row of allRows) {
-    const terminal = row.enrollment_status === 'completed' || row.enrollment_status === 'stopped';
-    const rowTotal =
-      row.snapshot_total_steps != null ? parseInt(row.snapshot_total_steps, 10) : liveTotal;
-    potentialRemaining += computePotentialRemaining({
-      totalSteps: rowTotal ?? 0,
-      completedSteps: row.completed_steps,
-      terminal: terminal || row.lead_status !== 'active',
-    });
-    if (row.timing_unknown && !terminal) unknownTiming += 1;
-    const { reason } = waitingReasonForRow({
-      campaign,
-      row,
-      steps,
-      sentToday,
-      senderReady,
-      now,
-    });
-    if (reason) reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+  for (const bucket of buckets) {
+    potentialRemaining += Number(bucket.potential_remaining);
+    unknownTiming += Number(bucket.unknown_timing);
+    if (bucket.reason) reasonCounts.set(bucket.reason, Number(bucket.count));
   }
 
   const attentionItems: OperationsOverview['attention'] = [];
@@ -455,12 +441,18 @@ export async function getCampaignActivity(
 }> {
   await loadCampaign(campaignId);
   const decoded = input.cursor ? decodeCursor(input.cursor) : null;
-  if (input.cursor && !decoded) throw new AppError('Invalid cursor', 400);
+  if (
+    input.cursor &&
+    (!decoded || !['send', 'failure', 'reply', 'operator'].includes(decoded.kind ?? ''))
+  ) {
+    throw new AppError('Invalid activity cursor', 400);
+  }
   const { rows, hasMore } = await findCampaignActivity(
     campaignId,
     input.limit,
     decoded?.ts,
     decoded?.id,
+    decoded?.kind,
   );
   const last = rows[rows.length - 1];
   return {
@@ -475,7 +467,10 @@ export async function getCampaignActivity(
     })),
     meta: {
       hasMore,
-      nextCursor: hasMore && last ? encodeCursor({ ts: last.created_at, id: last.id }) : null,
+      nextCursor:
+        hasMore && last
+          ? encodeCursor({ ts: last.created_at, id: last.id, kind: last.kind })
+          : null,
     },
   };
 }

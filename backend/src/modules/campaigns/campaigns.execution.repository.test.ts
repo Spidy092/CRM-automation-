@@ -138,7 +138,7 @@ describe('reserveDailyCapacity', () => {
     mockPoolQuery
       .mockResolvedValueOnce(mockQueryResult([{ reserved: 0 }]))
       .mockResolvedValueOnce(mockQueryResult([{ ok: '1' }]));
-    await expect(reserveDailyCapacity('camp-1', '2026-10-13', 50)).resolves.toBe(true);
+    await expect(reserveDailyCapacity('camp-1', '2026-10-13', 50, 0)).resolves.toBe(true);
     const [, secondParams] = mockPoolQuery.mock.calls[1];
     expect(mockPoolQuery.mock.calls[1][0]).toContain('AND reserved < send_limit');
     expect(secondParams).toEqual(['camp-1', '2026-10-13']);
@@ -146,7 +146,7 @@ describe('reserveDailyCapacity', () => {
     mockPoolQuery
       .mockResolvedValueOnce(mockQueryResult([{ reserved: 50 }]))
       .mockResolvedValueOnce(mockQueryResult([]));
-    await expect(reserveDailyCapacity('camp-1', '2026-10-13', 50)).resolves.toBe(false);
+    await expect(reserveDailyCapacity('camp-1', '2026-10-13', 50, 0)).resolves.toBe(false);
     expect(mockPoolQuery.mock.calls[2][0]).toContain('DO UPDATE SET send_limit = EXCLUDED.send_limit');
   });
 
@@ -467,7 +467,7 @@ describe('restoreIntentTx', () => {
         generation: 1,
       },
     };
-    const dup = mockTxClient([{ rows: [{ id: 'x' }] }, { rows: [] }]);
+    const dup = mockTxClient([{ rows: [{ status: 'active' }] }, { rows: [{ enrollment_status: 'active', scheduling_generation: 1 }] }, { rows: [{ id: 'x' }] }, { rows: [] }]);
     mockPoolConnect(dup.client);
     await expect(restoreIntentTx(base)).resolves.toBeNull();
 

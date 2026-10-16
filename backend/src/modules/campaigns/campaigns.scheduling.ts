@@ -61,11 +61,20 @@ interface DueInput {
  * Estimated due instant for a step: base + delay, then the campaign's
  * sending window and daily-cap rules reapplied on top.
  */
+function localDay(at: Date, timezone: string | null): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'UTC' }).format(at);
+}
+
 export function computeScheduledDueAt(input: DueInput): ScheduledDue {
   const now = input.now ?? new Date();
   const eligibleAt = new Date(input.baseTime.getTime() + Math.max(0, input.delayMs));
   const anchor = eligibleAt > now ? eligibleAt : now;
-  const deferral = computeDispatchDeferralMs(input.campaign, input.sentToday, anchor);
+  const sentToday =
+    localDay(anchor, input.campaign.send_window_timezone) ===
+    localDay(now, input.campaign.send_window_timezone)
+      ? input.sentToday
+      : null;
+  const deferral = computeDispatchDeferralMs(input.campaign, sentToday, anchor);
   const dueAt = new Date(anchor.getTime() + deferral.delayMs);
   return {
     dueAt: dueAt.toISOString(),
@@ -100,7 +109,13 @@ export function computeResumeDueAt(input: {
   let reason: ScheduledDue['deferralReason'] = windowDelay > 0 ? 'send_window' : null;
 
   const limit = input.campaign.daily_send_limit;
-  if (limit != null && input.sentToday != null && input.sentToday >= limit) {
+  if (
+    limit != null &&
+    input.sentToday != null &&
+    input.sentToday >= limit &&
+    localDay(dueAt, input.campaign.send_window_timezone) ===
+      localDay(resumedAt, input.campaign.send_window_timezone)
+  ) {
     const toMidnight = computeDelayToNextLocalMidnightMs(
       input.campaign.send_window_timezone,
       dueAt,

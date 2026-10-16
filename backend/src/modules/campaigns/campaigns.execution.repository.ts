@@ -19,6 +19,8 @@
  * therefore unclaimable afterwards, while claims committed first remain
  * valid in-flight sends.
  */
+import { isDeepStrictEqual } from 'node:util';
+import type { WaitingReason } from './campaigns.scheduling';
 import { pool, withTransaction } from '../../shared/utils/db';
 import type { SequenceStep } from '../outreach/outreach.types';
 import type { Campaign } from './campaigns.types';
@@ -119,29 +121,26 @@ export async function ensureSequenceSnapshot(
   steps: SequenceStep[],
 ): Promise<SequenceSnapshotRow> {
   const normalized = JSON.stringify(steps);
-  const latest = await pool.query<SequenceSnapshotRow>(
-    `SELECT * FROM campaign_sequence_snapshots
-      WHERE campaign_id = $1
-      ORDER BY version DESC
-      LIMIT 1`,
-    [campaignId],
-  );
-  const current = latest.rows[0];
-  if (
-    current &&
-    current.sequence_id === sequenceId &&
-    JSON.stringify(current.steps) === normalized
-  ) {
-    return current;
+  // A conflicting version was allocated by another caller. Re-read and reuse
+  // its immutable snapshot when equivalent; otherwise allocate the next version.
+  for (;;) {
+    const latest = await pool.query<SequenceSnapshotRow>(
+      `SELECT * FROM campaign_sequence_snapshots
+        WHERE campaign_id = $1 ORDER BY version DESC LIMIT 1`,
+      [campaignId],
+    );
+    const current = latest.rows[0];
+    if (current && current.sequence_id === sequenceId && isDeepStrictEqual(current.steps, steps)) {
+      return current;
+    }
+    const created = await pool.query<SequenceSnapshotRow>(
+      `INSERT INTO campaign_sequence_snapshots (campaign_id, sequence_id, version, steps)
+        VALUES ($1, $2, $3, $4::jsonb)
+        ON CONFLICT (campaign_id, version) DO NOTHING RETURNING *`,
+      [campaignId, sequenceId, current ? current.version + 1 : 1, normalized],
+    );
+    if (created.rows[0]) return created.rows[0];
   }
-  const version = current ? current.version + 1 : 1;
-  const created = await pool.query<SequenceSnapshotRow>(
-    `INSERT INTO campaign_sequence_snapshots (campaign_id, sequence_id, version, steps)
-      VALUES ($1, $2, $3, $4::jsonb)
-      RETURNING *`,
-    [campaignId, sequenceId, version, normalized],
-  );
-  return created.rows[0];
 }
 
 export async function findLatestSnapshot(campaignId: string): Promise<SequenceSnapshotRow | null> {
@@ -461,22 +460,54 @@ export async function claimDueStepExecutionTx(input: {
   });
 }
 
+export async function releaseExecutionClaim(dedupeKey: string, dueAt?: string): Promise<void> {
+  await pool.query(
+    `WITH released AS (
+       UPDATE campaign_step_executions
+          SET state = 'scheduled', lease_expires_at = NULL, claimed_by = NULL,
+              due_at = COALESCE($2::timestamptz, due_at), updated_at = NOW()
+        WHERE dedupe_key = $1 AND state = 'claimed'
+        RETURNING campaign_id, lead_id, step_number, generation
+     )
+     UPDATE campaign_leads cl SET next_due_at = $2::timestamptz, execution_updated_at = NOW()
+       FROM released r
+      WHERE $2::timestamptz IS NOT NULL AND cl.campaign_id = r.campaign_id
+        AND cl.lead_id = r.lead_id AND cl.next_step_number = r.step_number
+        AND cl.scheduling_generation = r.generation AND cl.enrollment_status = 'active'
+        AND cl.next_due_at IS NOT NULL`,
+    [dedupeKey, dueAt ?? null],
+  );
+}
+
 export async function markExecutionSent(
   dedupeKey: string,
   providerMsgId: string | null,
 ): Promise<StepExecutionRow | null> {
-  const result = await pool.query<StepExecutionRow>(
-    `UPDATE campaign_step_executions
-        SET state = 'sent',
-            provider_msg_id = COALESCE($2, provider_msg_id),
-            lease_expires_at = NULL,
-            sent_at = NOW(),
-            updated_at = NOW()
-      WHERE dedupe_key = $1 AND state = 'claimed'
-      RETURNING *`,
-    [dedupeKey, providerMsgId],
-  );
-  return result.rows[0] ?? null;
+  return withTransaction(async (client) => {
+    const result = await client.query<StepExecutionRow>(
+      `UPDATE campaign_step_executions
+          SET state = 'sent', provider_msg_id = COALESCE($2, provider_msg_id),
+              lease_expires_at = NULL, sent_at = NOW(), updated_at = NOW()
+        WHERE dedupe_key = $1 AND state = 'claimed' RETURNING *`,
+      [dedupeKey, providerMsgId],
+    );
+    const execution = result.rows[0] ?? null;
+    if (execution?.channel === 'phone_call') {
+      await client.query('SELECT id FROM campaigns WHERE id = $1 FOR UPDATE', [
+        execution.campaign_id,
+      ]);
+      // Task creation is not completion: keep the phone step current but remove
+      // its send ETA so campaign pause cannot freeze and replay it as due work.
+      await client.query(
+        `UPDATE campaign_leads SET next_due_at = NULL, delay_remaining_ms = NULL,
+            execution_updated_at = NOW()
+          WHERE campaign_id = $1 AND lead_id = $2 AND next_step_number = $3
+            AND enrollment_status IN ('active', 'paused')`,
+        [execution.campaign_id, execution.lead_id, execution.step_number],
+      );
+    }
+    return execution;
+  });
 }
 
 export async function markExecutionFailed(
@@ -548,14 +579,16 @@ export async function reserveDailyCapacity(
   campaignId: string,
   localDate: string,
   sendLimit: number,
+  sentToday = 0,
 ): Promise<boolean> {
   const result = await pool.query<{ reserved: number }>(
     `INSERT INTO campaign_day_capacity (campaign_id, local_date, send_limit, reserved)
-       VALUES ($1, $2::date, $3, 0)
+       VALUES ($1, $2::date, $3, GREATEST($4, 0))
      ON CONFLICT (campaign_id, local_date)
-       DO UPDATE SET send_limit = EXCLUDED.send_limit
+       DO UPDATE SET send_limit = EXCLUDED.send_limit,
+         reserved = GREATEST(campaign_day_capacity.reserved, EXCLUDED.reserved)
      RETURNING reserved`,
-    [campaignId, localDate, sendLimit],
+    [campaignId, localDate, sendLimit, sentToday],
   );
   void result;
   const claimed = await pool.query<{ ok: string }>(
@@ -586,6 +619,20 @@ export async function findExistingEnrollmentLeadIds(
 }
 
 /** Complete a final phone task against its current durable enrollment state. */
+export async function hasSentPhoneTaskStep(
+  campaignId: string,
+  leadId: string,
+  stepNumber: number,
+): Promise<boolean> {
+  const result = await pool.query<{ awaiting: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM campaign_step_executions
+      WHERE campaign_id = $1 AND lead_id = $2 AND step_number = $3
+        AND channel = 'phone_call' AND state = 'sent') AS awaiting`,
+    [campaignId, leadId, stepNumber],
+  );
+  return result.rows[0]?.awaiting ?? false;
+}
+
 export async function completeEnrollmentAfterPhoneTaskTx(input: {
   campaignId: string;
   leadId: string;
@@ -750,43 +797,75 @@ export async function findEnrollmentsPage(
   return { rows, hasMore };
 }
 
-/**
- * Every enrollment of a campaign in one bounded query — the source for
- * campaign-wide totals (potential remaining, unknown timing, waiting
- * reasons). Pagination applies to displayed rows only, never to totals.
- */
-export async function listAllEnrollmentStates(
-  campaignId: string,
-): Promise<EnrollmentOperationsRow[]> {
-  const result = await pool.query<EnrollmentOperationsRow>(
-    `SELECT cl.campaign_id, cl.lead_id, cl.enrollment_status, cl.sequence_snapshot_id,
-       cl.next_step_number, cl.next_due_at, cl.delay_remaining_ms, cl.completed_steps,
-       cl.pause_reason, cl.stop_reason, cl.scheduling_generation, cl.timing_unknown,
-       cl.mock_mode,
-       cl.execution_updated_at, cl.added_at,
-       COALESCE(jsonb_array_length(ss.steps), NULL)::text AS snapshot_total_steps,
-       (SELECT step->>'channel' FROM jsonb_array_elements(ss.steps) AS step
-         WHERE (step->>'stepNumber')::int = cl.next_step_number
-         LIMIT 1) AS snapshot_next_channel,
-       l.contact_name, l.business_name, l.status AS lead_status,
-       ol.step_number AS latest_step, ol.status AS latest_status,
-       ol.created_at AS latest_time, ol.error_message AS latest_error,
-       (SELECT COUNT(*)::text FROM tasks t
-         WHERE t.lead_id = cl.lead_id AND t.campaign_id = cl.campaign_id
-           AND t.status IN ('pending', 'in_progress')) AS open_task_count
-     FROM campaign_leads cl
-     JOIN leads l ON l.id = cl.lead_id
-     LEFT JOIN campaign_sequence_snapshots ss ON ss.id = cl.sequence_snapshot_id
-     LEFT JOIN LATERAL (
-       SELECT step_number, status, created_at, error_message
-       FROM outreach_logs
-       WHERE lead_id = cl.lead_id AND campaign_id = cl.campaign_id
-       ORDER BY created_at DESC
-       LIMIT 1
-     ) ol ON true
-     WHERE cl.campaign_id = $1
-     ORDER BY cl.added_at DESC, cl.lead_id DESC`,
-    [campaignId],
+export interface EnrollmentSummaryBucket {
+  reason: WaitingReason | null;
+  count: string;
+  potential_remaining: string;
+  unknown_timing: string;
+}
+
+/** Campaign-wide aggregates return at most one row per waiting reason. */
+export async function summarizeEnrollmentStates(input: {
+  campaignId: string;
+  campaignPaused: boolean;
+  liveSteps: SequenceStep[];
+  unavailableChannels: string[];
+  deferralReason: string | null;
+  now: string;
+}): Promise<EnrollmentSummaryBucket[]> {
+  const result = await pool.query<EnrollmentSummaryBucket>(
+    `WITH snapshot_shapes AS MATERIALIZED (
+       SELECT ss.id, jsonb_array_length(ss.steps) AS total_steps,
+         (SELECT jsonb_object_agg(step->>'stepNumber', step->>'channel')
+            FROM jsonb_array_elements(ss.steps) step) AS channels
+       FROM campaign_sequence_snapshots ss WHERE ss.campaign_id = $1
+     ), live_shape AS (
+       SELECT jsonb_array_length($3::jsonb) AS total_steps,
+         (SELECT jsonb_object_agg(step->>'stepNumber', step->>'channel')
+            FROM jsonb_array_elements($3::jsonb) step) AS channels
+     ), open_tasks AS (
+       SELECT lead_id FROM tasks WHERE campaign_id = $1
+         AND status IN ('pending', 'in_progress') GROUP BY lead_id
+     ), enrollment_shapes AS (
+       SELECT cl.*, l.status AS lead_status,
+         COALESCE(ss.total_steps, live.total_steps) AS total_steps,
+         COALESCE(ss.channels->>cl.next_step_number::text,
+                  live.channels->>cl.next_step_number::text) AS channel,
+         t.lead_id IS NOT NULL AS has_open_task
+       FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id
+       LEFT JOIN snapshot_shapes ss ON ss.id = cl.sequence_snapshot_id
+       CROSS JOIN live_shape live
+       LEFT JOIN open_tasks t ON t.lead_id = cl.lead_id
+       WHERE cl.campaign_id = $1
+     ), classified AS (
+       SELECT *, CASE
+         WHEN enrollment_status IN ('completed', 'stopped') THEN NULL
+         WHEN $2::boolean THEN 'campaign_paused'
+         WHEN enrollment_status = 'paused' THEN 'enrollment_paused'
+         WHEN timing_unknown THEN 'scheduling_unavailable'
+         WHEN channel = 'phone_call' AND has_open_task THEN 'manual_task_pending'
+         WHEN channel <> 'phone_call' AND channel = ANY($4::text[]) THEN 'sender_unavailable'
+         WHEN next_due_at IS NULL OR next_step_number IS NULL THEN NULL
+         WHEN channel = 'phone_call' THEN 'manual_task_pending'
+         WHEN next_due_at <= $6::timestamptz + INTERVAL '60 seconds' AND $5 = 'daily_cap' THEN 'daily_limit'
+         WHEN next_due_at <= $6::timestamptz + INTERVAL '60 seconds' AND $5 = 'send_window' THEN 'outside_sending_hours'
+         WHEN next_due_at > $6::timestamptz THEN 'sequence_delay'
+         ELSE NULL END AS reason
+       FROM enrollment_shapes
+     )
+     SELECT reason, COUNT(*)::text AS count,
+       COALESCE(SUM(CASE WHEN enrollment_status IN ('active', 'paused') AND lead_status = 'active'
+         THEN GREATEST(total_steps - GREATEST(completed_steps, 0), 0) ELSE 0 END), 0)::text AS potential_remaining,
+       COUNT(*) FILTER (WHERE timing_unknown AND enrollment_status IN ('active', 'paused'))::text AS unknown_timing
+     FROM classified GROUP BY reason`,
+    [
+      input.campaignId,
+      input.campaignPaused,
+      JSON.stringify(input.liveSteps),
+      input.unavailableChannels,
+      input.deferralReason,
+      input.now,
+    ],
   );
   return result.rows;
 }
@@ -928,13 +1007,14 @@ export interface ActivityEntry {
 
 /**
  * Chronological operational history: sends, failures, replies, and operator
- * actions (pause/resume/launch/retry). Keyset cursor on (created_at, id).
+ * actions (pause/resume/launch/retry). Keyset cursor on (event timestamp, id, kind).
  */
 export async function findCampaignActivity(
   campaignId: string,
   limit: number,
   cursorTs?: string,
   cursorId?: string,
+  cursorKind?: string,
 ): Promise<{ rows: ActivityEntry[]; hasMore: boolean }> {
   const params: unknown[] = [campaignId];
   let i = 1;
@@ -944,31 +1024,29 @@ export async function findCampaignActivity(
     return `$${i}`;
   };
   let cursorFilter = '';
-  if (cursorTs && cursorId) {
-    cursorFilter = `AND (created_at, id) < (${push(cursorTs)}::timestamptz, ${push(cursorId)}::uuid)`;
+  if (cursorTs && cursorId && cursorKind) {
+    cursorFilter = `WHERE (created_at, id, kind) < (${push(cursorTs)}::timestamptz, ${push(cursorId)}::uuid, ${push(cursorKind)}::text)`;
   }
   const fetchLimit = limit + 1;
   const result = await pool.query<ActivityEntry>(
-    `(SELECT id, 'send' AS kind, lead_id, step_number, channel, status,
-       error_message AS body, created_at
-      FROM outreach_logs
-      WHERE campaign_id = $1 AND sent_at IS NOT NULL ${cursorFilter})
-     UNION ALL
-     (SELECT id, 'failure' AS kind, lead_id, step_number, channel, status,
-       error_message AS body, created_at
-      FROM outreach_logs
-      WHERE campaign_id = $1 AND status = 'failed' ${cursorFilter})
-     UNION ALL
-     (SELECT id, 'reply' AS kind, lead_id, step_number, channel, status,
-       NULL AS body, created_at
-      FROM outreach_logs
-      WHERE campaign_id = $1 AND replied_at IS NOT NULL ${cursorFilter})
-     UNION ALL
-     (SELECT id, 'operator' AS kind, NULL AS lead_id, NULL AS step_number,
-       NULL AS channel, action AS status, NULL AS body, created_at
-      FROM audit_logs
-      WHERE entity_type = 'campaign' AND entity_id = $1::uuid ${cursorFilter})
-     ORDER BY created_at DESC
+    `SELECT * FROM (
+       SELECT id, 'send' AS kind, lead_id, step_number, channel, status,
+         error_message AS body, sent_at AS created_at
+       FROM outreach_logs WHERE campaign_id = $1 AND sent_at IS NOT NULL
+       UNION ALL
+       SELECT id, 'failure' AS kind, lead_id, step_number, channel, status,
+         error_message AS body, updated_at AS created_at
+       FROM outreach_logs WHERE campaign_id = $1 AND status = 'failed'
+       UNION ALL
+       SELECT id, 'reply' AS kind, lead_id, step_number, channel, status,
+         NULL AS body, replied_at AS created_at
+       FROM outreach_logs WHERE campaign_id = $1 AND replied_at IS NOT NULL
+       UNION ALL
+       SELECT id, 'operator' AS kind, NULL AS lead_id, NULL AS step_number,
+         NULL AS channel, action AS status, NULL AS body, created_at
+       FROM audit_logs WHERE entity_type = 'campaign' AND entity_id = $1::uuid
+     ) events ${cursorFilter}
+     ORDER BY created_at DESC, id DESC, kind DESC
      LIMIT $${params.length + 1}`,
     [...params, fetchLimit],
   );
@@ -1180,7 +1258,8 @@ export async function resumeEnrollmentTx(input: {
   campaignId: string;
   leadId: string;
   expectedGeneration: number;
-  computedDueAt: string;
+  computedDueAt: string | null;
+  expectedNextStepNumber?: number | null;
   clearTimingUnknown: boolean;
   execution: ResumeIntentExecution | null;
 }): Promise<{ enrollment: EnrollmentStateRow; nextDedupeKey: string | null } | null> {
@@ -1197,6 +1276,7 @@ export async function resumeEnrollmentTx(input: {
         WHERE campaign_id = $1 AND lead_id = $2
           AND enrollment_status = 'paused'
           AND scheduling_generation = $3
+          AND ($6::integer IS NULL OR next_step_number = $6)
         RETURNING campaign_id, lead_id, enrollment_status, sequence_snapshot_id,
           next_step_number, next_due_at, delay_remaining_ms, completed_steps,
           pause_reason, stop_reason, scheduling_generation, timing_unknown, mock_mode, execution_updated_at`,
@@ -1206,6 +1286,7 @@ export async function resumeEnrollmentTx(input: {
         input.expectedGeneration,
         input.computedDueAt,
         input.clearTimingUnknown,
+        input.expectedNextStepNumber ?? null,
       ],
     );
     const enrollment = resumed.rows[0];
@@ -1255,26 +1336,52 @@ export async function restoreIntentTx(input: {
   nextDueAt: string;
   nextStepNumber?: number;
   completedSteps?: number;
+  completedStepNumber?: number;
+  delayRemainingMs?: number;
   execution: ResumeIntentExecution & { generation: number };
 }): Promise<{ nextDedupeKey: string } | { skipped: 'inactive' } | null> {
   return withTransaction(async (client) => {
-    const updated = await client.query(
+    const campaign = await client.query<{ status: string }>(
+      'SELECT status FROM campaigns WHERE id = $1 FOR UPDATE',
+      [input.campaignId],
+    );
+    const found = await client.query<EnrollmentStateRow>(
+      'SELECT * FROM campaign_leads WHERE campaign_id = $1 AND lead_id = $2 FOR UPDATE',
+      [input.campaignId, input.leadId],
+    );
+    const enrollment = found.rows[0];
+    if (!enrollment || !['active', 'paused'].includes(enrollment.enrollment_status)) {
+      return { skipped: 'inactive' } as const;
+    }
+    if (
+      enrollment.scheduling_generation !== input.execution.generation ||
+      (input.completedStepNumber != null &&
+        enrollment.next_step_number !== input.completedStepNumber)
+    ) {
+      return null;
+    }
+    const paused =
+      campaign.rows[0]?.status !== 'active' || enrollment.enrollment_status === 'paused';
+    if (paused && input.completedStepNumber == null) return { skipped: 'inactive' } as const;
+    await client.query(
       `UPDATE campaign_leads
           SET next_step_number = COALESCE($5, next_step_number),
-              next_due_at = $3::timestamptz,
-              delay_remaining_ms = NULL,
-              completed_steps = COALESCE($4, completed_steps),
+              next_due_at = CASE WHEN $6 THEN NULL ELSE $3::timestamptz END,
+              delay_remaining_ms = CASE WHEN $6 THEN $7::bigint ELSE NULL END,
+              completed_steps = GREATEST(COALESCE($4, completed_steps), completed_steps),
               execution_updated_at = NOW()
-        WHERE campaign_id = $1 AND lead_id = $2 AND enrollment_status = 'active'`,
+        WHERE campaign_id = $1 AND lead_id = $2`,
       [
         input.campaignId,
         input.leadId,
         input.nextDueAt,
         input.completedSteps ?? null,
         input.nextStepNumber ?? null,
+        paused,
+        input.delayRemainingMs ?? null,
       ],
     );
-    if ((updated.rowCount ?? 0) === 0) return { skipped: 'inactive' } as const;
+    if (paused) return { skipped: 'inactive' } as const;
     const nextDedupeKey = buildDedupeKey({
       campaignId: input.campaignId,
       leadId: input.leadId,

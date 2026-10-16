@@ -1092,10 +1092,10 @@ concurrency, and recovery boundaries.
    and republish it. Simulated work can never convert to real outreach.
    Proof: mode assertions in unit tests plus an end-to-end mock-mode
    integration test (zero provider calls, zero real-mode jobs).
-9. **Campaign-wide reporting.** Totals aggregate every enrollment via
-   `listAllEnrollmentStates` using each row's pinned snapshot step count
-   (legacy rows fall back to the live length); pagination applies to display
-   only. Proof: 120-enrollment mixed-snapshot unit and integration tests.
+9. **Campaign-wide reporting.** `summarizeEnrollmentStates` groups totals
+   in PostgreSQL using each enrollment's pinned snapshot step count (legacy
+   rows fall back to the live length). Only waiting-reason buckets reach Node;
+   outreach-log details and per-lead task counts stay on the paginated view. Proof: 120-enrollment mixed-snapshot unit and integration tests.
 
 ### Final rollout contract
 
@@ -1111,7 +1111,11 @@ drop durable tables as a rollback shortcut.
 
 Scratch-only containers (never production data or credentials, never
 `.env`): `postgres:16-alpine` on 5433 and `redis:7-alpine` on 6380 (see the
-TESTING block in the integration file). Durable worker tests build a minimal
+TESTING block in the integration file). Run these explicitly with
+`npm --prefix backend run test:campaign-integration` after setting
+`TEST_PG_URL`, `TEST_PG_USER`, `TEST_PG_PASSWORD`, and `TEST_REDIS_URL` as shown
+in that block. Default `npm test` excludes the two scratch suites; CI runs
+both commands. Durable worker tests build a minimal
 schema directly. The separate `migrations.chain.integration.test.ts` executes
 the actual checked-in migration chain on fresh, uniquely named scratch
 databases, both empty and populated before 0085, then verifies defaults,

@@ -33,6 +33,7 @@ import {
   findUnscheduledDueExecutions,
   getEnrollmentState,
   hasDurableEnrollment,
+  hasSentPhoneTaskStep,
   insertStepExecution,
   markExecutionFailed,
   markExecutionSent,
@@ -41,6 +42,7 @@ import {
   markExecutionUncertain,
   recordAcceptanceTx,
   releaseDailyCapacity,
+  releaseExecutionClaim,
   reserveDailyCapacity,
   restoreIntentTx,
   resumeEnrollmentTx,
@@ -173,9 +175,8 @@ export async function evaluateDispatchGate(input: {
 }
 
 async function isLeadEnrolled(campaignId: string, leadId: string): Promise<boolean> {
-  const { findCampaignLeadRows } = await import('./campaigns.repository');
-  const rows = await findCampaignLeadRows(campaignId);
-  return rows.some((r) => r.id === leadId);
+  const { isCampaignLeadEnrolled } = await import('./campaigns.repository');
+  return isCampaignLeadEnrolled(campaignId, leadId);
 }
 
 /** Current campaign-local day (YYYY-MM-DD) in the campaign's timezone. */
@@ -195,12 +196,16 @@ export function campaignLocalDate(timezone: string, now: Date = new Date()): str
  * on the capacity row — the limit cannot overshoot. Returns false when the
  * campaign-local day is already at capacity (caller defers to next midnight).
  */
-export async function tryReserveCapacity(campaign: Campaign): Promise<boolean> {
+export async function tryReserveCapacity(campaign: Campaign, sentToday?: number): Promise<boolean> {
   if (campaign.daily_send_limit == null) return true;
+  const observedSentToday =
+    sentToday ??
+    (await countSentTodayForCampaign(campaign.id, campaign.send_window_timezone || 'UTC'));
   return reserveDailyCapacity(
     campaign.id,
     campaignLocalDate(campaign.send_window_timezone || 'UTC'),
     campaign.daily_send_limit,
+    observedSentToday,
   );
 }
 
@@ -454,6 +459,15 @@ export async function restoreForResume(input: {
 
   for (const enrollment of input.enrollments) {
     if (enrollment.enrollment_status !== 'active') continue;
+    if (
+      enrollment.next_step_number != null &&
+      (await hasSentPhoneTaskStep(
+        input.campaign.id,
+        enrollment.lead_id,
+        enrollment.next_step_number,
+      ))
+    )
+      continue;
     const remaining =
       enrollment.delay_remaining_ms != null ? Number(enrollment.delay_remaining_ms) : null;
     if (remaining == null || enrollment.timing_unknown) {
@@ -792,6 +806,22 @@ export async function resumeSingleEnrollment(input: {
   if (enrollment.enrollment_status !== 'paused') {
     throw new AppError('Only paused enrollments can be resumed.', 409);
   }
+  if (
+    enrollment.next_step_number != null &&
+    (await hasSentPhoneTaskStep(input.campaign.id, enrollment.lead_id, enrollment.next_step_number))
+  ) {
+    const resumed = await resumeEnrollmentTx({
+      campaignId: input.campaign.id,
+      leadId: enrollment.lead_id,
+      expectedGeneration: enrollment.scheduling_generation,
+      expectedNextStepNumber: enrollment.next_step_number,
+      computedDueAt: null,
+      clearTimingUnknown: false,
+      execution: null,
+    });
+    if (!resumed) throw new AppError('Enrollment changed — reload and retry.', 409);
+    return { status: resumed.enrollment.enrollment_status, nextDueAt: null, nextDedupeKey: null };
+  }
   const resumedAt = input.resumedAt ?? new Date();
   const remaining =
     enrollment.delay_remaining_ms != null ? Number(enrollment.delay_remaining_ms) : null;
@@ -833,6 +863,7 @@ export async function resumeSingleEnrollment(input: {
     campaignId: input.campaign.id,
     leadId: enrollment.lead_id,
     expectedGeneration: enrollment.scheduling_generation,
+    expectedNextStepNumber: enrollment.next_step_number,
     computedDueAt: dueAt,
     clearTimingUnknown: clearUnknown,
     execution:
@@ -908,10 +939,6 @@ export async function scheduleAfterPhoneTask(input: {
     });
     return { owned: true, scheduled: false, duplicate: !completed };
   }
-  if (enrollment.enrollment_status !== 'active' || input.campaign.status !== 'active') {
-    return { owned: true, scheduled: false, duplicate: false };
-  }
-
   const generation = enrollment.scheduling_generation;
   const completedAt = input.completedAt ?? new Date();
   const sentToday =
@@ -934,6 +961,8 @@ export async function scheduleAfterPhoneTask(input: {
     nextDueAt: due.dueAt,
     nextStepNumber: next.stepNumber,
     completedSteps: Math.max(enrollment.completed_steps, input.completedStepNumber),
+    completedStepNumber: input.completedStepNumber,
+    delayRemainingMs: due.delayMs,
     execution: {
       stepNumber: next.stepNumber,
       channel: next.channel,
@@ -1008,14 +1037,8 @@ export async function claimExecutionForWorker(input: {
  * Release a claim so a BullMQ retry can reclaim it. Called when the worker
  * throws before recording an outcome (transient path).
  */
-export async function releaseClaimForRetry(dedupeKey: string): Promise<void> {
-  const { pool } = await import('../../shared/utils/db');
-  await pool.query(
-    `UPDATE campaign_step_executions
-        SET state = 'scheduled', lease_expires_at = NULL, claimed_by = NULL, updated_at = NOW()
-      WHERE dedupe_key = $1 AND state = 'claimed'`,
-    [dedupeKey],
-  );
+export async function releaseClaimForRetry(dedupeKey: string, dueAt?: string): Promise<void> {
+  await releaseExecutionClaim(dedupeKey, dueAt);
 }
 
 /** Resolve pinned steps for an execution, falling back to the live sequence. */

@@ -460,6 +460,21 @@ export async function findEligibleTriggerLeadsForCampaign(
   return result.rows;
 }
 
+/** Indexed membership check without loading the campaign roster. */
+export async function isCampaignLeadEnrolled(campaignId: string, leadId: string): Promise<boolean> {
+  const result = await pool.query<{ enrolled: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM campaign_leads cl
+       JOIN campaigns c ON c.id = cl.campaign_id
+       JOIN leads l ON l.id = cl.lead_id
+       WHERE cl.campaign_id = $1 AND cl.lead_id = $2
+         AND c.deleted_at IS NULL AND l.deleted_at IS NULL
+     ) AS enrolled`,
+    [campaignId, leadId],
+  );
+  return result.rows[0]?.enrolled ?? false;
+}
+
 export async function findCampaignLeadRows(campaignId: string): Promise<CampaignLeadRow[]> {
   const result = await pool.query<CampaignLeadRow>(
     `SELECT l.id, l.business_name, l.phone, l.email, l.status

@@ -53,6 +53,7 @@ import {
   lookupEnrollment,
 } from './campaigns.execution.service';
 import {
+  hasDurableEnrollment,
   hasDurableEnrollments,
   findExistingEnrollmentLeadIds,
   listActiveEnrollments,
@@ -765,7 +766,14 @@ export async function retryLeadOutreachStep(
     );
   }
 
-  if (isCampaignOperationsV2Enabled()) {
+  const durableOwned = await hasDurableEnrollment(campaignId, leadId);
+  if (durableOwned && !isCampaignOperationsV2Enabled()) {
+    throw new AppError(
+      'Durable dispatch is disabled — re-enable it before retrying this lead.',
+      409,
+    );
+  }
+  if (durableOwned) {
     const enrollment = await lookupEnrollment(campaignId, leadId);
     if (enrollment) {
       if (enrollment.enrollment_status === 'paused') {

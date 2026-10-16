@@ -464,12 +464,11 @@ async function dispatchClaimedStep(opts: {
     const campaign = await findCampaignById(campaignId);
     if (campaign) {
       if (durable) {
-        const deferral = computeDispatchDeferralMs(
-          campaign,
+        const sentToday =
           campaign.daily_send_limit != null
             ? await countSentTodayForCampaign(campaignId, campaign.send_window_timezone || 'UTC')
-            : null,
-        );
+            : null;
+        const deferral = computeDispatchDeferralMs(campaign, sentToday);
         if (deferral.delayMs > 0) {
           await enqueueDeferredDispatch(originalData, deferral.delayMs);
           logger.info('dispatch deferred', {
@@ -481,7 +480,7 @@ async function dispatchClaimedStep(opts: {
             delayMs: deferral.delayMs,
             resumesAt: new Date(Date.now() + deferral.delayMs).toISOString(),
           });
-          await releaseClaimForDeferral(executionId);
+          await releaseClaimForDeferral(executionId, deferral.delayMs);
           return;
         }
         // Atomic reservation: concurrent workers serialize here so the
@@ -492,7 +491,7 @@ async function dispatchClaimedStep(opts: {
         // distinct from an uncertain post-network outcome.
         let reserved: boolean;
         try {
-          reserved = await tryReserveCapacity(campaign);
+          reserved = await tryReserveCapacity(campaign, sentToday ?? undefined);
         } catch (err) {
           logger.error('capacity reservation failed — send blocked, claim released', {
             leadId,
@@ -516,7 +515,7 @@ async function dispatchClaimedStep(opts: {
             stepNumber,
             delayMs: toMidnight,
           });
-          await releaseClaimForDeferral(executionId);
+          await releaseClaimForDeferral(executionId, toMidnight);
           return;
         }
       } else {
@@ -577,7 +576,7 @@ async function dispatchClaimedStep(opts: {
         campaign: (await findCampaignById(campaignId)) as never,
         outcome: 'sent',
         providerMsgId: null,
-      }).catch(() => undefined);
+      });
     }
 
     return;
@@ -794,9 +793,15 @@ async function enqueueDeferredDispatch(data: OutreachDispatchJob, delayMs: numbe
  * deferred wake-up can reclaim it. Deferral is not a failure: no outcome is
  * recorded and no capacity is consumed.
  */
-async function releaseClaimForDeferral(executionId: string | undefined): Promise<void> {
+async function releaseClaimForDeferral(
+  executionId: string | undefined,
+  delayMs?: number,
+): Promise<void> {
   if (!executionId) return;
-  await releaseClaimForRetry(executionId).catch(() => undefined);
+  await releaseClaimForRetry(
+    executionId,
+    delayMs == null ? undefined : new Date(Date.now() + delayMs).toISOString(),
+  );
 }
 
 export async function handleFollowUp(data: OutreachFollowUpJob): Promise<void> {

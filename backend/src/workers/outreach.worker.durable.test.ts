@@ -46,11 +46,12 @@ jest.mock('../modules/templates/templates.repository', () => ({
 }));
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findCampaignById: jest.fn(),
-  findCampaignLeadRows: jest.fn(async () => []),
+  isCampaignLeadEnrolled: jest.fn(async () => []),
   countSentTodayForCampaign: jest.fn(),
 }));
 jest.mock('../modules/campaigns/campaigns.execution.repository', () => ({
-  buildDedupeKey: jest.requireActual('../modules/campaigns/campaigns.execution.repository').buildDedupeKey,
+  buildDedupeKey: jest.requireActual('../modules/campaigns/campaigns.execution.repository')
+    .buildDedupeKey,
   claimDueStepExecutionTx: jest.fn(),
   enrollIntentTx: jest.fn(),
   findExecutionByDedupeKey: jest.fn(),
@@ -70,6 +71,7 @@ jest.mock('../modules/campaigns/campaigns.execution.repository', () => ({
   pauseCampaignTx: jest.fn(),
   recordAcceptanceTx: jest.fn(),
   releaseDailyCapacity: jest.fn(),
+  releaseExecutionClaim: jest.fn(),
   reserveDailyCapacity: jest.fn(),
   restoreIntentTx: jest.fn(),
   resumeEnrollmentTx: jest.fn(),
@@ -98,7 +100,7 @@ import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import {
   findCampaignById,
-  findCampaignLeadRows,
+  isCampaignLeadEnrolled,
   countSentTodayForCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import {
@@ -110,6 +112,7 @@ import {
   markExecutionSkipped,
   recordAcceptanceTx,
   reserveDailyCapacity,
+  releaseExecutionClaim,
 } from '../modules/campaigns/campaigns.execution.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
 import { personalizeMessage } from '../modules/outreach/outreach.prompt';
@@ -150,10 +153,14 @@ beforeEach(() => {
   jest.clearAllMocks();
   process.env.CAMPAIGN_OPERATIONS_V2_ENABLED = 'true';
   (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
-  (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead-1' }]);
+  (isCampaignLeadEnrolled as jest.Mock).mockResolvedValue(true);
   (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead-1', status: 'active' });
   (findLogsByLead as jest.Mock).mockResolvedValue([]);
-  (findTemplateById as jest.Mock).mockResolvedValue({ id: 'tmpl-1', approval_status: 'approved', subject: 'Hi' });
+  (findTemplateById as jest.Mock).mockResolvedValue({
+    id: 'tmpl-1',
+    approval_status: 'approved',
+    subject: 'Hi',
+  });
   (countSentTodayForCampaign as jest.Mock).mockResolvedValue(0);
   (findExecutionByDedupeKey as jest.Mock).mockResolvedValue({
     dedupe_key: durableJob.executionId,
@@ -162,7 +169,11 @@ beforeEach(() => {
     generation: 0,
     state: 'scheduled',
   });
-  (findSnapshotById as jest.Mock).mockResolvedValue({ id: 'snap-1', sequence_id: 'seq-1', steps: snapshotSteps });
+  (findSnapshotById as jest.Mock).mockResolvedValue({
+    id: 'snap-1',
+    sequence_id: 'seq-1',
+    steps: snapshotSteps,
+  });
   (getEnrollmentState as jest.Mock).mockResolvedValue({
     enrollment_status: 'active',
     scheduling_generation: 0,
@@ -180,7 +191,10 @@ beforeEach(() => {
   (updateLogStatus as jest.Mock).mockResolvedValue({ id: 'log-1', status: 'sent' });
   (markExecutionSkipped as jest.Mock).mockResolvedValue(null);
   (markExecutionFailed as jest.Mock).mockResolvedValue(null);
-  (recordAcceptanceTx as jest.Mock).mockResolvedValue({ advanced: true, nextDedupeKey: 'next-key' });
+  (recordAcceptanceTx as jest.Mock).mockResolvedValue({
+    advanced: true,
+    nextDedupeKey: 'next-key',
+  });
 });
 
 afterEach(() => {
@@ -199,7 +213,10 @@ describe('durable dispatch', () => {
     // Acceptance, advancement, and the next intent commit in one transaction;
     // publication follows the commit (not a legacy follow-up job).
     expect(recordAcceptanceTx).toHaveBeenCalledWith(
-      expect.objectContaining({ dedupeKey: durableJob.executionId, next: expect.objectContaining({ stepNumber: 2 }) }),
+      expect.objectContaining({
+        dedupeKey: durableJob.executionId,
+        next: expect.objectContaining({ stepNumber: 2 }),
+      }),
     );
     expect(enqueueOutreachDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ executionId: expect.any(String) }),
@@ -287,7 +304,11 @@ describe('durable dispatch', () => {
       status: 'active',
     });
     (personalizeMessage as jest.Mock).mockResolvedValue({ message: 'Hello' });
-    (dispatchOutbound as jest.Mock).mockResolvedValue({ ok: false, error: 'SendGrid down', latencyMs: 5 });
+    (dispatchOutbound as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: 'SendGrid down',
+      latencyMs: 5,
+    });
 
     await handleDispatch({ ...durableJob, mockMode: false });
 
@@ -323,6 +344,9 @@ describe('durable dispatch', () => {
     );
     expect(createLog).not.toHaveBeenCalled();
     expect(reserveDailyCapacity).not.toHaveBeenCalled();
+    expect(releaseExecutionClaim).toHaveBeenCalledWith(durableJob.executionId, expect.any(String));
+    const deferredDueAt = (releaseExecutionClaim as jest.Mock).mock.calls[0][1];
+    expect(new Date(deferredDueAt).getTime()).toBeGreaterThan(Date.now());
   });
 
   it('reserves one slot before sending when capped', async () => {
@@ -331,7 +355,7 @@ describe('durable dispatch', () => {
 
     await handleDispatch(durableJob);
 
-    expect(reserveDailyCapacity).toHaveBeenCalledWith('camp-1', expect.any(String), 10);
+    expect(reserveDailyCapacity).toHaveBeenCalledWith('camp-1', expect.any(String), 10, 0);
     expect(createLog).toHaveBeenCalled();
   });
 
@@ -348,6 +372,7 @@ describe('durable dispatch', () => {
     expect(createLog).not.toHaveBeenCalled();
     expect(markExecutionFailed).not.toHaveBeenCalled();
     expect(enqueueOutreachDispatch).not.toHaveBeenCalled();
+    expect(releaseExecutionClaim).toHaveBeenCalledWith(durableJob.executionId, undefined);
   });
 
   it('defers when a concurrent worker wins the last capacity slot', async () => {

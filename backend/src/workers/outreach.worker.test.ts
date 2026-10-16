@@ -57,7 +57,7 @@ jest.mock('../modules/templates/templates.repository', () => ({
 
 jest.mock('../modules/campaigns/campaigns.repository', () => ({
   findCampaignById: jest.fn(),
-  findCampaignLeadRows: jest.fn(async () => []),
+  isCampaignLeadEnrolled: jest.fn(async () => []),
   countSentTodayForCampaign: jest.fn(),
 }));
 
@@ -78,7 +78,7 @@ import { findLeadById } from '../modules/leads/leads.repository';
 import { findTemplateById } from '../modules/templates/templates.repository';
 import {
   findCampaignById,
-  findCampaignLeadRows,
+  isCampaignLeadEnrolled,
   countSentTodayForCampaign,
 } from '../modules/campaigns/campaigns.repository';
 import { dispatchOutbound } from '../modules/integrations/dispatch';
@@ -114,7 +114,7 @@ describe('handleDispatch', () => {
       send_window_timezone: 'UTC',
       daily_send_limit: null,
     });
-    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead1' }]);
+    (isCampaignLeadEnrolled as jest.Mock).mockResolvedValue(true);
     (findLogsByLead as jest.Mock).mockResolvedValue([]);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({
@@ -490,7 +490,7 @@ describe('handleFollowUp', () => {
       send_window_timezone: 'UTC',
       daily_send_limit: null,
     });
-    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead1' }]);
+    (isCampaignLeadEnrolled as jest.Mock).mockResolvedValue(true);
     (findLogsByLead as jest.Mock).mockResolvedValue([]);
     (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead1', status: 'active' });
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't2', approval_status: 'approved' });
@@ -758,7 +758,7 @@ describe('handleDispatch — send window / daily cap deferral', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (getCampaignMessageSettings as jest.Mock).mockResolvedValue(null);
-    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead1' }]);
+    (isCampaignLeadEnrolled as jest.Mock).mockResolvedValue(true);
     (findLogsByLead as jest.Mock).mockResolvedValue([]);
     (findTemplateById as jest.Mock).mockResolvedValue({ id: 't1', approval_status: 'approved' });
   });

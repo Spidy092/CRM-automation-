@@ -19,7 +19,7 @@ jest.mock('../../workers/queue', () => ({
 jest.mock('./campaigns.repository', () => ({
   findCampaignById: jest.fn(),
   countSentTodayForCampaign: jest.fn(),
-  findCampaignLeadRows: jest.fn(),
+  isCampaignLeadEnrolled: jest.fn(),
 }));
 jest.mock('./campaigns.execution.repository', () => ({
   buildDedupeKey: jest.requireActual('./campaigns.execution.repository').buildDedupeKey,
@@ -35,6 +35,8 @@ jest.mock('./campaigns.execution.repository', () => ({
   findUnscheduledDueExecutions: jest.fn(),
   getEnrollmentState: jest.fn(),
   hasDurableEnrollment: jest.fn(),
+  hasSentPhoneTaskStep: jest.fn().mockResolvedValue(false),
+  releaseExecutionClaim: jest.fn(),
   insertStepExecution: jest.fn(),
   markExecutionFailed: jest.fn(),
   markExecutionSent: jest.fn(),
@@ -65,7 +67,7 @@ import { enqueueOutreachDispatch, getOutreachDispatchJob } from '../../workers/q
 import {
   findCampaignById,
   countSentTodayForCampaign,
-  findCampaignLeadRows,
+  isCampaignLeadEnrolled,
 } from './campaigns.repository';
 import {
   claimDueStepExecutionTx,
@@ -137,7 +139,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.CAMPAIGN_OPERATIONS_V2_ENABLED;
   (findCampaignById as jest.Mock).mockResolvedValue(activeCampaign);
-  (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'lead-1' }]);
+  (isCampaignLeadEnrolled as jest.Mock).mockResolvedValue(true);
   (findLeadById as jest.Mock).mockResolvedValue({ id: 'lead-1', status: 'active' });
   (findLogsByLead as jest.Mock).mockResolvedValue([]);
   (findTemplateById as jest.Mock).mockResolvedValue({ id: 'tmpl-1', approval_status: 'approved' });
@@ -184,7 +186,7 @@ describe('evaluateDispatchGate', () => {
   });
 
   it('blocks unenrolled leads', async () => {
-    (findCampaignLeadRows as jest.Mock).mockResolvedValue([{ id: 'other' }]);
+    (isCampaignLeadEnrolled as jest.Mock).mockResolvedValue(false);
     await expect(
       evaluateDispatchGate({
         campaignId: 'camp-1',
@@ -280,7 +282,7 @@ describe('campaignLocalDate / tryReserveCapacity', () => {
     await expect(
       tryReserveCapacity({ ...activeCampaign, daily_send_limit: 1 } as never),
     ).resolves.toBe(false);
-    expect(reserveDailyCapacity).toHaveBeenCalledWith('camp-1', expect.any(String), 1);
+    expect(reserveDailyCapacity).toHaveBeenCalledWith('camp-1', expect.any(String), 1, 0);
   });
 });
 
