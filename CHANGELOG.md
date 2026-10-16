@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0.2] - 2026-10-16
+
+### Fixed
+- Give campaign and manual email sends a personal unsubscribe link after personalization, repair hardcoded local opt-out links, and warn when a template has no recipient link.
+- Insert personalization variables without typing tokens by using **Variables** beside custom HTML email subjects, preheaders, and content. The HTML editor also shows the `{{unsubscribe_link}}` markup.
+
 ## [0.6.0.1] - 2026-10-16
 
 ### Fixed

@@ -47,6 +47,7 @@ import {
   leadToVariableValues,
   resolveEmailPayload,
   substituteVariables,
+  ensureRecipientUnsubscribeLink,
 } from '../templates/templateDesign';
 import { dispatchOutbound } from '../integrations/dispatch';
 import { createOutreachUnsubscribeUrl } from './unsubscribe.service';
@@ -611,6 +612,7 @@ export async function sendQuickMessage(
 
   let message: string;
   let dispatchBody: string;
+  let unsubscribeUrl: string | undefined;
   let subject: string | undefined;
   let templateId: string | null = input.templateId ?? null;
   let attachments: NonNullable<Awaited<ReturnType<typeof findTemplateById>>>['attachments'] = [];
@@ -628,7 +630,8 @@ export async function sendQuickMessage(
     // deterministic substitution; simple templates keep the legacy path.
     const values = leadToVariableValues(lead);
     if (input.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
-      values.unsubscribe_link = await createOutreachUnsubscribeUrl(lead.id, lead.email);
+      unsubscribeUrl = await createOutreachUnsubscribeUrl(lead.id, lead.email);
+      values.unsubscribe_link = unsubscribeUrl;
       const payload = resolveEmailPayload(template, values);
       message = payload.text;
       dispatchBody = payload.html;
@@ -654,6 +657,11 @@ export async function sendQuickMessage(
 
   const destination = destinationForChannel(lead, input.channel);
   if (!destination) throw new AppError('Lead has no destination for this channel', 400);
+
+  if (input.channel === 'email') {
+    unsubscribeUrl ??= await createOutreachUnsubscribeUrl(lead.id, lead.email);
+    dispatchBody = ensureRecipientUnsubscribeLink(dispatchBody, unsubscribeUrl);
+  }
 
   const log = await createLog({
     leadId,

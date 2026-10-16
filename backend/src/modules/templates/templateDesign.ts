@@ -893,6 +893,58 @@ export function resolveEmailPayload(
   return { html: text, text, subject };
 }
 
+/** Apply recipient opt-out after personalization; bearer links never enter AI prompts or caches. */
+export function ensureRecipientUnsubscribeLink(html: string, recipientUrl: string): string {
+  let recipient: URL;
+  try {
+    recipient = new URL(recipientUrl);
+    if (
+      !['http:', 'https:'].includes(recipient.protocol) ||
+      recipient.username ||
+      recipient.password ||
+      !recipient.searchParams.get('token')
+    ) {
+      throw new Error('invalid recipient link');
+    }
+  } catch {
+    throw new AppError('A valid recipient unsubscribe link is required before email delivery', 422);
+  }
+  const safeUrl = escapeHtml(recipient.toString());
+  let hasRecipientLink = false;
+  // Change only anchors: unrelated URLs, images, and external preference links stay intact.
+  const output = html.replace(
+    /<a\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/a\s*>/gi,
+    (anchor: string, attributes: string, label: string): string => {
+      const href = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attributes);
+      const value = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
+      let replace = /^\{\{\s*unsubscribe_link\s*\}\}$/.test(value);
+      if (!value && /\bunsubscribe\b/i.test(label.replace(/<[^>]*>/g, ' '))) replace = true;
+      if (value) {
+        try {
+          const destination = new URL(value.replace(/&amp;/gi, '&'), recipient.origin);
+          if (
+            destination.origin === recipient.origin &&
+            ['/unsubscribe', '/outreach/unsubscribe'].includes(destination.pathname)
+          )
+            replace = true;
+        } catch {
+          // A malformed unrelated link is not an unsubscribe capability.
+        }
+      }
+      if (!replace) return anchor;
+      hasRecipientLink = true;
+      const updated = href
+        ? attributes.replace(href[0], ` href="${safeUrl}"`)
+        : `${attributes} href="${safeUrl}"`;
+      return `<a${updated}>${label}</a>`;
+    },
+  );
+  if (hasRecipientLink) return output;
+  const footer = `<p style="font-size:12px"><a href="${safeUrl}">Unsubscribe from outreach emails</a></p>`;
+  const close = /<\/(?:body|html)\s*>/i;
+  return close.test(output) ? output.replace(close, `${footer}$&`) : `${output}\n${footer}`;
+}
+
 // ── SMS segments ─────────────────────────────────────────────────────────────
 
 // GSM-7 basic + extension tables (characters needing an escape count double).
@@ -996,10 +1048,15 @@ export interface ComplianceCheck {
 export function checkEmailCompliance(htmlOrBody: string): ComplianceCheck {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const lower = htmlOrBody.toLowerCase();
-  if (!lower.includes('unsubscribe')) {
+  const hasRecipientPlaceholder = /href\s*=\s*["']\s*\{\{\s*unsubscribe_link\s*\}\}\s*["']/i.test(
+    htmlOrBody,
+  );
+  const hasTokenLink = /href\s*=\s*["'][^"']*[?&](?:amp;)?token=[^"'\s&]+[^"']*["']/i.test(
+    htmlOrBody,
+  );
+  if (!hasRecipientPlaceholder && !hasTokenLink) {
     warnings.push(
-      'No unsubscribe reference found — marketing emails should include an unsubscribe link (the footer block adds one automatically)',
+      'No recipient unsubscribe link found — use {{unsubscribe_link}} in an anchor href. Campaign delivery adds a recipient opt-out link when needed.',
     );
   }
   return { errors, warnings };

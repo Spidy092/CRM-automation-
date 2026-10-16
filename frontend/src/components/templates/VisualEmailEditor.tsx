@@ -43,7 +43,7 @@ function clone<T>(v: T): T {
 }
 
 /** Small variable-insert toolbar bound to a textarea/input ref. */
-function VariableButtons({ targetRef, onInsert, label }: {
+export function VariableButtons({ targetRef, onInsert, label }: {
   targetRef: React.RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   onInsert: (applied: string) => void;
   label: string;

@@ -27,7 +27,7 @@ import {
   type EmailDesign,
   type StarterTemplate,
 } from '@/lib/emailDesign';
-import { VisualEmailEditor, type VisualEditorInitial } from '@/components/templates/VisualEmailEditor';
+import { VariableButtons, VisualEmailEditor, type VisualEditorInitial } from '@/components/templates/VisualEmailEditor';
 import { SmsEditor, WhatsappEditor } from '@/components/templates/ChannelEditors';
 import { AddContentPicker } from '@/components/content/AddContentPicker';
 import {
@@ -549,6 +549,9 @@ function HtmlEmailEditor({ existing, onDirty, onSaved, stagedFiles, onUnstageFil
   const [subject, setSubject] = useState('');
   const [preheader, setPreheader] = useState('');
   const [html, setHtml] = useState('');
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const preheaderRef = useRef<HTMLInputElement>(null);
+  const htmlRef = useRef<HTMLTextAreaElement>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showPreview, setShowPreview] = useState(false);
   const [showTest, setShowTest] = useState(false);
@@ -673,20 +676,30 @@ function HtmlEmailEditor({ existing, onDirty, onSaved, stagedFiles, onUnstageFil
               {errors.name && <p className="text-xs text-red-600">{errors.name}</p>}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="html-subject">Subject *</Label>
-              <Input id="html-subject" value={subject} onChange={(e) => { setSubject(e.target.value); touch(); }} placeholder="e.g. News for {{business_name}}" />
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="html-subject">Subject *</Label>
+                <VariableButtons label="Subject" targetRef={subjectRef} onInsert={(value) => { setSubject(value); touch(); }} />
+              </div>
+              <Input ref={subjectRef} id="html-subject" value={subject} onChange={(e) => { setSubject(e.target.value); touch(); }} placeholder="e.g. News for {{business_name}}" />
               {errors.subject && <p className="text-xs text-red-600">{errors.subject}</p>}
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="html-preheader">Preheader</Label>
-            <Input id="html-preheader" value={preheader} maxLength={300} onChange={(e) => { setPreheader(e.target.value); touch(); }} placeholder="Short summary shown next to the subject" />
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="html-preheader">Preheader</Label>
+              <VariableButtons label="Preheader" targetRef={preheaderRef} onInsert={(value) => { setPreheader(value); touch(); }} />
+            </div>
+            <Input ref={preheaderRef} id="html-preheader" value={preheader} maxLength={300} onChange={(e) => { setPreheader(e.target.value); touch(); }} placeholder="Short summary shown next to the subject" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="html-body">HTML content *</Label>
-            <Textarea id="html-body" value={html} rows={16} onChange={(e) => { setHtml(e.target.value); touch(); }} placeholder="<p>Hi {{first_name}},</p>" className="font-mono text-xs" spellCheck={false} />
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="html-body">HTML content *</Label>
+              <VariableButtons label="HTML content" targetRef={htmlRef} onInsert={(value) => { setHtml(value); touch(); }} />
+            </div>
+            <Textarea ref={htmlRef} id="html-body" value={html} rows={16} onChange={(e) => { setHtml(e.target.value); touch(); }} placeholder="<p>Hi {{first_name}},</p>" className="font-mono text-xs" spellCheck={false} />
             {errors.html && <p className="text-xs text-red-600">{errors.html}</p>}
             <p className="text-xs text-slate-500">Allowed: text, links (http/https), images (http/https), tables, inline email-safe styles. Variables like <code>{'{{first_name}}'}</code> work in text, subject, and URLs.</p>
+            <p className="text-xs text-slate-500">For a personal unsubscribe link, use <code>{'<a href="{{unsubscribe_link}}">Unsubscribe</a>'}</code>. The recipient link is generated when the campaign sends.</p>
           </div>
           {detectedVars.length > 0 && (
             <div className="flex flex-wrap gap-1">

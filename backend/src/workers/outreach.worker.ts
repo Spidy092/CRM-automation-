@@ -35,6 +35,7 @@ import {
   leadToVariableValues,
   resolveEmailPayload,
   substituteVariables,
+  ensureRecipientUnsubscribeLink,
 } from '../modules/templates/templateDesign';
 import { isPlaceholderPhone, isPlaceholderEmail } from '../shared/utils/phone';
 import { findLeadById } from '../modules/leads/leads.repository';
@@ -1061,8 +1062,10 @@ async function sendViaConnector(opts: {
 
   let message: string;
   let subject: string | undefined;
+  let unsubscribeUrl: string | undefined;
   if (opts.channel === 'email' && template.editor_mode !== 'simple' && template.html_body) {
-    values.unsubscribe_link = await createOutreachUnsubscribeUrl(lead.id, lead.email);
+    unsubscribeUrl = await createOutreachUnsubscribeUrl(lead.id, lead.email);
+    values.unsubscribe_link = unsubscribeUrl;
     const payload = resolveEmailPayload(template, values);
     message = payload.html;
     subject = payload.subject ?? undefined;
@@ -1098,6 +1101,11 @@ async function sendViaConnector(opts: {
       success: false,
       error: `Lead has a placeholder ${opts.channel} (scraped without real contact info) — cannot dispatch`,
     };
+  }
+
+  if (opts.channel === 'email') {
+    unsubscribeUrl ??= await createOutreachUnsubscribeUrl(lead.id, lead.email);
+    message = ensureRecipientUnsubscribeLink(message, unsubscribeUrl);
   }
 
   // 7. Call dispatch

@@ -15,6 +15,10 @@ import { handleDispatch, handleFollowUp, handleStopCheck } from './outreach.work
 
 // ── Mocks ─────────────────────────────────────────────────────────────────
 
+jest.mock('../modules/outreach/unsubscribe.service', () => ({
+  createOutreachUnsubscribeUrl: jest.fn(async (): Promise<string> => 'https://example.com/outreach/unsubscribe?token=recipient-token'),
+}));
+
 jest.mock('./queue', () => ({
   getBullConnection: jest.fn(() => ({ on: jest.fn() })),
   OUTREACH_QUEUE: 'outreach',

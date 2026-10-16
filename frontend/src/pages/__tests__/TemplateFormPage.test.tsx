@@ -283,6 +283,18 @@ describe('TemplateFormPage', () => {
     expect(screen.getByText(/Pending — attaches on save/i)).toBeInTheDocument();
   });
 
+  it('inserts an unsubscribe variable at the HTML cursor without replacing the surrounding markup', () => {
+    renderWithProviders(<TemplateFormPage />, { initialEntries: ['/templates/new?mode=html'] });
+    const htmlInput = screen.getByLabelText('HTML content *') as HTMLTextAreaElement;
+    fireEvent.change(htmlInput, { target: { value: '<a href="">Unsubscribe</a>' } });
+    htmlInput.setSelectionRange(9, 9);
+    fireEvent.click(screen.getByRole('button', { name: 'HTML content — insert personalization variable' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '{{unsubscribe_link}}' }));
+    expect(htmlInput).toHaveValue('<a href="{{unsubscribe_link}}">Unsubscribe</a>');
+    expect(screen.getByRole('button', { name: 'Subject — insert personalization variable' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preheader — insert personalization variable' })).toBeInTheDocument();
+  });
+
   it('html mode attaches staged files after create without duplicating the template', async () => {
     mockParams = {};
     vi.mocked(useFiles).mockReturnValue({ data: [
@@ -295,8 +307,8 @@ describe('TemplateFormPage', () => {
     vi.mocked(useAttachTemplateFromLibrary).mockReturnValue({ mutateAsync: attachMutate, isPending: false } as ReturnType<typeof useAttachTemplateFromLibrary>);
     renderWithProviders(<TemplateFormPage />, { initialEntries: ['/templates/new?mode=html'] });
     fireEvent.change(screen.getByLabelText(/Template name/i), { target: { value: 'HTML launch' } });
-    fireEvent.change(screen.getByLabelText(/Subject/i), { target: { value: 'News' } });
-    fireEvent.change(screen.getByLabelText(/HTML content/i), { target: { value: '<p>Hello</p>' } });
+    fireEvent.change(screen.getByLabelText(/Subject/i, { selector: 'input' }), { target: { value: 'News' } });
+    fireEvent.change(screen.getByLabelText(/HTML content/i, { selector: 'textarea' }), { target: { value: '<p>Hello</p>' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add content' }));
     fireEvent.click(screen.getByRole('button', { name: /terms\.pdf/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Add selected' }));

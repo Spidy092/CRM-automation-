@@ -352,6 +352,9 @@ describe('handleDispatch', () => {
         aiPersonalizationEnabled: !enabled,
       });
       expect(getCampaignMessageSettings).toHaveBeenCalledWith('camp1');
+      expect(dispatchOutbound).toHaveBeenCalledWith(expect.objectContaining({
+        body: expect.stringContaining('https://example.com/outreach/unsubscribe?token=valid'),
+      }));
       expect(personalizeMessage).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
