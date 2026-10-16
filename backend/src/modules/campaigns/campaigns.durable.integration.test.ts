@@ -114,6 +114,12 @@ async function checkInfra(): Promise<void> {
 
 const SCHEMA_SQL = `
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+DO $$ BEGIN
+  CREATE TYPE message_channel AS ENUM ('whatsapp', 'email', 'sms', 'phone_call');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  CREATE TYPE outreach_status AS ENUM ('queued', 'sent', 'delivered', 'opened', 'clicked', 'replied', 'failed', 'bounced');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS campaigns (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   status text NOT NULL DEFAULT 'draft',
@@ -161,8 +167,8 @@ CREATE TABLE IF NOT EXISTS integrations (
 );
 CREATE TABLE IF NOT EXISTS outreach_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  lead_id uuid NOT NULL, campaign_id uuid, channel text NOT NULL, template_id uuid,
-  step_number integer, status text NOT NULL DEFAULT 'queued', external_msg_id text,
+  lead_id uuid NOT NULL, campaign_id uuid, channel message_channel NOT NULL, template_id uuid,
+  step_number integer, status outreach_status NOT NULL DEFAULT 'queued', external_msg_id text,
   message_body text, sent_at timestamptz, delivered_at timestamptz, opened_at timestamptz,
   clicked_at timestamptz, replied_at timestamptz, click_url text, error_message text,
   created_at timestamptz NOT NULL DEFAULT NOW(), updated_at timestamptz NOT NULL DEFAULT NOW()
@@ -218,7 +224,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE TABLE IF NOT EXISTS audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid, action text, entity_type text, entity_id uuid,
+  user_id uuid, action varchar(100), entity_type varchar(100), entity_id uuid,
   old_value jsonb, new_value jsonb, ip_address text,
   created_at timestamptz DEFAULT NOW()
 );`;
@@ -1566,6 +1572,27 @@ describe('review regression: campaign-wide SQL aggregates', () => {
 });
 
 describe('review regression: activity event pagination', () => {
+  it('returns message statuses and operator actions with the production enum types', async () => {
+    const campaignId = await seedCampaign();
+    const leadId = await seedLead();
+    await pool.query(
+      `INSERT INTO outreach_logs (lead_id, campaign_id, channel, status, sent_at)
+       VALUES ($1, $2, 'email', 'sent', '2026-10-13T10:00:00Z')`,
+      [leadId, campaignId],
+    );
+    await pool.query(
+      `INSERT INTO audit_logs (entity_type, entity_id, action, created_at)
+       VALUES ('campaign', $1, 'campaign.pause', '2026-10-13T11:00:00Z')`,
+      [campaignId],
+    );
+    const activity = await execRepo.findCampaignActivity(campaignId, 25);
+    expect(activity.rows).toEqual([
+      expect.objectContaining({ kind: 'operator', status: 'campaign.pause', channel: null }),
+      expect.objectContaining({ kind: 'send', status: 'sent', channel: 'email', lead_id: leadId }),
+    ]);
+    expect(activity.hasMore).toBe(false);
+  });
+
   it('paginates a send and reply with the same ID/time without dropping either', async () => {
     const campaignId = await seedCampaign();
     const leadId = await seedLead();
