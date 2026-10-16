@@ -1,6 +1,6 @@
 # Campaign operations: research and implementation plan
 
-Date: 2026-10-15 · Status: phases 0–2 implemented in the accompanying PR; migrations 0084–0086 are additive and await rollout approval.
+Date: 2026-10-15 · Status: phases 0–2 implemented in the accompanying PR; migrations 0085–0087 are additive and await rollout approval.
 
 ## Summary
 
@@ -182,7 +182,7 @@ Rollback disables new dispatch while retaining durable state and records. Do not
 
 ## Files Changed
 
-The implementation is in this PR. Migrations `0084`–`0086` are additive and have not been run. The implementation covers durable campaign execution, pause/resume and recovery, operational APIs, and campaign detail/list visibility. The following planned items remain outside this PR:
+The implementation is in this PR. Migrations `0085`–`0087` are additive and have not been run. The implementation covers durable campaign execution, pause/resume and recovery, operational APIs, and campaign detail/list visibility. The following planned items remain outside this PR:
 
 - Cursor pagination for the committed schedule endpoint.
 - Projection based on pinned sequence snapshots and the shared send-window/delay calculation; current projections are indicative and use the live sequence and configured delays.

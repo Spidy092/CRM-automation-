@@ -1,5 +1,5 @@
 /**
- * Migration 0084: campaign operations durable execution state.
+ * Migration 0085: campaign operations durable execution state.
  *
  * PostgreSQL becomes the source of truth for enrollment progress, next-step
  * timing, and execution identity. BullMQ remains the wake-up transport only.

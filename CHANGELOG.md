@@ -5,7 +5,7 @@
 ### Added
 - Campaign operations with durable enrollment snapshots, scheduled step execution, pause/resume controls, recovery, and per-enrollment progress.
 - Campaign sequence previews and operational metrics for delivery, engagement, failures, and funnel progress.
-- Append-only migrations 0084–0086 for durable campaign execution; apply these migrations before enabling `CAMPAIGN_OPERATIONS_V2_ENABLED`.
+- Append-only migrations 0085–0087 for durable campaign execution; apply these migrations before enabling `CAMPAIGN_OPERATIONS_V2_ENABLED`.
 - Persist newsletter composer drafts on the server, with revision-safe editing, duplication, deletion, and retryable sends.
 - Enforce rolling 24-hour, 7-day, and 30-day newsletter send limits per subscriber.
 - Default newsletter scheduling to India Standard Time and select all three newsletter topics after email confirmation.

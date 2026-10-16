@@ -1,12 +1,12 @@
 /**
  * Durable campaign execution repository.
  *
- * Owns every new scheduling table from migration 0084
+ * Owns every new scheduling table from migration 0085
  * (`campaign_sequence_snapshots`, `campaign_step_executions`,
  * `campaign_day_capacity`) plus the execution columns on `campaign_leads`
- * (including the `mock_mode` corrections from migration 0085).
+ * (including the `mock_mode` corrections from migration 0086).
  * Services make scheduling decisions; this module only runs parameterized
- * database operations. Requires migrations 0084+0085 — callers must gate the
+ * database operations. Requires migrations 0085+0086 — callers must gate the
  * durable path behind `isCampaignOperationsV2Enabled()`.
  *
  * Concurrency protocol (pause vs. claim): both transitions lock the same

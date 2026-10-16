@@ -13,7 +13,7 @@ describe('checked-in campaign migration defaults', () => {
   it('compiles plain defaults that satisfy the enrollment and execution constraints', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const migration =
-      require('../../../../migrations/1750000000084_campaign-operations-execution.js') as {
+      require('../../../../migrations/1750000000085_campaign-operations-execution.js') as {
         up: (builder: MigrationBuilderImpl) => void;
       };
     const builder = new MigrationBuilderImpl({} as never, undefined, false, {
@@ -80,20 +80,23 @@ async function freshDatabase(): Promise<string> {
   return withTestCredentials(url.toString());
 }
 
-async function runMigrations(databaseUrl: string, before0084 = false): Promise<void> {
+async function runMigrations(databaseUrl: string, beforeCampaignExecution = false): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { runner } = require('node-pg-migrate') as {
     runner: (options: Record<string, unknown>) => Promise<unknown>;
   };
   const count = fs
     .readdirSync(migrationsDir)
-    .filter((name) => /^\d.*\.js$/.test(name) && name < '1750000000084').length;
+    .filter(
+      (name) =>
+        /^\d.*\.js$/.test(name) && name < '1750000000085_campaign-operations-execution.js',
+    ).length;
   await runner({
     databaseUrl,
     dir: migrationsDir,
     direction: 'up',
     migrationsTable: 'pgmigrations',
-    ...(before0084 ? { count } : {}),
+    ...(beforeCampaignExecution ? { count } : {}),
     log: () => undefined,
   });
 }
@@ -174,7 +177,7 @@ async function verifyExecutionOperations(
 }
 
 describe('actual checked-in migration chain', () => {
-  it('upgrades populated pre-0084 rows and supports execution upserts and capacity', async () => {
+  it('upgrades populated pre-0085 rows and supports execution upserts and capacity', async () => {
     const url = await freshDatabase();
     await runMigrations(url, true);
     const client = new Client({ connectionString: url });
@@ -184,7 +187,7 @@ describe('actual checked-in migration chain', () => {
       await runMigrations(url);
       await verifyExecutionOperations(client, campaignId, leadId);
       const applied = await client.query<{ name: string }>('SELECT name FROM pgmigrations');
-      for (const suffix of ['0084', '0085', '0086']) {
+      for (const suffix of ['0085', '0086', '0087']) {
         expect(applied.rows.some((row) => row.name.includes(suffix))).toBe(true);
       }
     } finally {

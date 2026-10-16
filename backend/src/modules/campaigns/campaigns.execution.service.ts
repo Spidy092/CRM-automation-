@@ -8,7 +8,7 @@
  * row before sending or exit without sending.
  *
  * All durable entry points no-op with `{ durable: false }` when the rollout
- * flag is off or the campaign predates migration 0084 — the caller then uses
+ * flag is off or the campaign predates migration 0085 — the caller then uses
  * the legacy transport path. Legacy and durable dispatch are never armed for
  * the same enrollment simultaneously: enabling the flag makes the durable
  * path the single scheduling owner for newly enrolled work.

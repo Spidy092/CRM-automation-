@@ -1,8 +1,8 @@
 /**
- * Migration 0085: correct campaign-operations execution defaults and persist dispatch mode.
+ * Migration 0086: correct campaign-operations execution defaults and persist dispatch mode.
  *
- * Corrects migration 0084 without editing it (append-only rule):
- *  - 0084 declared string defaults with embedded quotes (`default: "'active'"`),
+ * Corrects migration 0085 without editing it (append-only rule):
+ *  - 0085 declared string defaults with embedded quotes (`default: "'active'"`),
  *    which compile to DEFAULT $pga$'active'$pga$ — a seven-character value
  *    including the apostrophes. That value violates the enrollment CHECK
  *    constraint on any row populated by the default. This migration resets
@@ -15,7 +15,7 @@
  *    transport path, which never sent mock campaigns.
  *
  * REVIEW REQUIRED BEFORE RUNNING. Never edit this file after it has run;
- * add a new migration instead. Requires 0084 to have run first.
+ * add a new migration instead. Requires 0085 to have run first.
  */
 
 /** @param {import('node-pg-migrate').MigrationBuilder} pgm */
@@ -23,7 +23,7 @@ exports.up = function (pgm) {
   pgm.alterColumn('campaign_leads', 'enrollment_status', { default: 'active' });
   pgm.alterColumn('campaign_step_executions', 'state', { default: 'unscheduled' });
 
-  // Backfill rows populated by the quoted defaults, in case 0084 ran anywhere.
+  // Backfill rows populated by the quoted defaults, in case 0085 ran anywhere.
   pgm.sql(`UPDATE campaign_leads SET enrollment_status = 'active' WHERE enrollment_status = '''active'''`);
   pgm.sql(`UPDATE campaign_step_executions SET state = 'unscheduled' WHERE state = '''unscheduled'''`);
 

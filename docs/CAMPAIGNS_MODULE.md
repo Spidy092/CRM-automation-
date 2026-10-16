@@ -966,7 +966,7 @@ Key fixes (all covered by regression tests):
 
 PostgreSQL owns enrollment progress, next-step timing, and execution
 identity (`campaign_sequence_snapshots`, `campaign_leads` execution columns,
-`campaign_step_executions`, `campaign_day_capacity` — migration `0084`,
+`campaign_step_executions`, `campaign_day_capacity` — migration `0085`,
 **review required before running**). BullMQ is wake-up transport only.
 
 - Sequence versions are pinned per enrollment; edits mint new versions.
@@ -984,7 +984,7 @@ identity (`campaign_sequence_snapshots`, `campaign_leads` execution columns,
 ### Rollout
 
 `CAMPAIGN_OPERATIONS_V2_ENABLED` (default **off**). Enabling requires
-migrations `0084` through `0086` to have run. The flag controls durable
+migrations `0085` through `0087` to have run. The flag controls durable
 campaign operations; once an enrollment has durable execution state, that
 state remains its scheduling owner even if the flag is turned off. Durable
 jobs are parked while disabled and can be swept again after re-enabling.
@@ -1037,19 +1037,19 @@ recording connector double, never real sends) cover the persistence, queue,
 concurrency, and recovery boundaries.
 
 1. **Migration defaults.** The user's request to complete the pending fix
-   authorizes correcting both string defaults in the uncommitted 0084 file.
-   The actual checked-in migration chain must succeed on populated pre-0084
-   databases; a later migration alone cannot repair a failing 0084.
-   Migration 0085 retains compatible default repair and adds `mock_mode`.
-   Additive migration 0086 restores campaign enrollment, snapshot, and daily
+   authorizes correcting both string defaults in the uncommitted 0085 file.
+   The actual checked-in migration chain must succeed on populated pre-0085
+   databases; a later migration alone cannot repair a failing 0085.
+   Migration 0086 retains compatible default repair and adds `mock_mode`.
+   Additive migration 0087 restores campaign enrollment, snapshot, and daily
    capacity uniqueness plus execution CHECK constraints omitted by earlier
    named constraint maps under the installed node-pg-migrate API. It fails
    on invalid existing data without deleting or merging records. Proof:
    `migrations.chain.integration.test.ts` runs the real chain, checks both
    defaults, and exercises enrollment/snapshot upserts and daily capacity.
    No application database migrations have been run; deployment remains a
-   separate approval step. Databases that already applied 0084 retain 0085's
-   corrective path and must apply 0086 before enabling durable dispatch.
+   separate approval step. Databases that already applied 0085 retain 0086's
+   corrective path and must apply 0087 before enabling durable dispatch.
 2. **Transport IDs.** BullMQ custom IDs cannot contain `:` (verified against
    the installed validator). `buildTransportJobId` maps each execution key
    to stable `exec-<sha256 hex>`; the full key stays in job data, and stable
@@ -1088,7 +1088,7 @@ concurrency, and recovery boundaries.
    `scheduled`, never `failed`/`uncertain`. Proof: unit test asserting zero
    connector calls plus an integration test with broken capacity storage.
 8. **Mock mode.** `mock_mode` persists per execution and per enrollment
-   (migration 0085); enroll, accept, resume, retry, and recovery all inherit
+   (migration 0086); enroll, accept, resume, retry, and recovery all inherit
    and republish it. Simulated work can never convert to real outreach.
    Proof: mode assertions in unit tests plus an end-to-end mock-mode
    integration test (zero provider calls, zero real-mode jobs).
@@ -1101,7 +1101,7 @@ concurrency, and recovery boundaries.
 
 `CAMPAIGN_OPERATIONS_V2_ENABLED` (default **off**) grants *permission* to
 dispatch durable work and create durable intents; it never *reinterprets*
-ownership. Prerequisites: migrations 0084+0085+0086 reviewed, approved, and
+ownership. Prerequisites: migrations 0085+0086+0087 reviewed, approved, and
 applied. Rollback = flag off (parked intents retained, sweep idle);
 re-enable resumes via the sweep — no reconciliation script needed. Never run
 legacy and durable dispatch for the same enrollment simultaneously. Do not
@@ -1114,7 +1114,7 @@ Scratch-only containers (never production data or credentials, never
 TESTING block in the integration file). Durable worker tests build a minimal
 schema directly. The separate `migrations.chain.integration.test.ts` executes
 the actual checked-in migration chain on fresh, uniquely named scratch
-databases, both empty and populated before 0084, then verifies defaults,
+databases, both empty and populated before 0085, then verifies defaults,
 upserts, and capacity constraints. These scratch tests do not apply migrations
 to an application database. Test connections reject nonlocal hosts, incorrect
 ports, and non-test database names before any destructive cleanup.

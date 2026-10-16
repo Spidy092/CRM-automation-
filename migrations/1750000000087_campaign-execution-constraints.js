@@ -1,4 +1,6 @@
 /**
+ * Migration 0087: restore campaign execution integrity constraints.
+ *
  * Restore campaign execution constraints omitted by earlier named constraint
  * maps. node-pg-migrate expects constraint options, not a name-to-SQL map.
  * Without these UNIQUE constraints the execution repositories' ON CONFLICT
