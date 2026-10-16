@@ -1,6 +1,6 @@
 import { NewsletterDraftsPanel } from '@/components/ui/NewsletterDraftsPanel';
 import { NewsletterContactsModal } from '@/components/ui/NewsletterContactsModal';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -76,6 +76,7 @@ export function NewsletterPage() {
   const [pageSize, setPageSize] = useState(25);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingPreferences, setEditingPreferences] = useState(false);
+  const previousSelectedId = useRef(selectedId);
   const [selectedBroadcastId, setSelectedBroadcastId] = useState<string | null>(null);
   const [includeUncertain, setIncludeUncertain] = useState(false);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
@@ -111,13 +112,17 @@ export function NewsletterPage() {
   const counts = countsQuery.data;
 
   useEffect(() => {
-    if (!detailQuery.data) return;
+    if (!detailQuery.data || detailQuery.data.id !== selectedId) return;
+    const subscriberChanged = previousSelectedId.current !== selectedId;
+    previousSelectedId.current = selectedId;
+    if (editingPreferences && !subscriberChanged) return;
+
     preferencesForm.reset({
       topics: detailQuery.data.topics as NewsletterTopic[],
       frequency: detailQuery.data.frequency,
     });
     setEditingPreferences(false);
-  }, [detailQuery.data, preferencesForm]);
+  }, [detailQuery.data, editingPreferences, preferencesForm, selectedId]);
 
   const saveSubscriberPreferences = async (values: SubscriberPreferences) => {
     if (!selectedId) return;

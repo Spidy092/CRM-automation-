@@ -165,6 +165,68 @@ describe('NewsletterPage workspace', () => {
     });
   });
 
+  it('preserves in-progress edits during a detail refresh and resets when another subscriber is selected', () => {
+    const firstSubscriber = {
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      email: 'first@example.com',
+      status: 'confirmed' as const,
+      topics: ['product_updates', 'promotions'],
+      frequency: 'weekly' as const,
+      send_limits_available: true,
+      last_sent_at: null,
+      next_eligible_at: null,
+      source: 'website',
+      confirmed_at: '2026-10-15T00:00:00.000Z',
+      unsubscribed_at: null,
+      created_at: '2026-10-14T00:00:00.000Z',
+      updated_at: '2026-10-14T00:00:00.000Z',
+    };
+    const secondSubscriber = {
+      ...firstSubscriber,
+      id: '650e8400-e29b-41d4-a716-446655440001',
+      email: 'second@example.com',
+      topics: ['company_news'],
+      frequency: 'monthly' as const,
+    };
+    let detailById = { [firstSubscriber.id]: firstSubscriber, [secondSubscriber.id]: secondSubscriber };
+    vi.mocked(useSubscribers).mockReturnValue({
+      data: { data: [firstSubscriber, secondSubscriber], meta: { limit: 25, offset: 0, total: 2 } },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useSubscribers>);
+    vi.mocked(useSubscriber).mockImplementation((id) => ({
+      data: detailById[id],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }) as ReturnType<typeof useSubscriber>);
+    authState.role = 'admin';
+
+    const { rerender } = renderWithProviders(<NewsletterPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Subscribers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details for first@example.com' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit preferences' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Product updates' }));
+    fireEvent.change(screen.getByLabelText('Maximum sending frequency'), { target: { value: 'daily' } });
+
+    detailById = {
+      ...detailById,
+      [firstSubscriber.id]: { ...firstSubscriber, updated_at: '2026-10-16T00:00:00.000Z' },
+    };
+    rerender(<NewsletterPage />);
+
+    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Product updates' })).not.toBeChecked();
+    expect(screen.getByLabelText('Maximum sending frequency')).toHaveValue('daily');
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details for second@example.com' }));
+    const subscriberDetails = within(screen.getByRole('dialog', { name: 'Subscriber details' }));
+    expect(subscriberDetails.getByRole('button', { name: 'Edit preferences' })).toBeInTheDocument();
+    expect(subscriberDetails.getByText('Company news')).toBeInTheDocument();
+    expect(subscriberDetails.getByText('monthly')).toBeInTheDocument();
+  });
+
   it('shows uncertain sends with review UI and an explicit opt-in retry', async () => {
     const { useBroadcasts, useUncertainRecipients, useRetryBroadcast } = await import('@/api/newsletter');
     (useBroadcasts as ReturnType<typeof vi.fn>).mockReturnValue({
