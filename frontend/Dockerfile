@@ -23,7 +23,7 @@ RUN npm run build
 # Stage 2 — production
 # Serves the built SPA with nginx:alpine
 # ─────────────────────────────────────────────────────────────────────────────
-FROM nginx:1.27-alpine AS production
+FROM nginx:1.31-alpine AS production
 
 # Drop the default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
