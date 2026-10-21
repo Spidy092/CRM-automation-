@@ -23,6 +23,12 @@ The package commands are run from their respective directories:
 
 For local development, the backend exposes `npm run dev` and `npm run worker`; the frontend exposes `npm run dev`. Backend tests use `npm run test`; frontend tests also use `npm run test`.
 
+## Lead contact details
+
+When creating or editing a lead, enter a primary email and phone. Use **Add email** or **Add phone** to save optional additional contact details for that lead. You can remove an added entry from the form; saved entries appear on the lead detail page.
+
+The lead create and update API accepts optional `additional_emails` and `additional_phones` arrays alongside the required `email` and `phone` fields. Apply the append-only `1750000000088_add-lead-additional-contacts.js` migration through the approved migration process before deploying this feature. Existing leads start with empty additional-contact lists.
+
 ## Email template variables and unsubscribe links
 
 In the Custom HTML email editor, use **Variables** beside Subject, Preheader, or HTML content to insert a token at the cursor. To place the unsubscribe link yourself, use `<a href="{{unsubscribe_link}}">Unsubscribe</a>`.
