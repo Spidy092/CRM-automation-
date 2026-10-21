@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS leads (
   business_name text, contact_name text, phone text, email text, website text,
   industry text, location text, country text, google_rating numeric, review_count integer,
   social_links jsonb, source_platform text, lead_score integer, classification text,
+  additional_emails text[] NOT NULL DEFAULT '{}', additional_phones text[] NOT NULL DEFAULT '{}',
   status text NOT NULL DEFAULT 'active', assigned_to uuid, pipeline_stage_id uuid,
   custom_fields jsonb, tags text[], notes text, deal_value numeric, won_at timestamptz,
   lost_at timestamptz, next_follow_up_at timestamptz,
