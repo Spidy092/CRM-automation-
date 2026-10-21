@@ -29,6 +29,14 @@ When creating or editing a lead, enter a primary email and phone. Use **Add emai
 
 The lead create and update API accepts optional `additional_emails` and `additional_phones` arrays alongside the required `email` and `phone` fields. Apply the append-only `1750000000088_add-lead-additional-contacts.js` migration through the approved migration process before deploying this feature. Existing leads start with empty additional-contact lists.
 
+## Lead tags and saved groups
+
+On **Leads**, choose an existing tag from **All tags** and combine it with a tab such as **Uncontacted** or other filters. Existing lead tags are available immediately; this feature does not rename or replace them. When bulk tagging selected leads, choose an existing suggestion to reuse its spelling.
+
+Use **Save current filters**, enter a name such as “Schools awaiting contact,” and select **Save group**. Click the saved name later to show leads matching those filters at that time. Groups save filters rather than a fixed set of leads, are limited to 50 per account, and are stored only in the current browser. They do not sync between devices and clearing browser storage removes them.
+
+`GET /api/v1/leads/tags` returns distinct nonblank tags from nondeleted leads for admin, manager, sales, and viewer roles; sales users receive tags only from their assigned leads. It accepts no query parameters. `GET /api/v1/leads?exact_tag=...` filters by one literal tag, preserving commas and spaces, and combines with the existing filters. URL-encode the value when constructing a request. These changes require no database migration.
+
 ## Email template variables and unsubscribe links
 
 In the Custom HTML email editor, use **Variables** beside Subject, Preheader, or HTML content to insert a token at the cursor. To place the unsubscribe link yourself, use `<a href="{{unsubscribe_link}}">Unsubscribe</a>`.
