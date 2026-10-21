@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0.0] - 2026-10-21
+
+### Added
+- Let each lead keep optional additional email addresses and phone numbers while retaining the required primary contacts.
+- Show and edit additional contacts on the lead form and detail page.
+
 ## [0.6.0.2] - 2026-10-16
 
 ### Fixed

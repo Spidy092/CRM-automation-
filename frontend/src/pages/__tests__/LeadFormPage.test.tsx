@@ -75,6 +75,31 @@ vi.mock('@/api/client', () => {
 });
 
 describe('LeadFormPage', () => {
+  it('submits optional additional emails and phones for a lead', async () => {
+    renderWithProviders(<LeadFormPage />);
+
+    fireEvent.change(screen.getByLabelText(/Business Name/), { target: { value: 'Acme School' } });
+    fireEvent.change(screen.getByLabelText(/Contact Name/), { target: { value: 'Taylor' } });
+    fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: 'taylor@example.com' } });
+    fireEvent.change(screen.getByLabelText(/^Phone/), { target: { value: '1234567890' } });
+    fireEvent.change(screen.getByLabelText(/^Industry/), { target: { value: 'Education' } });
+    fireEvent.change(screen.getByLabelText(/^Location/), { target: { value: 'Bengaluru' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add email' }));
+    fireEvent.change(screen.getByLabelText('Additional email 1'), { target: { value: 'second@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add phone' }));
+    fireEvent.change(screen.getByLabelText('Additional phone 1'), { target: { value: '0987654321' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Lead' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Lead created successfully.');
+    expect(apiClient.post).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        additional_emails: ['second@example.com'],
+        additional_phones: ['0987654321'],
+      }),
+    );
+  });
+
   it('renders successfully', async () => {
     const { container } = renderWithProviders(<LeadFormPage />);
     await new Promise(resolve => setTimeout(resolve, 50));

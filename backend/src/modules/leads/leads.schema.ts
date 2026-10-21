@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LeadClassification, LeadStatus } from '../../shared/types';
+import { normalizePhone } from '../../shared/utils/phone';
 
 const statusEnum = z.enum(['active', 'paused', 'won', 'lost', 'opted_out']) as z.ZodEnum<
   [LeadStatus, ...LeadStatus[]]
@@ -20,6 +21,12 @@ const baseLeadSchema = z.object({
   contact_name: z.string().min(1, 'contact_name is required').max(255),
   phone: z.string().min(1, 'phone is required').max(50),
   email: z.string().email('email must be a valid email address').max(255),
+  additional_emails: z.array(z.string().email().max(255)).optional(),
+  additional_phones: z
+    .array(
+      z.string().trim().min(1).max(50).transform(normalizePhone).pipe(z.string().min(1).max(50)),
+    )
+    .optional(),
   website: z.string().max(500).optional().nullable(),
   industry: z.string().min(1, 'industry is required').max(100),
   location: z.string().min(1, 'location is required').max(255),

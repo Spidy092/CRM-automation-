@@ -597,6 +597,12 @@ export function LeadDetailPage() {
                 } 
               />
               <Row icon={<span className="text-xs">📱</span>} label="Phone" value={lead.phone} />
+              {(lead.additional_emails ?? []).map((email, index) => (
+                <Row key={`email-${index}`} icon={<span className="text-xs">✉</span>} label={`Additional email ${index + 1}`} value={email} />
+              ))}
+              {(lead.additional_phones ?? []).map((phone, index) => (
+                <Row key={`phone-${index}`} icon={<span className="text-xs">📱</span>} label={`Additional phone ${index + 1}`} value={phone} />
+              ))}
               {lead.website && (
                 <Row
                   icon={<Globe className="h-4 w-4" />}

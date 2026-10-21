@@ -33,6 +33,8 @@ export interface Lead {
   contact_name: string;
   phone: string;
   email: string;
+  additional_emails: string[];
+  additional_phones: string[];
   website: string | null;
   industry: string;
   location: string;
@@ -62,6 +64,8 @@ export interface LeadInput {
   contact_name: string;
   phone: string;
   email: string;
+  additional_emails?: string[];
+  additional_phones?: string[];
   website?: string | null;
   industry: string;
   location: string;
