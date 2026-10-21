@@ -4,8 +4,22 @@ import { z } from 'zod';
 
 export const leadGroupNameSchema = z.object({ name: z.string().trim().min(1, 'Enter a group name.').max(60) });
 const groupSchema = z.object({ id: z.string(), name: z.string().max(60), filters: z.string() });
-const savedSchema = z.object({ groups: z.record(z.array(groupSchema).max(50)) });
+const savedSchema = z.object({ groups: z.record(z.array(groupSchema)) });
 const FILTER_KEYS = ['tab', 'status', 'classification', 'dateRange', 'pipeline', 'q', 'tag'];
+const STORAGE_NAME = 'crm.lead-groups';
+
+function readStoredGroups(fallback: LeadGroupsState['groups']): LeadGroupsState['groups'] {
+  try {
+    const raw = localStorage.getItem(STORAGE_NAME);
+    if (!raw) return fallback;
+    const persisted: unknown = JSON.parse(raw);
+    if (!persisted || typeof persisted !== 'object' || !('state' in persisted)) return fallback;
+    const parsed = savedSchema.safeParse(persisted.state);
+    return parsed.success ? parsed.data.groups : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export function leadGroupFilters(params: URLSearchParams): string {
   const filtered = new URLSearchParams();
@@ -36,16 +50,16 @@ export const useLeadGroupsStore = create<LeadGroupsState>()(persist((set, get) =
   return {
     groups: {},
     save: (userId, name, filters) => {
-      const groups = get().groups;
+      const groups = readStoredGroups(get().groups);
       updateGroups({ ...groups, [userId]: [...(groups[userId] ?? []), { id: crypto.randomUUID(), name, filters }] });
     },
     remove: (userId, id) => {
-      const groups = get().groups;
+      const groups = readStoredGroups(get().groups);
       updateGroups({ ...groups, [userId]: (groups[userId] ?? []).filter((group) => group.id !== id) });
     },
   };
 }, {
-  name: 'crm.lead-groups',
+  name: STORAGE_NAME,
   storage: createJSONStorage(() => ({
     getItem: (name) => localStorage.getItem(name),
     setItem: (name, value) => localStorage.setItem(name, value),

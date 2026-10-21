@@ -671,7 +671,7 @@ export function LeadsPage() {
             ))}
           </div>
 
-          <SavedLeadGroups searchParams={searchParams} onApply={(params) => setSearchParams(params)} />
+          <SavedLeadGroups searchParams={searchParams} onApply={(params) => setSearchParams(params, { replace: true })} />
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative flex-1">
