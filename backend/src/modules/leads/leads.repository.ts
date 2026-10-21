@@ -109,6 +109,10 @@ function buildLeadFilterClauses(
     params.push(`%${filters.search}%`);
     i++;
   }
+  if (filters.exact_tag !== undefined) {
+    conditions.push(`tags @> $${i++}::text[]`);
+    params.push([filters.exact_tag]);
+  }
   if (filters.tags && filters.tags.length > 0) {
     conditions.push(`tags && $${i++}`); // array overlap
     params.push(filters.tags);

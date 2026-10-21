@@ -20,6 +20,8 @@ import {
   bulkPauseHandler,
 } from './leads.controller';
 
+import { leadTagsHandler } from './leadTags.controller';
+
 const router = Router();
 
 // All lead routes require authentication + authenticated-tier rate limit.
@@ -27,6 +29,7 @@ router.use(wrap(authenticate), authenticatedLimiter);
 
 // GET /api/v1/leads — admin/manager/sales/viewer only; marketing excluded per RBAC spec.
 router.get('/', authorize('admin', 'manager', 'sales', 'viewer'), wrap(listLeadsHandler));
+router.get('/tags', authorize('admin', 'manager', 'sales', 'viewer'), wrap(leadTagsHandler));
 router.get('/:id', authorize('admin', 'manager', 'sales', 'viewer'), wrap(getLeadHandler));
 
 // Create — Admin, Manager.

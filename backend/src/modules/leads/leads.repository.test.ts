@@ -67,6 +67,23 @@ const sampleRow: LeadRow = {
 beforeEach(() => jest.clearAllMocks());
 
 describe('findLeads', () => {
+  it('preserves literal comma tags and intersects them with contact status for rows and totals', async () => {
+    mockQuery.mockResolvedValue([sampleRow]);
+    mockQueryOne.mockResolvedValue({ count: '1' });
+    const filters: LeadListFilters = {
+      limit: 25,
+      exact_tag: ' Schools, Bengaluru ',
+      tags: ['contacted'],
+    };
+    await findLeads(filters);
+    await countLeads(filters);
+    for (const [sql, params] of [mockQuery.mock.calls[0], mockQueryOne.mock.calls[0]]) {
+      expect(sql).toContain('tags @> $1::text[]');
+      expect(sql).toContain('tags && $2');
+      expect(params.slice(0, 2)).toEqual([[' Schools, Bengaluru '], ['contacted']]);
+    }
+  });
+
   it('returns rows with no filters and hasMore false', async () => {
     mockQuery.mockResolvedValue([sampleRow]);
     const filters: LeadListFilters = { limit: 20 };
