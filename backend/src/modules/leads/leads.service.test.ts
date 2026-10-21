@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { LeadRow } from './leads.types';
-import { bulkUpdateSchema } from './leads.schema';
+import { bulkUpdateSchema, createLeadSchema } from './leads.schema';
 
 jest.mock('../../workers/queue');
 jest.mock('../../shared/utils/db', () => ({
@@ -141,6 +141,14 @@ const validInput = {
   location: 'NYC',
   source_platform: 'manual_upload',
 };
+
+describe('additional lead contacts validation', () => {
+  it('allows empty lists and rejects invalid additional contacts', () => {
+    expect(createLeadSchema.safeParse({ ...validInput, additional_emails: [], additional_phones: [] }).success).toBe(true);
+    expect(createLeadSchema.safeParse({ ...validInput, additional_emails: ['bad-address'] }).success).toBe(false);
+    expect(createLeadSchema.safeParse({ ...validInput, additional_phones: [''] }).success).toBe(false);
+  });
+});
 
 const mockActivity = {
   id: 'act-1',

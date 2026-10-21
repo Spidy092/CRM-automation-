@@ -263,6 +263,8 @@ async function prepareInput(input: LeadInput): Promise<LeadInput> {
     ...input,
     email: input.email.trim().toLowerCase(),
     phone: normalizePhone(input.phone),
+    additional_emails: input.additional_emails?.map((email) => email.trim().toLowerCase()),
+    additional_phones: input.additional_phones?.map(normalizePhone),
   };
 
   // Validate custom_fields against active definitions (AGENTS.md rule).
@@ -426,6 +428,8 @@ export async function updateLeadFields(
     contact_name: before.contact_name,
     phone: before.phone,
     email: before.email,
+    additional_emails: before.additional_emails ?? [],
+    additional_phones: before.additional_phones ?? [],
     website: before.website,
     industry: before.industry,
     location: before.location,
@@ -445,6 +449,12 @@ export async function updateLeadFields(
   // Re-normalize identifiers when they changed.
   if (input.email) merged.email = input.email.trim().toLowerCase();
   if (input.phone) merged.phone = normalizePhone(input.phone);
+  if (input.additional_emails !== undefined) {
+    input.additional_emails = input.additional_emails.map((email) => email.trim().toLowerCase());
+  }
+  if (input.additional_phones !== undefined) {
+    input.additional_phones = input.additional_phones.map(normalizePhone);
+  }
 
   // Validate the merged custom_fields.
   const defs = await findActiveDefinitions();
@@ -792,6 +802,13 @@ export async function bulkUpdateLeads(
 ): Promise<number> {
   if (ids.length === 0) return 0;
   if (patch.assigned_to !== undefined) throw new BulkOwnershipError(ids);
+
+  if (patch.additional_emails !== undefined) {
+    patch.additional_emails = patch.additional_emails.map((email) => email.trim().toLowerCase());
+  }
+  if (patch.additional_phones !== undefined) {
+    patch.additional_phones = patch.additional_phones.map(normalizePhone);
+  }
 
   if (tagMode === 'append') {
     const leads = await findLeadsByIds(ids);

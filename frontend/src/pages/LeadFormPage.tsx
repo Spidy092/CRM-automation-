@@ -185,6 +185,8 @@ export function LeadFormPage() {
     contact_name: '',
     phone: '',
     email: '',
+    additional_emails: [],
+    additional_phones: [],
     website: null,
     industry: '',
     location: '',
@@ -209,6 +211,8 @@ export function LeadFormPage() {
         contact_name: lead.contact_name,
         phone: lead.phone,
         email: lead.email,
+        additional_emails: lead.additional_emails ?? [],
+        additional_phones: lead.additional_phones ?? [],
         website: lead.website,
         industry: lead.industry,
         location: lead.location,
@@ -236,16 +240,43 @@ export function LeadFormPage() {
     }));
   };
 
+  const changeAdditionalContact = (
+    field: 'additional_emails' | 'additional_phones',
+    index: number,
+    value: string,
+  ) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: (prev[field] ?? []).map((item, itemIndex) => itemIndex === index ? value : item),
+    }));
+  };
+
+  const addAdditionalContact = (field: 'additional_emails' | 'additional_phones') => {
+    setFormData((prev) => ({ ...prev, [field]: [...(prev[field] ?? []), ''] }));
+  };
+
+  const removeAdditionalContact = (field: 'additional_emails' | 'additional_phones', index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: (prev[field] ?? []).filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmissionError('');
 
     try {
+      const input = {
+        ...formData,
+        additional_emails: (formData.additional_emails ?? []).map((value) => value.trim()).filter(Boolean),
+        additional_phones: (formData.additional_phones ?? []).map((value) => value.trim()).filter(Boolean),
+      };
       if (isEditing && id) {
-        await updateLead.mutateAsync({ id, input: formData });
+        await updateLead.mutateAsync({ id, input });
         showToast('Lead updated successfully.', 'success');
       } else {
-        await createLead.mutateAsync(formData);
+        await createLead.mutateAsync(input);
         showToast('Lead created successfully.', 'success');
       }
       navigate('/leads');
@@ -414,6 +445,23 @@ export function LeadFormPage() {
               </div>
 
               <div className="space-y-2">
+                <Label>Additional emails (optional)</Label>
+                {(formData.additional_emails ?? []).map((email, index) => (
+                  <div key={index} className="flex gap-2">
+                    <Input
+                      aria-label={`Additional email ${index + 1}`}
+                      type="email"
+                      maxLength={255}
+                      value={email}
+                      onChange={(event) => changeAdditionalContact('additional_emails', index, event.target.value)}
+                    />
+                    <Button type="button" variant="outline" onClick={() => removeAdditionalContact('additional_emails', index)} aria-label={`Remove additional email ${index + 1}`}>Remove</Button>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" onClick={() => addAdditionalContact('additional_emails')}>Add email</Button>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="phone">Phone *</Label>
                 <Input
                   id="phone"
@@ -422,6 +470,23 @@ export function LeadFormPage() {
                   onChange={handleChange}
                   required
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Additional phones (optional)</Label>
+                {(formData.additional_phones ?? []).map((phone, index) => (
+                  <div key={index} className="flex gap-2">
+                    <Input
+                      aria-label={`Additional phone ${index + 1}`}
+                      type="tel"
+                      maxLength={50}
+                      value={phone}
+                      onChange={(event) => changeAdditionalContact('additional_phones', index, event.target.value)}
+                    />
+                    <Button type="button" variant="outline" onClick={() => removeAdditionalContact('additional_phones', index)} aria-label={`Remove additional phone ${index + 1}`}>Remove</Button>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" onClick={() => addAdditionalContact('additional_phones')}>Add phone</Button>
               </div>
 
               {isVisible('website') && (

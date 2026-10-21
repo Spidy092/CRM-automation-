@@ -349,6 +349,8 @@ describe('insertLead', () => {
     expect(params[10]).toBeNull(); // social_links jsonArray(undefined) -> null
     expect(params[14]).toBe('{}'); // custom_fields default
     expect(params[15]).toBeNull(); // tags ?? null
+    expect(params[21]).toEqual([]); // additional emails
+    expect(params[22]).toEqual([]); // additional phones
   });
 
   it('serializes provided json fields', async () => {
@@ -368,6 +370,8 @@ describe('insertLead', () => {
       social_links: { fb: 'x' },
       custom_fields: { tier: 'gold' },
       tags: ['vip'],
+      additional_emails: ['other@acme.test'],
+      additional_phones: ['+15557654321'],
       notes: 'hello',
       assigned_to: 'user-1',
       pipeline_stage_id: 'stage-1',
@@ -377,6 +381,8 @@ describe('insertLead', () => {
     expect(params[10]).toBe(JSON.stringify({ fb: 'x' }));
     expect(params[14]).toBe(JSON.stringify({ tier: 'gold' }));
     expect(params[15]).toEqual(['vip']);
+    expect(params[21]).toEqual(['other@acme.test']);
+    expect(params[22]).toEqual(['+15557654321']);
   });
 
   it('throws when insert returns null', async () => {
@@ -395,6 +401,18 @@ describe('insertLead', () => {
 });
 
 describe('updateLead', () => {
+  it('replaces optional contact lists when supplied', async () => {
+    mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
+    await updateLead('lead-1', {
+      additional_emails: ['other@acme.test'],
+      additional_phones: ['+15557654321'],
+    });
+    const [sql, params] = mockPoolQuery.mock.calls[0];
+    expect(sql).toContain('additional_emails = $1::text[]');
+    expect(sql).toContain('additional_phones = $2::text[]');
+    expect(params).toEqual([['other@acme.test'], ['+15557654321'], 'lead-1']);
+  });
+
   it('updates scalar + json + tags fields with correct SQL', async () => {
     mockPoolQuery.mockResolvedValue({ rows: [sampleRow] });
     const result = await updateLead('lead-1', {

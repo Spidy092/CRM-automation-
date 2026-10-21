@@ -38,6 +38,8 @@ function lead(overrides: Partial<LeadResponse> = {}): LeadResponse {
     contact_name: 'Contact',
     phone: '+10000000000',
     email: 'contact@example.com',
+    additional_emails: [],
+    additional_phones: [],
     website: null,
     industry: 'software',
     location: 'Bengaluru',

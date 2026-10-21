@@ -49,7 +49,7 @@ const SORT_COLUMNS: Record<LeadSortBy, string> = {
   next_follow_up_at: 'next_follow_up_at',
 };
 
-const COLS = `id, business_name, contact_name, phone, email, website, industry, location,
+const COLS = `id, business_name, contact_name, phone, email, additional_emails, additional_phones, website, industry, location,
   country, google_rating, review_count, social_links, source_platform, lead_score,
   classification, status, assigned_to, pipeline_stage_id, custom_fields, tags, notes,
   deal_value, won_at, lost_at, next_follow_up_at, created_at, updated_at, deleted_at, scraper_log_id, google_place_id, google_contact_provenance`;
@@ -303,11 +303,13 @@ export async function insertLead(input: LeadInput, executor?: Executor): Promise
   const sql = `INSERT INTO leads (
      business_name, contact_name, phone, email, website, industry, location, country,
      google_rating, review_count, social_links, source_platform, lead_score, classification,
-     status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id, google_place_id, google_contact_provenance
+     status, assigned_to, pipeline_stage_id, custom_fields, tags, notes, deal_value, scraper_log_id, google_place_id, google_contact_provenance,
+     additional_emails, additional_phones
    ) VALUES (
      $1, $2, $3, lower($4), $5, $6, $7, $8,
      $9, $10, $11::jsonb, $12, 0, NULL,
-     'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19, $20, $21::jsonb
+     'active', $13, $14, $15::jsonb, COALESCE($16, '{}'::text[]), $17, $18, $19, $20, $21::jsonb,
+     $22::text[], $23::text[]
    )
    RETURNING ${COLS}`;
   const params = [
@@ -332,6 +334,8 @@ export async function insertLead(input: LeadInput, executor?: Executor): Promise
     input.scraper_log_id ?? null,
     input.google_place_id ?? null,
     jsonArray(input.google_contact_provenance),
+    input.additional_emails ?? [],
+    input.additional_phones ?? [],
   ];
   const row = executor
     ? await queryOneOn<LeadRow>(executor, sql, params)
@@ -388,6 +392,14 @@ export async function updateLead(
   if (input.tags !== undefined) {
     sets.push(`tags = $${i++}`);
     params.push(input.tags ?? []);
+  }
+  if (input.additional_emails !== undefined) {
+    sets.push(`additional_emails = $${i++}::text[]`);
+    params.push(input.additional_emails);
+  }
+  if (input.additional_phones !== undefined) {
+    sets.push(`additional_phones = $${i++}::text[]`);
+    params.push(input.additional_phones);
   }
 
   if (sets.length === 0) {
@@ -570,6 +582,14 @@ export async function bulkUpdateLeads(
         : `tags = $${i++}`,
     );
     params.push(input.tags ?? []);
+  }
+  if (input.additional_emails !== undefined) {
+    sets.push(`additional_emails = $${i++}::text[]`);
+    params.push(input.additional_emails);
+  }
+  if (input.additional_phones !== undefined) {
+    sets.push(`additional_phones = $${i++}::text[]`);
+    params.push(input.additional_phones);
   }
 
   if (sets.length === 1) {

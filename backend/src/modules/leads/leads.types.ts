@@ -10,6 +10,8 @@ export interface LeadRow {
   contact_name: string;
   phone: string;
   email: string;
+  additional_emails?: string[];
+  additional_phones?: string[];
   website: string | null;
   industry: string;
   location: string;
@@ -50,6 +52,8 @@ export interface LeadResponse {
   contact_name: string;
   phone: string;
   email: string;
+  additional_emails: string[];
+  additional_phones: string[];
   website: string | null;
   industry: string;
   location: string;
@@ -81,6 +85,8 @@ export interface LeadInput {
   contact_name: string;
   phone: string;
   email: string;
+  additional_emails?: string[];
+  additional_phones?: string[];
   website?: string | null;
   industry: string;
   location: string;
@@ -224,6 +230,8 @@ export function toLeadResponse(row: LeadRow): LeadResponse {
     contact_name: row.contact_name,
     phone: row.phone,
     email: row.email,
+    additional_emails: row.additional_emails ?? [],
+    additional_phones: row.additional_phones ?? [],
     website: row.website,
     industry: row.industry,
     location: row.location,
