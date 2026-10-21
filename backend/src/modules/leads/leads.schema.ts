@@ -83,6 +83,7 @@ export const listLeadsQuerySchema = z.object({
   assigned_to: z.string().uuid().optional(),
   pipeline_id: z.string().uuid().optional(),
   search: z.string().max(255).optional(),
+  exact_tag: z.string().min(1).max(100).optional(), // Preserve literal commas and spaces.
   tags: z.string().max(255).optional(), // comma-separated
   exclude_tags: z.string().max(255).optional(), // comma-separated
   /** ISO-8601 datetime string — returns leads created on or after this point */

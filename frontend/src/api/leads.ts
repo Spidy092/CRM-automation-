@@ -5,8 +5,21 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { apiClient } from './client';
+import { useAuthStore } from '@/store/authStore';
 import type { ApiResponse, PaginatedResponse } from './client';
 import type { Activity, ActivityType, ActivityWithUser, Lead, LeadInput, ImportSummary } from '@/types';
+
+export function useLeadTags() {
+  const user = useAuthStore((state) => state.user);
+  return useQuery({
+    queryKey: ['leads', 'tags', user?.id, user?.role],
+    enabled: !!user,
+    queryFn: async (): Promise<string[]> => {
+      const response = await apiClient.get<ApiResponse<string[]>>('/leads/tags');
+      return response.data.data;
+    },
+  });
+}
 
 interface LeadFilters {
   status?: string;
@@ -14,6 +27,7 @@ interface LeadFilters {
   source_platform?: string;
   assigned_to?: string;
   pipeline_id?: string;
+  exact_tag?: string;
   tags?: string;
   exclude_tags?: string;
   search?: string;
@@ -44,6 +58,7 @@ function buildLeadParams(filters: LeadFilters, cursor?: string): URLSearchParams
   if (filters.source_platform) params.append('source_platform', filters.source_platform);
   if (filters.assigned_to) params.append('assigned_to', filters.assigned_to);
   if (filters.pipeline_id) params.append('pipeline_id', filters.pipeline_id);
+  if (filters.exact_tag) params.append('exact_tag', filters.exact_tag);
   if (filters.tags) params.append('tags', filters.tags);
   if (filters.exclude_tags) params.append('exclude_tags', filters.exclude_tags);
   if (filters.search) params.append('search', filters.search);

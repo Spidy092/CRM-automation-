@@ -140,6 +140,7 @@ export interface LeadListFilters {
   assigned_to?: string;
   pipeline_id?: string;
   search?: string;
+  exact_tag?: string;
   tags?: string[];
   exclude_tags?: string[];
   /** ISO-8601 string — only return leads with created_at >= this value */

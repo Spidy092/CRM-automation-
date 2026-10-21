@@ -74,6 +74,7 @@ export async function listLeadsHandler(
       assigned_to: parsed.assigned_to,
       search: parsed.search,
       tags,
+      exact_tag: parsed.exact_tag,
       exclude_tags: excludeTags,
       created_after: parsed.created_after,
       unclassified: parsed.unclassified || undefined,

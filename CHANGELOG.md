@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0.0] - 2026-10-21
+
+### Added
+- Filter leads using existing tags and combine tag selection with contact status and other filters.
+- Save named lead filter groups for your account in the current browser.
+- Suggest existing tags during bulk tagging and reuse their spelling.
+
 ## [0.7.0.0] - 2026-10-21
 
 ### Added

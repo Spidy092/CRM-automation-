@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useLeadsTable, useDeleteLead, usePauseLead, useBulkPauseLeads, useBulkClassifyLeads, useBulkUpdateLeads } from '@/api/leads';
+import { useLeadTags, useLeadsTable, useDeleteLead, usePauseLead, useBulkPauseLeads, useBulkClassifyLeads, useBulkUpdateLeads } from '@/api/leads';
 import { useCampaigns, useAddLeadsToCampaign } from '@/api/campaigns';
 import { usePipelines, useBulkMoveLead } from '@/api/pipelines';
 import { useCustomFields } from '@/api/customFields';
@@ -16,6 +16,7 @@ import { LoadingTable } from '@/components/ui/LoadingTable';
 import { ColumnSettings, type ColumnOption } from '@/components/ui/ColumnSettings';
 import { TablePagination } from '@/components/ui/TablePagination';
 import { useTablePrefs } from '@/lib/tablePrefs';
+import { SavedLeadGroups } from '@/components/leads/SavedLeadGroups';
 import { useToast } from '@/components/ui/Toast';
 import { getApiErrorMessage } from '@/lib/apiError';
 import { statusTones } from '@/lib/constants';
@@ -109,6 +110,8 @@ export function LeadsPage() {
   const dateRange = (searchParams.get('dateRange') as '' | 'today' | '7d' | '30d') || '';
   const pipelineFilter = searchParams.get('pipeline') || '';
   const search = searchParams.get('q') || '';
+  const tagFilter = searchParams.get('tag') || '';
+  const { data: leadTags, isLoading: tagsLoading, error: tagsError, refetch: refetchTags } = useLeadTags();
 
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -131,7 +134,14 @@ export function LeadsPage() {
   const setClassificationFilter = (val: string) => updateParam('classification', val);
   const setDateRange = (val: '' | 'today' | '7d' | '30d') => updateParam('dateRange', val);
   const setPipelineFilter = (val: string) => updateParam('pipeline', val);
-  const setActiveTab = (val: string) => updateParam('tab', val === 'all' ? '' : val);
+  const setActiveTab = (val: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (val === 'all') next.delete('tab');
+      else next.set('tab', val);
+      return next;
+    }, { replace: true });
+  };
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -157,6 +167,7 @@ export function LeadsPage() {
           : activeTab === 'replied'
           ? 'replied'
           : undefined,
+      exact_tag: tagFilter || undefined,
       exclude_tags: activeTab === 'uncontacted' ? 'contacted' : undefined,
       created_after: createdAfter,
       unclassified: activeTab === 'new' ? true : undefined,
@@ -169,6 +180,7 @@ export function LeadsPage() {
       classificationFilter,
       createdAfter,
       pipelineFilter,
+      tagFilter,
     ],
   );
 
@@ -524,7 +536,8 @@ export function LeadsPage() {
   };
 
   const handleAddTag = async (): Promise<void> => {
-    const tag = bulkTag.trim();
+    const trimmedTag = bulkTag.trim();
+    const tag = leadTags?.find((existing) => existing.toLowerCase() === trimmedTag.toLowerCase()) ?? trimmedTag;
     if (!tag || tag.includes(',') || bulkUpdate.isPending) return;
     try {
       const result = await bulkUpdate.mutateAsync({ ids: Array.from(selected), patch: { tags: [tag] }, tag_mode: 'append' });
@@ -658,7 +671,9 @@ export function LeadsPage() {
             ))}
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <SavedLeadGroups searchParams={searchParams} onApply={(params) => setSearchParams(params, { replace: true })} />
+
+          <div className="flex flex-wrap items-center gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
@@ -707,6 +722,25 @@ export function LeadsPage() {
                 </option>
               ))}
             </select>
+            <select
+              aria-label="Filter by tag"
+              value={tagFilter}
+              onChange={(e) => setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (e.target.value) next.set('tag', e.target.value);
+                else next.delete('tag');
+                return next;
+              }, { replace: true })}
+              disabled={tagsLoading}
+              className="h-10 max-w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+            >
+              <option value="">{tagsLoading ? 'Loading tags…' : 'All tags'}</option>
+              {[...new Set([...(leadTags ?? []), ...(tagFilter ? [tagFilter] : [])])].map((tag) => (
+                <option key={tag} value={tag}>{tag}</option>
+              ))}
+            </select>
+            {tagsError && <Button variant="ghost" size="sm" onClick={() => void refetchTags()}>Retry loading tags</Button>}
+            {!tagsLoading && !tagsError && leadTags?.length === 0 && <span className="text-xs text-muted-foreground">Add a tag to a lead to filter by it.</span>}
             {/* Date-range quick filter */}
             <select
               id="leads-date-filter"
@@ -739,9 +773,12 @@ export function LeadsPage() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <label htmlFor="bulk-tag" className="text-xs font-medium">Tag name</label>
-                <Input id="bulk-tag" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)}
+                <Input id="bulk-tag" list="lead-tag-suggestions" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)}
                   placeholder="e.g., school" maxLength={100} disabled={bulkUpdate.isPending}
                   className="h-8 w-36 text-xs" />
+                <datalist id="lead-tag-suggestions">
+                  {(leadTags ?? []).map((tag) => <option key={tag} value={tag} />)}
+                </datalist>
                 <Button type="button" size="sm" disabled={!bulkTag.trim() || bulkTag.includes(',') || bulkUpdate.isPending}
                   onClick={handleAddTag}>
                   {bulkUpdate.isPending ? 'Adding tag…' : 'Add tag'}
