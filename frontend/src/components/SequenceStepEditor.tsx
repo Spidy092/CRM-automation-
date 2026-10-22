@@ -175,6 +175,8 @@ function DelayHoursInput({
         if (nextDraft !== '') {
           const nextValue = Number(nextDraft);
           if (Number.isFinite(nextValue) && nextValue >= 0) onValueChange(nextValue);
+        } else {
+          onValueChange(0);
         }
       }}
       onBlur={() => {
