@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useCreateTemplate, useTemplates } from '@/api/templates';
 import type { Sequence, SequenceStep } from '@/api/outreach';
 import { Button } from '@/components/ui/button';
@@ -144,6 +144,54 @@ function InlineTemplateComposer({
 
 // ── Step editor ─────────────────────────────────────────────────────────────
 
+// Keep an empty draft editable so clearing a numeric value does not immediately
+// coerce it back to zero while the user is typing a replacement.
+function DelayHoursInput({
+  value,
+  onValueChange,
+  className,
+}: {
+  value: number;
+  onValueChange: (value: number) => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [focused, value]);
+
+  return (
+    <Input
+      type="number"
+      min={0}
+      step={1}
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={(event) => {
+        const nextDraft = event.target.value;
+        setDraft(nextDraft);
+        if (nextDraft !== '') {
+          const nextValue = Number(nextDraft);
+          if (Number.isFinite(nextValue) && nextValue >= 0) onValueChange(nextValue);
+        }
+      }}
+      onBlur={() => {
+        setFocused(false);
+        const nextValue = draft === '' ? 0 : Number(draft);
+        if (Number.isFinite(nextValue) && nextValue >= 0) {
+          setDraft(String(nextValue));
+          onValueChange(nextValue);
+        } else {
+          setDraft(String(value));
+        }
+      }}
+      className={className}
+    />
+  );
+}
+
 export function SequenceStepEditor({
   steps,
   onChange,
@@ -274,11 +322,9 @@ export function SequenceStepEditor({
                 <Label className="text-xs text-slate-500">
                   {i === 0 ? 'Delay (hours, 0 = immediate)' : 'Delay after previous (hours)'}
                 </Label>
-                <Input
-                  type="number"
-                  min={0}
+                <DelayHoursInput
                   value={step.delayHours}
-                  onChange={(e) => updateStep(i, 'delayHours', Number(e.target.value))}
+                  onValueChange={(value) => updateStep(i, 'delayHours', value)}
                   className="h-8 text-xs"
                 />
               </div>
